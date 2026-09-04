@@ -207,16 +207,14 @@
     messagingSenderId: "933200749884",
     appId: "1:933200749884:web:a4216467a1c72063eb2a39"
   };
-  // Optional: restrict the Google sign-in account picker to one email domain
-  // (a UI hint only — real enforcement happens in Firestore security rules
-  // via the `teachers` allow-list collection, see SETUP.md).
-  window.HOSTED_DOMAIN = ""; // e.g. "sundarstem.edu.pk", or leave blank
+
 </script>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  getAuth, signInWithEmailAndPassword, sendPasswordResetEmail,
+  createUserWithEmailAndPassword, updateProfile, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
@@ -225,7 +223,8 @@ import {
 
 /* ---------------------------------------------------------------
    PMC Question Bank — GitHub Pages + Firebase edition.
-   Auth: Google sign-in (Firebase Auth).
+   Auth: email + password (Firebase Auth). Accounts are created only
+   by an admin, from the Admin tab — there is no self-service sign-up.
    Access control: a viewer must have a document in the `teachers`
    collection (doc id = their email) before they can read/write —
    enforced by Firestore security rules, not by this client code.
@@ -306,19 +305,32 @@ function renderSignedOut(){
       <div class="gate-card">
         <div class="mark">PMC</div>
         <h2>PMC Question Bank</h2>
-        <p>Sign in with your Google account to post, comment, and rate contest questions.</p>
-        <button class="gbtn" id="google-signin">
-          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.7 29.4 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 16.3 4 9.6 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.5 0 10.4-2.1 14.1-5.6l-6.5-5.5C29.6 34.7 27 35.5 24 35.5c-5.4 0-9.9-3.6-11.5-8.5l-6.6 5.1C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1 2.8-2.9 5.1-5.3 6.7l6.5 5.5C39.9 37.4 44 31.5 44 24c0-1.3-.1-2.7-.4-3.5z"/></svg>
-          Sign in with Google
-        </button>
-        <p class="note">Access is limited to teachers your admin has added to the bank. If you sign in and see "access pending," ask your admin to add your email.</p>
+        <p>Sign in with the email and password your admin gave you.</p>
+        <div style="text-align:left;">
+          <div class="field"><label>Email</label><input type="email" id="login-email" autocomplete="username" /></div>
+          <div class="field"><label>Password</label><input type="password" id="login-password" autocomplete="current-password" /></div>
+        </div>
+        <button class="btn primary" id="login-btn" style="width:100%; justify-content:center;">Sign in</button>
+        <button class="btn ghost" id="forgot-btn" style="width:100%; justify-content:center; margin-top:6px;">Forgot password?</button>
+        <p class="note">Access is limited to teachers your admin has created an account for. There is no self sign-up — ask your admin if you don't have credentials.</p>
       </div>
     </div>`;
-  document.getElementById("google-signin").addEventListener("click", async ()=>{
-    const provider = new GoogleAuthProvider();
-    if(window.HOSTED_DOMAIN) provider.setCustomParameters({hd: window.HOSTED_DOMAIN});
-    try{ await signInWithPopup(auth, provider); }
+  const emailEl = document.getElementById("login-email");
+  const passEl = document.getElementById("login-password");
+  const doLogin = async ()=>{
+    const email = emailEl.value.trim().toLowerCase();
+    const password = passEl.value;
+    if(!email || !password){ toast("Enter email and password"); return; }
+    try{ await signInWithEmailAndPassword(auth, email, password); }
     catch(err){ console.error(err); toast("Sign-in failed: "+err.code); }
+  };
+  document.getElementById("login-btn").addEventListener("click", doLogin);
+  passEl.addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
+  document.getElementById("forgot-btn").addEventListener("click", async ()=>{
+    const email = emailEl.value.trim().toLowerCase();
+    if(!email){ toast("Enter your email first"); return; }
+    try{ await sendPasswordResetEmail(auth, email); toast("Password reset email sent"); }
+    catch(err){ console.error(err); toast("Couldn't send reset email: "+err.code); }
   });
 }
 
@@ -328,7 +340,7 @@ function renderPending(){
       <div class="gate-card">
         <div class="mark">PMC</div>
         <h2>Access pending</h2>
-        <p>Signed in as <b>${escapeHtml(currentUser.email)}</b>, but this account isn't on the approved teacher list yet. Ask your admin to add a document for your email in the <span class="mono">teachers</span> collection (see SETUP.md).</p>
+        <p>Signed in as <b>${escapeHtml(currentUser.email)}</b>, but this account isn't on the approved teacher list yet. Ask your admin to add your email in the Admin tab's Manage Teachers section (see SETUP.md).</p>
         <button class="btn" id="recheck">I've been added — recheck</button>
       </div>
     </div>`;
@@ -685,21 +697,32 @@ function renderAdmin(){
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
     <div class="section-label">Manage teachers</div>
-    <p class="desc">Add a teacher's Google email to grant access — they can sign in the next time they visit, no Firebase console needed.</p>
+    <p class="desc">Create a login for a teacher — they can sign in immediately with this email and password (and change it later via "Forgot password").</p>
     <div class="filters" style="align-items:flex-end;">
-      <div class="field" style="margin:0; min-width:260px; flex:1;">
-        <label>Teacher's Google email</label>
+      <div class="field" style="margin:0; min-width:160px;">
+        <label>Full name</label>
+        <input type="text" id="new-teacher-name" placeholder="Ayesha Khan" />
+      </div>
+      <div class="field" style="margin:0; min-width:220px; flex:1;">
+        <label>Email</label>
         <input type="email" id="new-teacher-email" placeholder="name@example.com" />
       </div>
-      <div class="field" style="margin:0; min-width:130px;">
+      <div class="field" style="margin:0; min-width:170px;">
+        <label>Password</label>
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="new-teacher-password" placeholder="min 6 characters" style="flex:1;" />
+          <button class="btn small" id="gen-password-btn" type="button" title="Generate a password">Generate</button>
+        </div>
+      </div>
+      <div class="field" style="margin:0; min-width:120px;">
         <label>Role</label>
         <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="admin">Admin</option></select>
       </div>
-      <button class="btn primary" id="add-teacher-btn">Add teacher</button>
+      <button class="btn primary" id="add-teacher-btn">Create account</button>
     </div>
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
-      <tbody id="teachers-tbody"><tr><td colspan="4" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
+      <tbody id="teachers-tbody"><tr><td colspan="5" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
     </table></div>
     <div class="section-label">Enter post-test statistics</div>
     <div class="filters" style="align-items:flex-end;">
@@ -723,6 +746,11 @@ function renderAdmin(){
   });
   loadAllStats();
   document.getElementById("add-teacher-btn").addEventListener("click", addTeacher);
+  document.getElementById("gen-password-btn").addEventListener("click", ()=>{
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let pw = ""; for(let i=0;i<10;i++) pw += chars[Math.floor(Math.random()*chars.length)];
+    document.getElementById("new-teacher-password").value = pw;
+  });
   subscribeTeachers();
 }
 
@@ -738,10 +766,11 @@ function subscribeTeachers(){
 function renderTeachersTable(list){
   const tbody = document.getElementById("teachers-tbody");
   if(!tbody) return;
-  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="4" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
+  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="5" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
   list.sort((a,b)=> a.email.localeCompare(b.email));
   tbody.innerHTML = list.map(t=>`
     <tr>
+      <td>${escapeHtml(t.name||"—")}</td>
       <td>${escapeHtml(t.email)}</td>
       <td><span class="pill role-${t.role==='admin'?'admin':'teacher'}">${t.role==='admin'?'Admin':'Teacher'}</span></td>
       <td class="mono">${t.addedAt? fmtDate(t.addedAt): "—"}</td>
@@ -755,15 +784,38 @@ function renderTeachersTable(list){
 }
 
 async function addTeacher(){
+  const nameInput = document.getElementById("new-teacher-name");
   const emailInput = document.getElementById("new-teacher-email");
+  const passwordInput = document.getElementById("new-teacher-password");
+  const name = nameInput.value.trim();
   const email = emailInput.value.trim().toLowerCase();
+  const password = passwordInput.value;
   const role = document.getElementById("new-teacher-role").value;
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Enter a valid email"); return; }
+  if(password.length < 6){ toast("Password must be at least 6 characters"); return; }
+  const btn = document.getElementById("add-teacher-btn");
+  btn.disabled = true;
+  // Create the login on a throwaway secondary Firebase app instance so it
+  // doesn't sign the admin out of their own session (creating a user with
+  // the client SDK signs in as that user on whichever app instance did it).
+  const secondaryApp = initializeApp(window.FIREBASE_CONFIG, "Secondary-"+Date.now());
+  const secondaryAuth = getAuth(secondaryApp);
   try{
-    await setDoc(doc(db,"teachers",email), { role, addedBy: currentUser.email, addedAt: new Date().toISOString() });
-    toast("Teacher added");
-    emailInput.value = "";
-  }catch(err){ console.error(err); toast("Couldn't add teacher ("+err.code+")"); }
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    if(name) await updateProfile(cred.user, {displayName:name});
+    await setDoc(doc(db,"teachers",email), {
+      role, name: name || null, addedBy: currentUser.email, addedAt: new Date().toISOString()
+    });
+    toast("Account created for "+email);
+    nameInput.value = ""; emailInput.value = ""; passwordInput.value = "";
+  }catch(err){
+    console.error(err);
+    toast("Couldn't create account: "+err.code);
+  }finally{
+    await signOut(secondaryAuth).catch(()=>{});
+    await deleteApp(secondaryApp).catch(()=>{});
+    btn.disabled = false;
+  }
 }
 
 async function toggleTeacherRole(email, currentRole){

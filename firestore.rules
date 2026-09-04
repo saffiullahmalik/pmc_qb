@@ -1,12 +1,12 @@
 rules_version = '2';
 
 // PMC Question Bank — Firestore security rules
-// Access model: a signed-in Google user may read/write question data only
-// if they have a document in `teachers/{their email}`. Admin-only actions
-// (post-test statistics) additionally require role == "admin" on that doc.
-// Teacher documents are managed by admins — either by hand in the Firebase
-// console, or from the app's Admin tab (Manage Teachers) — there is no
-// self-service sign-up.
+// Access model: a signed-in user (email + password, account created by an
+// admin — no self sign-up) may read/write question data only if they have
+// a document in `teachers/{their email}`. Admin-only actions (post-test
+// statistics) additionally require role == "admin" on that doc. Teacher
+// documents/logins are managed by admins from the app's Admin tab (Manage
+// Teachers), or by hand in the Firebase console as a fallback.
 
 service cloud.firestore {
   match /databases/{database}/documents {

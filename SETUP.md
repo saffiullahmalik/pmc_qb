@@ -1,6 +1,6 @@
 # PMC Question Bank — GitHub Pages + Firebase Setup
 
-This turns the question-bank portal into a site you host yourself on GitHub Pages, with real Google sign-in and an admin-controlled teacher allow-list, backed by Firebase (free tier).
+This turns the question-bank portal into a site you host yourself on GitHub Pages, with a real login system (email + password, accounts created only by an admin — no self sign-up) backed by Firebase (free tier).
 
 Total one-time setup: **~20–30 minutes**. You only do this once; after that, teachers just visit the URL and sign in.
 
@@ -12,10 +12,13 @@ Total one-time setup: **~20–30 minutes**. You only do this once; after that, t
 2. Click **Add project**. Name it (e.g. `pmc-question-bank`). You can disable Google Analytics for this project — not needed.
 3. Once created, you land on the project overview.
 
-## 2. Enable Google sign-in
+## 2. Enable Email/Password sign-in
 
 1. In the left sidebar: **Build → Authentication → Get started**.
-2. Under **Sign-in method**, click **Google**, toggle it **Enable**, pick a support email, **Save**.
+2. Under **Sign-in method**, click **Email/Password**, toggle it **Enable**, **Save**.
+3. If **Google** is enabled from an earlier version of this project, you can disable it now — this version doesn't use it. (If you already have an admin account that was created via Google sign-in, see the note at the end of this step before disabling it.)
+
+> **Migrating an existing Google-sign-in admin to email/password:** their account and `teachers` document don't need to be recreated — just add a password to the *same* account. On the site's sign-in screen, click **Forgot password?**, enter that admin's email, and follow the reset link that arrives by email to set a password. They can then sign in with email + that password as before, still recognized as the same admin (the `teachers/{email}` document is unaffected).
 
 ## 3. Create the Firestore database
 
@@ -29,16 +32,18 @@ Total one-time setup: **~20–30 minutes**. You only do this once; after that, t
 2. Replace the contents with the file `firestore.rules` from this repo (paste its full contents in).
 3. Click **Publish**.
 
-These rules mean: only signed-in Google accounts that have a document in a `teachers` collection can read or write question data, and only accounts marked `role: "admin"` can enter post-test statistics or delete questions. There is no self-service sign-up — you control exactly who has access.
+These rules mean: only signed-in accounts that have a document in a `teachers` collection can read or write question data, and only accounts marked `role: "admin"` can enter post-test statistics or delete questions. There is no self-service sign-up — you control exactly who has access.
 
-## 5. Add your teachers (and yourself as admin)
+## 5. Create your own admin account
 
-1. Firestore → **Data** tab → **Start collection** → collection ID: `teachers`.
-2. For each teacher, **Add document**:
-   - **Document ID**: their exact Google sign-in email, e.g. `ayesha.khan@gmail.com`
-   - Add a field: `role` (string) = `teacher`
-3. For yourself (and any other admins), do the same but set `role` = `admin`. An admin can do everything a teacher can, plus enter post-test statistics.
-4. This one-time step needs the Firestore console because you're not an admin yet. After that, you (and any other admin) can add, promote, or remove teachers straight from the site — sign in, go to **Admin & Analytics → Manage teachers**, type their email, pick a role, and click **Add teacher**. No redeploy, no code changes, no console needed for day-to-day onboarding.
+This one-time step needs the Firestore *and* Authentication consoles, because you're not an admin yet — nobody is:
+
+1. **Authentication** → **Users** tab → **Add user**. Enter your email and a password. Click **Add user**.
+2. **Firestore** → **Data** tab → **Start collection** → collection ID: `teachers`.
+3. **Add document** → **Document ID**: your exact email (lowercase, must match what you just typed in step 1) → add a field `role` (string) = `admin` → **Save**.
+4. Sign in to the site with that email + password — you're in as admin.
+
+After that, **you never need to touch the console for onboarding again.** Sign in, go to **Admin & Analytics → Manage teachers**, fill in a name, email, and password, pick a role, and click **Create account** — this creates both the login and the `teachers` document in one step. Promote, demote, or remove access the same way, all from the site.
 
 ## 6. Register a web app and get your config
 
@@ -46,12 +51,11 @@ These rules mean: only signed-in Google accounts that have a document in a `teac
 2. Give it a nickname (e.g. `pmc-bank-web`), no need to set up Firebase Hosting here — you're using GitHub Pages instead.
 3. Firebase shows you a `firebaseConfig` object with `apiKey`, `authDomain`, `projectId`, etc. Copy these values.
 4. Open `index.html` in this repo and find the `window.FIREBASE_CONFIG = {...}` block near the top of the `<script>` section. Replace each `"REPLACE_ME"` with your real value.
-5. Optional: if all your teachers use one email domain (e.g. everyone has a `@sundarstem.edu.pk` account), set `window.HOSTED_DOMAIN = "sundarstem.edu.pk"` right below it — this just pre-filters the Google account picker; it is a convenience, not the real access control (the `teachers` allow-list + security rules are what actually enforce access).
 
-## 7. Authorize your GitHub Pages domain for sign-in
+## 7. Authorize your GitHub Pages domain
 
 1. Firebase console → **Authentication → Settings → Authorized domains**.
-2. Add your GitHub Pages domain, e.g. `<your-username>.github.io` (or your custom domain if you attach one later).
+2. Add your GitHub Pages domain, e.g. `<your-username>.github.io` (or your custom domain if you attach one later). This is what lets password-reset email links point back to your live site correctly.
 
 ## 8. Push to GitHub and enable Pages
 
@@ -74,8 +78,9 @@ GitHub gives you a URL like `https://<your-username>.github.io/<repo-name>/` wit
 
 ## Ongoing admin tasks
 
-- **Add a new teacher, promote/demote, or remove access:** sign in to the site as an admin → **Admin & Analytics → Manage teachers**. This is the normal way to do it day-to-day.
-- The same three things can still be done by hand in the Firebase console if you ever need to (Firestore → `teachers` collection → add/edit/delete a document, doc ID = their email, field `role` = `teacher` or `admin`) — useful as a fallback if, say, an admin locks themselves out of their own account.
+- **Create a teacher login, promote/demote, or remove access:** sign in to the site as an admin → **Admin & Analytics → Manage teachers**. This is the normal way to do it day-to-day — "Create account" makes both the login and the allow-list entry in one step.
+- Note: **"Remove" only revokes app access** (deletes the `teachers` document) — it doesn't delete the underlying login, since that needs the Firebase Admin SDK (a backend), which this project deliberately doesn't have on the free Spark plan. A removed person's login still exists but they can't get past "access pending." To fully delete a login, do it by hand: Authentication → Users → find them → delete.
+- The teacher list can still be edited by hand in Firestore if you ever need to (`teachers` collection → add/edit/delete a document, doc ID = their email, field `role` = `teacher` or `admin`) — useful as a fallback if, say, an admin locks themselves out of their own account.
 - **Back up the question bank:** Firestore → Data → the `⋮` menu has an export option (or use `gcloud firestore export` for a full backup on the free tier's underlying project).
 
 ## Cost
@@ -101,4 +106,4 @@ If you're working with Claude in Cowork, open this task in the Claude desktop ap
 
 ## What stayed the same vs. the Claude-hosted version
 
-Same data model, same tagging taxonomy, same p-value/discrimination-index analytics, same UI — the only thing that changed is *where it lives* (your own GitHub Pages URL instead of a claude.ai link) and *how people sign in* (real Google auth + an admin-managed allow-list, enforced server-side by Firestore rules, instead of a typed name).
+Same data model, same tagging taxonomy, same p-value/discrimination-index analytics, same UI — the only thing that changed is *where it lives* (your own GitHub Pages URL instead of a claude.ai link) and *how people sign in* (a real email/password login, accounts created only by an admin, enforced server-side by Firestore rules, instead of a typed name).

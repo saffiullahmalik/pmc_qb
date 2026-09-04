@@ -21,17 +21,19 @@ The portal's design follows an official school SOP ("Preparation, Review, Admini
 - **Hosting**: static site on **GitHub Pages**, this repo (`saffiullahmalik/pmc_qb`), served from `main` branch, root folder. Live at `https://saffiullahmalik.github.io/pmc_qb/`.
 - **Everything is one file**: `index.html` — vanilla JS (no build step, no framework, no bundler). Firebase SDK is loaded via ES module imports directly from `gstatic.com` CDN (`firebase-app.js`, `firebase-auth.js`, `firebase-firestore.js`, v10.13.0, pinned).
 - **Backend**: Firebase project `pmc-qb` (Spark/free plan).
-  - **Auth**: Google sign-in (`signInWithPopup` + `GoogleAuthProvider`), per the deployed `index.html`/`SETUP.md` — note this contradicts an earlier draft of this doc that described email/password auth; that switch was apparently never actually shipped, or was reverted. Trust the code over this doc if they disagree again. Anyone with a Google account can sign in, but account creation alone grants no access — see Access control below.
+  - **Auth**: email + password (`signInWithEmailAndPassword`). There is no self sign-up — accounts are created only by an admin, from **Admin → Manage teachers**, which sets email/password/name and writes the `teachers/{email}` doc in one step. Account creation uses a throwaway secondary Firebase App instance (`initializeApp(config, "Secondary-"+timestamp)`) purely so `createUserWithEmailAndPassword` doesn't hijack the admin's own signed-in session — this is the standard client-only workaround for admin-provisioned users on a backend-less (Spark plan) project. A "Forgot password" flow (`sendPasswordResetEmail`) lets teachers reset their own password after that. Note: this was Google sign-in (`signInWithPopup`) until Sept 2026, when it was deliberately replaced with this admin-provisioned email/password model — if you see Google sign-in code again, something got reverted.
   - **Database**: Firestore, in production mode, access controlled entirely by `firestore.rules` (also in this repo — must be manually pasted into the Firebase console's Rules tab and Published; there's a GitHub Action, see below, that can do this automatically instead).
 
 ## Access control model (important — don't weaken this without discussion)
 
-A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore. Admins manage that collection either by hand in the Firebase console, or from the app's own **Admin → Manage teachers** section (add/remove teachers, promote/demote to admin) — there is no self-service approval flow either way, by design (an admin decides who gets in). A `role: "admin"` field on that same document additionally unlocks:
+A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote to admin), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in). A `role: "admin"` field on that same document additionally unlocks:
 - Entering post-test statistics (p-value / discrimination index)
 - Deleting questions
 - Deleting/updating others' comments
 
 All of this is enforced in `firestore.rules`, not in client-side JS — the client UI hides admin controls from non-admins, but the real enforcement is server-side. Emails are lowercased on both sides (client lookup and rules) specifically because Firestore document IDs are case-sensitive and admins type them by hand — this was a real bug caught during setup and fixed.
+
+Note: **"Remove" in Manage Teachers only deletes the `teachers/{email}` doc** (revokes app access) — it does not delete the underlying Firebase Auth login, since that requires the Admin SDK (a backend), which this Spark-plan/no-backend project deliberately doesn't have. A removed person's login still technically exists and they can still sign in, but they'll land on the "access pending" screen with no data access, same as before this feature existed. Full account deletion, if ever needed, is a manual step in Firebase console → Authentication → Users.
 
 ## Data model (Firestore)
 
