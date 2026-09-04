@@ -38,7 +38,7 @@ These rules mean: only signed-in Google accounts that have a document in a `teac
    - **Document ID**: their exact Google sign-in email, e.g. `ayesha.khan@gmail.com`
    - Add a field: `role` (string) = `teacher`
 3. For yourself (and any other admins), do the same but set `role` = `admin`. An admin can do everything a teacher can, plus enter post-test statistics.
-4. You can add more teachers any time the same way — no redeploy needed, no code changes.
+4. This one-time step needs the Firestore console because you're not an admin yet. After that, you (and any other admin) can add, promote, or remove teachers straight from the site — sign in, go to **Admin & Analytics → Manage teachers**, type their email, pick a role, and click **Add teacher**. No redeploy, no code changes, no console needed for day-to-day onboarding.
 
 ## 6. Register a web app and get your config
 
@@ -72,11 +72,10 @@ GitHub gives you a URL like `https://<your-username>.github.io/<repo-name>/` wit
 
 ---
 
-## Ongoing admin tasks (all in the Firebase console, no code)
+## Ongoing admin tasks
 
-- **Add a new teacher:** Firestore → `teachers` collection → Add document → doc ID = their email, `role: "teacher"`.
-- **Make someone an admin:** edit their `teachers` document, change `role` to `admin`.
-- **Remove access:** delete their document from `teachers`.
+- **Add a new teacher, promote/demote, or remove access:** sign in to the site as an admin → **Admin & Analytics → Manage teachers**. This is the normal way to do it day-to-day.
+- The same three things can still be done by hand in the Firebase console if you ever need to (Firestore → `teachers` collection → add/edit/delete a document, doc ID = their email, field `role` = `teacher` or `admin`) — useful as a fallback if, say, an admin locks themselves out of their own account.
 - **Back up the question bank:** Firestore → Data → the `⋮` menu has an export option (or use `gcloud firestore export` for a full backup on the free tier's underlying project).
 
 ## Cost

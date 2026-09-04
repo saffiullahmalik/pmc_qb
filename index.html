@@ -82,6 +82,8 @@
   .pill.status-finalized{ background:var(--accent-soft); color:var(--accent); }
   .pill.status-uploaded{ background:#0f6b5c; color:#fff; }
   :root:not([data-theme="light"]) .pill.status-uploaded{ background:#1a2e27; color:#7ee0c4; }
+  .pill.role-admin{ background:var(--accent-soft); color:var(--accent); }
+  .pill.role-teacher{ background:var(--surface-2); color:var(--ink-dim); }
   .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
   .card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 15px; box-shadow:var(--shadow); cursor:pointer; display:flex; flex-direction:column; gap:9px; }
   .card:hover{ border-color:var(--accent); }
@@ -365,6 +367,7 @@ function renderSignedInChrome(){
 onAuthStateChanged(auth, user=>{
   currentUser = user;
   if(unsubQuestions){ unsubQuestions(); unsubQuestions=null; }
+  if(unsubTeachers){ unsubTeachers(); unsubTeachers=null; }
   if(!user){
     isTeacherApproved = null;
     document.getElementById("who-box").innerHTML = "";
@@ -681,6 +684,23 @@ function renderAdmin(){
       ${STATUSES.map(s=>`<div class="stat-tile"><div class="num">${byStatus[s.v]||0}</div><div class="lbl">${s.l}</div></div>`).join("")}
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
+    <div class="section-label">Manage teachers</div>
+    <p class="desc">Add a teacher's Google email to grant access — they can sign in the next time they visit, no Firebase console needed.</p>
+    <div class="filters" style="align-items:flex-end;">
+      <div class="field" style="margin:0; min-width:260px; flex:1;">
+        <label>Teacher's Google email</label>
+        <input type="email" id="new-teacher-email" placeholder="name@example.com" />
+      </div>
+      <div class="field" style="margin:0; min-width:130px;">
+        <label>Role</label>
+        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="admin">Admin</option></select>
+      </div>
+      <button class="btn primary" id="add-teacher-btn">Add teacher</button>
+    </div>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
+      <tbody id="teachers-tbody"><tr><td colspan="4" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+    </table></div>
     <div class="section-label">Enter post-test statistics</div>
     <div class="filters" style="align-items:flex-end;">
       <div class="field" style="margin:0; min-width:220px; flex:1;">
@@ -702,6 +722,67 @@ function renderAdmin(){
     else document.getElementById("stat-form-wrap").innerHTML = "";
   });
   loadAllStats();
+  document.getElementById("add-teacher-btn").addEventListener("click", addTeacher);
+  subscribeTeachers();
+}
+
+/* ---------------- teacher management (admin) ---------------- */
+let unsubTeachers = null;
+function subscribeTeachers(){
+  if(unsubTeachers) return;
+  unsubTeachers = onSnapshot(collection(db,"teachers"), snap=>{
+    renderTeachersTable(snap.docs.map(d=>({email:d.id, ...d.data()})));
+  }, err=>{ console.error(err); toast("Couldn't load teachers ("+err.code+")"); });
+}
+
+function renderTeachersTable(list){
+  const tbody = document.getElementById("teachers-tbody");
+  if(!tbody) return;
+  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="4" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
+  list.sort((a,b)=> a.email.localeCompare(b.email));
+  tbody.innerHTML = list.map(t=>`
+    <tr>
+      <td>${escapeHtml(t.email)}</td>
+      <td><span class="pill role-${t.role==='admin'?'admin':'teacher'}">${t.role==='admin'?'Admin':'Teacher'}</span></td>
+      <td class="mono">${t.addedAt? fmtDate(t.addedAt): "—"}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn small" data-toggle-role="${escapeHtml(t.email)}" data-current-role="${t.role}">${t.role==='admin'?'Make teacher':'Make admin'}</button>
+        <button class="btn small" style="color:var(--red);" data-remove-teacher="${escapeHtml(t.email)}">Remove</button>
+      </td>
+    </tr>`).join("");
+  tbody.querySelectorAll("[data-toggle-role]").forEach(b=>b.addEventListener("click", ()=>toggleTeacherRole(b.dataset.toggleRole, b.dataset.currentRole)));
+  tbody.querySelectorAll("[data-remove-teacher]").forEach(b=>b.addEventListener("click", ()=>removeTeacher(b.dataset.removeTeacher)));
+}
+
+async function addTeacher(){
+  const emailInput = document.getElementById("new-teacher-email");
+  const email = emailInput.value.trim().toLowerCase();
+  const role = document.getElementById("new-teacher-role").value;
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ toast("Enter a valid email"); return; }
+  try{
+    await setDoc(doc(db,"teachers",email), { role, addedBy: currentUser.email, addedAt: new Date().toISOString() });
+    toast("Teacher added");
+    emailInput.value = "";
+  }catch(err){ console.error(err); toast("Couldn't add teacher ("+err.code+")"); }
+}
+
+async function toggleTeacherRole(email, currentRole){
+  const newRole = currentRole==="admin" ? "teacher" : "admin";
+  if(email===currentUser.email.toLowerCase() && newRole==="teacher" &&
+     !confirm("This is your own account — you'll lose admin access immediately. Continue?")) return;
+  try{
+    await setDoc(doc(db,"teachers",email), {role:newRole}, {merge:true});
+    toast(`Role updated to ${newRole}`);
+  }catch(err){ console.error(err); toast("Couldn't update role ("+err.code+")"); }
+}
+
+async function removeTeacher(email){
+  const self = email===currentUser.email.toLowerCase();
+  if(!confirm(self ? "This is your own account — removing it will revoke your own access immediately. Continue?" : `Remove access for ${email}?`)) return;
+  try{
+    await deleteDoc(doc(db,"teachers",email));
+    toast("Access removed");
+  }catch(err){ console.error(err); toast("Couldn't remove teacher ("+err.code+")"); }
 }
 
 function qualityLabel2(p,d){

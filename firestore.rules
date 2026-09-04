@@ -4,8 +4,9 @@ rules_version = '2';
 // Access model: a signed-in Google user may read/write question data only
 // if they have a document in `teachers/{their email}`. Admin-only actions
 // (post-test statistics) additionally require role == "admin" on that doc.
-// Teacher documents are managed by hand in the Firebase console (or by an
-// existing admin) — there is no self-service sign-up.
+// Teacher documents are managed by admins — either by hand in the Firebase
+// console, or from the app's Admin tab (Manage Teachers) — there is no
+// self-service sign-up.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -25,11 +26,14 @@ service cloud.firestore {
     }
 
     // Each teacher can read their own allow-list entry (to check status);
-    // nobody can write it from the client — add/edit teachers from the
-    // Firebase console only.
+    // admins can read the full list and create/update/delete entries —
+    // this is what powers the Admin tab's "Manage Teachers" UI.
     match /teachers/{email} {
-      allow read: if isSignedIn() && request.auth.token.email == email;
-      allow write: if false;
+      allow read: if isSignedIn() && (request.auth.token.email == email || isAdmin());
+      allow create, update: if isAdmin() &&
+        email == email.lower() &&
+        request.resource.data.role in ["teacher", "admin"];
+      allow delete: if isAdmin();
     }
 
     match /questions/{questionId} {
