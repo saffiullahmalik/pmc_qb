@@ -1,0 +1,778 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PMC Question Bank</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg:#f4f6f3; --surface:#ffffff; --surface-2:#eceef0; --border:#d9ddd7; --ink:#1a221e; --ink-dim:#5b6660;
+    --accent:#0f6b5c; --accent-ink:#ffffff; --accent-soft:#e2efe9; --gold:#b5791f; --gold-soft:#f6ecd9;
+    --red:#a4372b; --red-soft:#f7e3df; --blue:#2f5f8a; --blue-soft:#e4edf5;
+    --shadow: 0 1px 2px rgba(20,30,25,0.06), 0 6px 20px -10px rgba(20,30,25,0.18);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#111815; --surface:#182019; --surface-2:#1f2a23; --border:#2c3a32; --ink:#e9efe9; --ink-dim:#9db0a5;
+      --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --gold:#d9a34a; --gold-soft:#332711;
+      --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.55);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#111815; --surface:#182019; --surface-2:#1f2a23; --border:#2c3a32; --ink:#e9efe9; --ink-dim:#9db0a5;
+    --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --gold:#d9a34a; --gold-soft:#332711;
+    --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.55);
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box;}
+  html,body{ margin:0; }
+  body{
+    background:var(--bg); color:var(--ink); font-family:'Public Sans', system-ui, sans-serif; font-size:14px; line-height:1.5;
+  }
+  h1,h2,h3,.disp{ font-family:'Lexend', system-ui, sans-serif; text-wrap:balance; }
+  .mono{ font-family:'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  a{color:var(--accent);}
+  button{ font-family:inherit; cursor:pointer; }
+  input,select,textarea{ font-family:inherit; font-size:13px; color:var(--ink); background:var(--surface); border:1px solid var(--border); border-radius:7px; padding:8px 10px; }
+  input:focus,select:focus,textarea:focus,button:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .app{ display:flex; min-height:100vh; }
+  .sidebar{ width:216px; flex:0 0 216px; background:var(--surface); border-right:1px solid var(--border); padding:20px 14px; display:flex; flex-direction:column; gap:22px; position:sticky; top:0; height:100vh; }
+  .brand{ display:flex; align-items:center; gap:9px; padding:0 6px; }
+  .brand .mark{ width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--accent-ink); display:flex;align-items:center;justify-content:center;font-family:'Lexend';font-weight:700;font-size:13px;flex:0 0 auto; }
+  .brand .name{ font-family:'Lexend'; font-weight:600; font-size:14.5px; line-height:1.2; }
+  .brand .sub{ font-size:10.5px; color:var(--ink-dim); letter-spacing:.02em; }
+  .nav{ display:flex; flex-direction:column; gap:2px; }
+  .nav button{ all:unset; cursor:pointer; padding:9px 10px; border-radius:7px; font-size:13px; font-weight:500; color:var(--ink-dim); display:flex; align-items:center; gap:9px; }
+  .nav button:hover{ background:var(--surface-2); color:var(--ink); }
+  .nav button.active{ background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .nav .dot{ width:6px;height:6px;border-radius:50%; background:currentColor; opacity:.55; flex:0 0 auto; }
+  .side-foot{ margin-top:auto; padding:10px; border-top:1px solid var(--border); font-size:11.5px; color:var(--ink-dim); }
+  .who{ display:flex; align-items:center; gap:8px; }
+  .who img{ width:24px;height:24px;border-radius:50%; }
+  .who b{ color:var(--ink); font-weight:600; display:block; font-size:12px; }
+  .link-btn{ all:unset; cursor:pointer; color:var(--accent); font-size:11.5px; }
+  .main{ flex:1 1 auto; min-width:0; padding:26px 32px 60px; max-width:1180px; }
+  .pagehead{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:4px; flex-wrap:wrap;}
+  .pagehead h1{ font-size:21px; font-weight:700; margin:0; }
+  .pagehead .desc{ color:var(--ink-dim); font-size:13px; margin:4px 0 20px; max-width:66ch; }
+  .btn{ display:inline-flex; align-items:center; gap:6px; border-radius:7px; border:1px solid var(--border); background:var(--surface); padding:8px 13px; font-size:13px; font-weight:600; color:var(--ink); }
+  .btn:hover{ border-color:var(--accent); }
+  .btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .btn.primary:hover{ filter:brightness(1.06); }
+  .btn.ghost{ background:transparent; border-color:transparent; color:var(--ink-dim); }
+  .btn.ghost:hover{ background:var(--surface-2); color:var(--ink); }
+  .btn.small{ padding:5px 9px; font-size:12px; }
+  .filters{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:18px; padding:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+  .filters .search{ flex:1 1 180px; min-width:150px; }
+  .filters .count{ margin-left:auto; font-size:12px; color:var(--ink-dim); white-space:nowrap; }
+  .pill{ display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; letter-spacing:.01em; }
+  .pill.level{ background:var(--blue-soft); color:var(--blue); }
+  .pill.type{ background:var(--accent-soft); color:var(--accent); }
+  .pill.diff-medium{ background:var(--gold-soft); color:var(--gold); }
+  .pill.diff-hard{ background:#f3e3d4; color:#a15a1e; }
+  .pill.diff-very_hard{ background:var(--red-soft); color:var(--red); }
+  .pill.status-draft{ background:var(--surface-2); color:var(--ink-dim); }
+  .pill.status-in_review{ background:var(--blue-soft); color:var(--blue); }
+  .pill.status-finalized{ background:var(--accent-soft); color:var(--accent); }
+  .pill.status-uploaded{ background:#0f6b5c; color:#fff; }
+  :root:not([data-theme="light"]) .pill.status-uploaded{ background:#1a2e27; color:#7ee0c4; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 15px; box-shadow:var(--shadow); cursor:pointer; display:flex; flex-direction:column; gap:9px; }
+  .card:hover{ border-color:var(--accent); }
+  .card .tags{ display:flex; flex-wrap:wrap; gap:5px; }
+  .card .qtitle{ font-family:'Lexend'; font-weight:600; font-size:14px; line-height:1.35; }
+  .card .qprompt{ font-size:12.5px; color:var(--ink-dim); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .card .meta{ display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--ink-dim); margin-top:auto; padding-top:8px; border-top:1px solid var(--border); }
+  .empty{ padding:40px 20px; text-align:center; color:var(--ink-dim); border:1px dashed var(--border); border-radius:11px; }
+  .overlay{ position:fixed; inset:0; background:rgba(10,14,12,.45); display:flex; justify-content:flex-end; z-index:40; }
+  .drawer{ width:min(560px, 100vw); background:var(--surface); height:100vh; overflow-y:auto; padding:22px 24px 40px; box-shadow:-10px 0 30px rgba(0,0,0,.15); }
+  .drawer-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:6px; }
+  .drawer h2{ font-size:18px; margin:0 0 2px; }
+  .section-label{ font-family:'Lexend'; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin:20px 0 8px; }
+  .field{ display:flex; flex-direction:column; gap:5px; margin-bottom:12px; }
+  .field label{ font-size:12px; font-weight:600; color:var(--ink-dim); }
+  .field .hint{ font-size:11px; color:var(--ink-dim); font-weight:400; }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .opt-row{ display:flex; align-items:center; gap:8px; }
+  .opt-row input[type="text"]{ flex:1; }
+  .opt-row input[type="radio"]{ accent-color:var(--accent); }
+  .prompt-box{ background:var(--surface-2); border-radius:9px; padding:12px 13px; font-size:13.5px; line-height:1.6; white-space:pre-wrap; }
+  .prompt-box.ur{ direction:rtl; text-align:right; font-size:15px; }
+  .opt-list{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .opt-item{ display:flex; align-items:center; gap:8px; font-size:13px; padding:7px 10px; border-radius:7px; background:var(--surface-2); }
+  .opt-item.correct{ background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .opt-item .k{ font-family:'IBM Plex Mono'; font-size:11px; color:var(--ink-dim); }
+  .status-track{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;}
+  .comment{ padding:10px 0; border-bottom:1px solid var(--border); }
+  .comment:last-child{ border-bottom:none; }
+  .comment .who{ font-size:12px; font-weight:600; }
+  .comment .when{ font-size:11px; color:var(--ink-dim); font-weight:400; }
+  .comment .txt{ font-size:13px; margin-top:3px; }
+  .edit-log{ font-size:11.5px; color:var(--ink-dim); }
+  .edit-log li{ margin-bottom:3px; }
+  .rate-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .rate-row .star-btns button{ all:unset; cursor:pointer; font-size:18px; color:var(--border); }
+  .rate-row .star-btns button.on{ color:var(--gold); }
+  .curr-table{ width:100%; border-collapse:collapse; font-size:13px; }
+  .curr-table th{ text-align:left; font-family:'Lexend'; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-dim); padding:8px 10px; border-bottom:1px solid var(--border); }
+  .curr-table td{ padding:10px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .curr-table tr:hover td{ background:var(--surface-2); }
+  .unit-chip{ font-family:'IBM Plex Mono'; font-weight:600; font-size:12px; background:var(--surface-2); padding:2px 7px; border-radius:5px; }
+  .level-block{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); overflow-x:auto; }
+  .level-block h3{ margin:0 0 2px; font-size:15px; }
+  .level-block .sub{ font-size:12px; color:var(--ink-dim); margin-bottom:10px; }
+  .stat-tile{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 16px; box-shadow:var(--shadow); }
+  .stat-tile .num{ font-family:'IBM Plex Mono'; font-size:22px; font-weight:600; }
+  .stat-tile .lbl{ font-size:11.5px; color:var(--ink-dim); }
+  .admin-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-bottom:20px; }
+  table.data{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.data th{ text-align:left; padding:8px 9px; border-bottom:1px solid var(--border); font-family:'Lexend'; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-dim); position:sticky; top:0; background:var(--surface); }
+  table.data td{ padding:8px 9px; border-bottom:1px solid var(--border); }
+  .quality{ font-weight:700; font-size:11px; padding:2px 8px; border-radius:999px; display:inline-block; }
+  .quality.excellent{ background:var(--accent-soft); color:var(--accent); }
+  .quality.good{ background:var(--blue-soft); color:var(--blue); }
+  .quality.fair{ background:var(--gold-soft); color:var(--gold); }
+  .quality.ambiguous{ background:var(--red-soft); color:var(--red); }
+  .table-wrap{ overflow-x:auto; background:var(--surface); border:1px solid var(--border); border-radius:11px; box-shadow:var(--shadow); }
+  .gate{ position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px; }
+  .gate-card{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:30px 28px; width:min(380px,100%); box-shadow:var(--shadow); text-align:center; }
+  .gate-card .mark{ width:44px;height:44px;border-radius:11px;background:var(--accent);color:var(--accent-ink); display:flex;align-items:center;justify-content:center;font-family:'Lexend';font-weight:700;font-size:17px; margin:0 auto 14px; }
+  .gate-card h2{ font-size:17px; margin:0 0 5px; }
+  .gate-card p{ font-size:12.5px; color:var(--ink-dim); margin:0 0 16px; }
+  .gbtn{ display:flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:10px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface); font-weight:600; font-size:13.5px; color:var(--ink); }
+  .gbtn:hover{ border-color:var(--accent); }
+  .note{ font-size:11px; color:var(--ink-dim); margin-top:10px; line-height:1.5; }
+  .toast{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 16px; border-radius:8px; font-size:12.5px; z-index:200; box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px); }
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:5px; }
+  @media (max-width:760px){
+    .sidebar{ position:fixed; z-index:30; transform:translateX(-100%); transition:transform .2s; }
+    .sidebar.open{ transform:translateX(0); }
+    .main{ padding:18px 16px 50px; }
+    .row2{ grid-template-columns:1fr; }
+    .drawer{ width:100vw; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <nav class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">PMC</div>
+      <div>
+        <div class="name">Question Bank</div>
+        <div class="sub">Sundar STEM &middot; PMC 4&ndash;7</div>
+      </div>
+    </div>
+    <div class="nav" id="nav">
+      <button data-tab="bank" class="active"><span class="dot"></span>Question Bank</button>
+      <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
+      <button data-tab="admin"><span class="dot"></span>Admin &amp; Analytics</button>
+    </div>
+    <div class="side-foot">
+      <div class="who" id="who-box"></div>
+      <button class="link-btn" id="signout-btn" style="margin-top:8px;">Sign out</button>
+    </div>
+  </nav>
+  <main class="main" id="main"></main>
+</div>
+
+<div id="modal-root"></div>
+<div class="toast" id="toast"></div>
+
+<!--
+  ============================================================
+  FIREBASE CONFIG — replace with your own project's values.
+  Get these from: Firebase Console → Project settings → General
+  → "Your apps" → Web app → SDK setup and configuration.
+  See SETUP.md in this repo for the full walkthrough.
+  ============================================================
+-->
+<script>
+  window.FIREBASE_CONFIG = {
+    apiKey: "REPLACE_ME",
+    authDomain: "REPLACE_ME.firebaseapp.com",
+    projectId: "REPLACE_ME",
+    storageBucket: "REPLACE_ME.appspot.com",
+    messagingSenderId: "REPLACE_ME",
+    appId: "REPLACE_ME"
+  };
+  // Optional: restrict the Google sign-in account picker to one email domain
+  // (a UI hint only — real enforcement happens in Firestore security rules
+  // via the `teachers` allow-list collection, see SETUP.md).
+  window.HOSTED_DOMAIN = ""; // e.g. "sundarstem.edu.pk", or leave blank
+</script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
+  collection, query, orderBy, limit, onSnapshot
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+/* ---------------------------------------------------------------
+   PMC Question Bank — GitHub Pages + Firebase edition.
+   Auth: Google sign-in (Firebase Auth).
+   Access control: a viewer must have a document in the `teachers`
+   collection (doc id = their email) before they can read/write —
+   enforced by Firestore security rules, not by this client code.
+   See SETUP.md for exact rules to paste into the Firebase console.
+--------------------------------------------------------------- */
+
+const app = initializeApp(window.FIREBASE_CONFIG);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const LEVELS = ["PMC-4","PMC-5","PMC-6","PMC-7"];
+const QTYPES = [
+  {v:"aptitude", l:"Math Aptitude"},
+  {v:"iq_puzzle", l:"IQ / Logic Puzzle"},
+  {v:"math_puzzle", l:"Math Puzzle (graphic)"}
+];
+const DIFFS = [
+  {v:"medium", l:"Medium"}, {v:"hard", l:"Hard"}, {v:"very_hard", l:"Very Hard"}
+];
+const STATUSES = [
+  {v:"draft", l:"Draft"}, {v:"in_review", l:"In Review"},
+  {v:"finalized", l:"Finalized"}, {v:"uploaded", l:"Uploaded to Quilgo"}
+];
+const UNIT_OPTIONS = ["3A","3B","3C","3D","4A","4B","4C","4D","5A","5B","5C","5D","N/A — pure logic"];
+
+const CURRICULUM = [
+  { level:"PMC-4", age:"10 yrs", book:"Beast Academy Book 3", units:[
+    {u:"3A", t:"Shapes", sub:"Angles, triangles, quadrilaterals, other polygons, polyomino puzzles; skip-counting, repeated addition, arithmetic sequences"},
+    {u:"3B", t:"Multiplication", sub:"Times tables, commutative & associative properties, multiplying by numbers ending in zero(es); perfect squares & properties of squaring"},
+    {u:"3C", t:"Variables", sub:"Writing/evaluating expressions & equations, solving simple equations; division models & strategies, distributive property"},
+    {u:"3D", t:"Fractions", sub:"Unit fractions, number line, mixed numbers, equivalent/comparing/ordering/simplifying fractions; measurement & area"},
+  ]},
+  { level:"PMC-5", age:"11 yrs", book:"Beast Academy Book 4", units:[
+    {u:"4A", t:"Shapes & Multiplication", sub:"Angle measurement, parallel/perpendicular lines, symmetry; distributive property, multi-digit multiplication, units-digit patterns"},
+    {u:"4B", t:"Counting & Division", sub:"Counting lists, independent events, Venn diagrams, factorials, counting pairs; special quotients, long division, divisibility"},
+    {u:"4C", t:"Factors & Fractions", sub:"Prime/composite numbers, divisibility, prime factorization, factor trees; adding/subtracting/converting fractions"},
+    {u:"4D", t:"Exponents, Logic, Integers & Probability", sub:"Powers, order of operations, perfect squares, binary; deductive reasoning, logic/grid puzzles; negative integers; probability"},
+  ]},
+  { level:"PMC-6 / PMC-7", age:"12–13 yrs", book:"Beast Academy Book 5 (PMC-7 weighted toward 5C–5D & Very Hard tier)", units:[
+    {u:"5A", t:"3D Solids & Integers", sub:"Classifying solids, nets, surface area, volume; multiplication, long products, division, exponents, negation"},
+    {u:"5B", t:"Statistics & Factors/Multiples", sub:"Median, mean, weighted average, range, mode; factors, GCF, multiples, LCM, factorials"},
+    {u:"5C", t:"Sequences & Ratios/Rates", sub:"Patterns, unknown terms, arithmetic sequences, triangular numbers; ratios, proportions, speed, rates, unit conversions"},
+    {u:"5D", t:"Percents, Roots, Expressions/Equations, Decimals, Exponents", sub:"Fraction/decimal/percent conversion, percent change; square/cube roots, Pythagorean theorem; expressions, multi-step equations; scientific notation"},
+  ]},
+];
+
+let currentUser = null;   // Firebase Auth user
+let isTeacherApproved = null; // null = checking, true/false once resolved
+let isAdminUser = false;
+
+let questions = [];
+let currentTab = "bank";
+let openQuestionId = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null;
+let _comments = [], _ratings = [];
+let filters = { level:"", qtype:"", diff:"", status:"", unit:"", q:"" };
+
+function escapeHtml(s){
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtDate(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+}
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._h);
+  toast._h = setTimeout(()=>t.classList.remove("show"), 2400);
+}
+function slugEmail(e){ return String(e||"").toLowerCase().replace(/[^a-z0-9@.]/g,"_"); }
+
+/* ---------------- auth ---------------- */
+function renderSignedOut(){
+  document.getElementById("modal-root").innerHTML = `
+    <div class="gate">
+      <div class="gate-card">
+        <div class="mark">PMC</div>
+        <h2>PMC Question Bank</h2>
+        <p>Sign in with your Google account to post, comment, and rate contest questions.</p>
+        <button class="gbtn" id="google-signin">
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.7 29.4 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 16.3 4 9.6 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.5 0 10.4-2.1 14.1-5.6l-6.5-5.5C29.6 34.7 27 35.5 24 35.5c-5.4 0-9.9-3.6-11.5-8.5l-6.6 5.1C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1 2.8-2.9 5.1-5.3 6.7l6.5 5.5C39.9 37.4 44 31.5 44 24c0-1.3-.1-2.7-.4-3.5z"/></svg>
+          Sign in with Google
+        </button>
+        <p class="note">Access is limited to teachers your admin has added to the bank. If you sign in and see "access pending," ask your admin to add your email.</p>
+      </div>
+    </div>`;
+  document.getElementById("google-signin").addEventListener("click", async ()=>{
+    const provider = new GoogleAuthProvider();
+    if(window.HOSTED_DOMAIN) provider.setCustomParameters({hd: window.HOSTED_DOMAIN});
+    try{ await signInWithPopup(auth, provider); }
+    catch(err){ console.error(err); toast("Sign-in failed: "+err.code); }
+  });
+}
+
+function renderPending(){
+  document.getElementById("modal-root").innerHTML = `
+    <div class="gate">
+      <div class="gate-card">
+        <div class="mark">PMC</div>
+        <h2>Access pending</h2>
+        <p>Signed in as <b>${escapeHtml(currentUser.email)}</b>, but this account isn't on the approved teacher list yet. Ask your admin to add a document for your email in the <span class="mono">teachers</span> collection (see SETUP.md).</p>
+        <button class="btn" id="recheck">I've been added — recheck</button>
+      </div>
+    </div>`;
+  document.getElementById("recheck").addEventListener("click", checkTeacherStatus);
+}
+
+async function checkTeacherStatus(){
+  if(!currentUser) return;
+  try{
+    const snap = await getDoc(doc(db, "teachers", currentUser.email));
+    if(snap.exists()){
+      isTeacherApproved = true;
+      isAdminUser = snap.data().role === "admin";
+      document.getElementById("modal-root").innerHTML = "";
+      renderSignedInChrome();
+      startDataSubscriptions();
+      renderTab();
+    } else {
+      isTeacherApproved = false;
+      renderPending();
+    }
+  }catch(err){
+    console.error(err);
+    toast("Couldn't check access ("+err.code+")");
+  }
+}
+
+function renderSignedInChrome(){
+  const who = document.getElementById("who-box");
+  who.innerHTML = `
+    ${currentUser.photoURL ? `<img src="${currentUser.photoURL}" alt="" />` : ""}
+    <div><b>${escapeHtml(currentUser.displayName || currentUser.email)}</b>${isAdminUser ? '<span style="font-size:10.5px;color:var(--accent);">Admin</span>' : ""}</div>
+  `;
+}
+
+onAuthStateChanged(auth, user=>{
+  currentUser = user;
+  if(unsubQuestions){ unsubQuestions(); unsubQuestions=null; }
+  if(!user){
+    isTeacherApproved = null;
+    document.getElementById("who-box").innerHTML = "";
+    renderSignedOut();
+    document.getElementById("main").innerHTML = "";
+    return;
+  }
+  checkTeacherStatus();
+});
+document.getElementById("signout-btn").addEventListener("click", ()=>signOut(auth));
+document.getElementById("nav").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-tab]"); if(!b) return;
+  currentTab = b.dataset.tab;
+  document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("active", x===b));
+  renderTab();
+});
+
+/* ---------------- data ---------------- */
+function startDataSubscriptions(){
+  const qy = query(collection(db,"questions"), orderBy("createdAt","desc"), limit(500));
+  unsubQuestions = onSnapshot(qy, snap=>{
+    questions = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(currentTab==="bank") renderTab();
+    if(openQuestionId) renderDrawer();
+  }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
+}
+
+function renderTab(){
+  if(!isTeacherApproved) return;
+  if(currentTab==="bank") renderBank();
+  else if(currentTab==="curriculum") renderCurriculum();
+  else if(currentTab==="admin") renderAdmin();
+}
+
+/* ================= BANK TAB ================= */
+function filteredQuestions(){
+  return questions.filter(q=>{
+    if(filters.level && !(Array.isArray(q.level) && q.level.includes(filters.level))) return false;
+    if(filters.qtype && q.qType!==filters.qtype) return false;
+    if(filters.diff && q.difficulty!==filters.diff) return false;
+    if(filters.status && q.status!==filters.status) return false;
+    if(filters.unit && q.unit!==filters.unit) return false;
+    if(filters.q){
+      const hay = ((q.titleEn||"")+" "+(q.promptEn||"")+" "+(q.subtopic||"")).toLowerCase();
+      if(!hay.includes(filters.q.toLowerCase())) return false;
+    }
+    return true;
+  });
+}
+
+function renderBank(){
+  const list = filteredQuestions();
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>Question Bank</h1><button class="btn primary" id="new-q">+ New Question</button></div>
+    <p class="desc">Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.</p>
+    <div class="filters">
+      <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
+      <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+      <select id="f-diff"><option value="">All difficulty</option>${DIFFS.map(t=>`<option value="${t.v}" ${filters.diff===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+      <select id="f-status"><option value="">All statuses</option>${STATUSES.map(t=>`<option value="${t.v}" ${filters.status===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+      <select id="f-unit"><option value="">All units</option>${UNIT_OPTIONS.map(u=>`<option ${filters.unit===u?"selected":""}>${u}</option>`).join("")}</select>
+      <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
+      <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
+    </div>
+    ${list.length===0 ? `<div class="empty">No questions match these filters yet.${questions.length===0?" Be the first to post one.":""}</div>` : `<div class="grid" id="q-grid"></div>`}
+  `;
+  document.getElementById("new-q").addEventListener("click", ()=>openForm(null));
+  ["level","type","diff","status","unit"].forEach(k=>{
+    document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; renderBank(); });
+  });
+  document.getElementById("f-q").addEventListener("input", e=>{ filters.q = e.target.value; renderBank(); });
+  if(list.length){
+    const grid = document.getElementById("q-grid");
+    grid.innerHTML = list.map(cardHtml).join("");
+    grid.addEventListener("click", e=>{ const c = e.target.closest(".card"); if(c) openQuestion(c.dataset.id); });
+  }
+}
+
+function cardHtml(q){
+  const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
+  const typeLbl = QTYPES.find(t=>t.v===q.qType)?.l || q.qType;
+  return `
+    <div class="card" data-id="${q.id}">
+      <div class="tags">
+        ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
+        <span class="pill type">${typeLbl}</span>
+        <span class="pill diff-${q.difficulty}">${diffLbl}</span>
+        <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+      </div>
+      <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
+      <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
+      <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${q.unit||"—"}</span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
+    </div>`;
+}
+
+function openForm(existing){
+  const isEdit = !!existing;
+  const root = document.getElementById("modal-root");
+  const levelSet = new Set(existing?.level||[]);
+  root.innerHTML = `
+    <div class="overlay" id="ov"><div class="drawer">
+      <div class="drawer-head"><h2>${isEdit? "Edit question" : "New question"}</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <form id="q-form">
+        <div class="field"><label>Title (internal, short)</label><input type="text" name="titleEn" required value="${escapeHtml(existing?.titleEn||"")}" placeholder="e.g. Grid path counting — 3x3" /></div>
+        <div class="section-label">Tags</div>
+        <div class="field"><label>Contest level(s)</label>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            ${LEVELS.map(l=>`<label style="display:flex; align-items:center; gap:5px; font-weight:400; font-size:13px;"><input type="checkbox" name="level" value="${l}" ${levelSet.has(l)?"checked":""}/> ${l}</label>`).join("")}
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Question type</label><select name="qType">${QTYPES.map(t=>`<option value="${t.v}" ${existing?.qType===t.v?"selected":""}>${t.l}</option>`).join("")}</select></div>
+          <div class="field"><label>Difficulty</label><select name="difficulty">${DIFFS.map(t=>`<option value="${t.v}" ${existing?.difficulty===t.v?"selected":""}>${t.l}</option>`).join("")}</select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Unit / Book</label><select name="unit">${UNIT_OPTIONS.map(u=>`<option ${existing?.unit===u?"selected":""}>${u}</option>`).join("")}</select></div>
+          <div class="field"><label>Subtopic</label><input type="text" name="subtopic" value="${escapeHtml(existing?.subtopic||"")}" placeholder="e.g. prime factorization" /></div>
+        </div>
+        <div class="section-label">Question (English)</div>
+        <div class="field"><label>Prompt</label><textarea name="promptEn" rows="3" required placeholder="Keep it short and unambiguous — see the Teacher Guide §6.">${escapeHtml(existing?.promptEn||"")}</textarea></div>
+        <div class="field"><label>Options (mark the correct one)</label><div id="opts-en"></div></div>
+        <div class="section-label">Question (Urdu)</div>
+        <div class="field"><label>Prompt (اردو)</label><textarea name="promptUr" rows="3" dir="rtl" style="text-align:right;" placeholder="Translate meaning, not word-for-word — see Teacher Guide §6.3.">${escapeHtml(existing?.promptUr||"")}</textarea></div>
+        <div class="section-label">Notes</div>
+        <div class="field"><label>Graphic needed? <span class="hint">(for math-puzzle items)</span></label><textarea name="graphicNote" rows="2">${escapeHtml(existing?.graphicNote||"")}</textarea></div>
+        <div class="field"><label>Status</label><select name="status">${STATUSES.map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select></div>
+        ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
+        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:8px;">${isEdit?"Save changes":"Post question"}</button>
+      </form>
+    </div></div>`;
+  const optsWrap = document.getElementById("opts-en");
+  const existingOpts = existing?.optionsEn && existing.optionsEn.length===4 ? existing.optionsEn : ["","","",""];
+  const correctIdx = existing?.correctIndex ?? 0;
+  optsWrap.innerHTML = existingOpts.map((o,i)=>`
+    <div class="opt-row">
+      <input type="radio" name="correctIndex" value="${i}" ${i===correctIdx?"checked":""} title="Mark correct" />
+      <span class="k">${String.fromCharCode(65+i)}</span>
+      <input type="text" data-opt="${i}" value="${escapeHtml(o)}" placeholder="Option ${String.fromCharCode(65+i)}" required />
+    </div>`).join("");
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  document.getElementById("q-form").addEventListener("submit", async e=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const level = fd.getAll("level");
+    if(level.length===0){ toast("Pick at least one contest level"); return; }
+    const optionsEn = [0,1,2,3].map(i=>optsWrap.querySelector(`[data-opt="${i}"]`).value.trim());
+    if(optionsEn.some(o=>!o)){ toast("All four options are required"); return; }
+    const correctIndex = parseInt(fd.get("correctIndex"),10);
+    const authorName = currentUser.displayName || currentUser.email;
+    const body = {
+      titleEn: fd.get("titleEn").trim(), level, qType: fd.get("qType"), difficulty: fd.get("difficulty"),
+      unit: fd.get("unit"), subtopic: fd.get("subtopic").trim(),
+      promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
+      optionsEn, correctIndex, graphicNote: fd.get("graphicNote").trim(),
+      status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
+      authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
+    };
+    try{
+      if(isEdit){
+        const note = fd.get("editNote")?.trim() || "Edited";
+        const hist = Array.isArray(existing.editHistory) ? existing.editHistory.slice(-19) : [];
+        hist.push({ts:new Date().toISOString(), by:authorName, note});
+        body.editHistory = hist;
+        await updateDoc(doc(db,"questions",existing.id), body);
+        toast("Question updated");
+      } else {
+        body.createdAt = body.updatedAt;
+        body.editHistory = [{ts:body.createdAt, by:authorName, note:"Created"}];
+        await addDoc(collection(db,"questions"), body);
+        toast("Question posted");
+      }
+      closeModal();
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
+  });
+}
+
+function closeModal(){
+  document.getElementById("modal-root").innerHTML = "";
+  openQuestionId = null;
+  if(unsubComments){ unsubComments(); unsubComments=null; }
+  if(unsubRatings){ unsubRatings(); unsubRatings=null; }
+}
+
+function openQuestion(id){
+  openQuestionId = id;
+  renderDrawer();
+  if(unsubComments) unsubComments();
+  if(unsubRatings) unsubRatings();
+  const commentsQ = query(collection(db,"questions",id,"comments"), orderBy("createdAt","asc"), limit(200));
+  unsubComments = onSnapshot(commentsQ, snap=>{ _comments = snap.docs.map(d=>({id:d.id,...d.data()})); if(openQuestionId===id) renderDrawerBody(); }, console.error);
+  const ratingsQ = query(collection(db,"questions",id,"ratings"), limit(200));
+  unsubRatings = onSnapshot(ratingsQ, snap=>{ _ratings = snap.docs.map(d=>({id:d.id,...d.data()})); if(openQuestionId===id) renderDrawerBody(); }, console.error);
+}
+
+function renderDrawer(){
+  const q = questions.find(x=>x.id===openQuestionId);
+  const root = document.getElementById("modal-root");
+  if(!q){ root.innerHTML=""; return; }
+  root.innerHTML = `<div class="overlay" id="ov"><div class="drawer" id="drawer-body"></div></div>`;
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  renderDrawerBody();
+}
+
+function renderDrawerBody(){
+  const q = questions.find(x=>x.id===openQuestionId);
+  const body = document.getElementById("drawer-body");
+  if(!q || !body) return;
+  const avg = _ratings.length ? (_ratings.reduce((s,r)=>s+(r.stars||0),0)/_ratings.length) : null;
+  const flags = _ratings.filter(r=>r.ambiguous).length;
+  const myRating = _ratings.find(r=>r.id===slugEmail(currentUser.email));
+  body.innerHTML = `
+    <div class="drawer-head">
+      <div>
+        <h2>${escapeHtml(q.titleEn||"Untitled")}</h2>
+        <div class="tags" style="margin-top:6px;">
+          ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
+          <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
+          <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}</span>
+          <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+        </div>
+      </div>
+      <button class="btn ghost small" id="close-form">Close</button>
+    </div>
+    <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${q.unit||"—"} / ${escapeHtml(q.subtopic||"—")}</div>
+    <div class="section-label">Prompt (English)</div>
+    <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
+    <div class="opt-list">${(q.optionsEn||[]).map((o,i)=>`<div class="opt-item ${i===q.correctIndex?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${escapeHtml(o)} ${i===q.correctIndex?"✓":""}</div>`).join("")}</div>
+    ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
+    ${q.graphicNote ? `<div class="section-label">Graphic needed</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
+    <div class="section-label">Status</div>
+    <div class="status-track">
+      ${STATUSES.map(s=>`<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}">${s.l}</button>`).join("")}
+      <button class="btn small ghost" id="edit-q" style="margin-left:auto;">Edit question</button>
+    </div>
+    <div class="section-label">Rate this question</div>
+    <div class="rate-row">
+      <div class="star-btns" id="star-btns">${[1,2,3,4,5].map(n=>`<button data-star="${n}" class="${myRating && n<=myRating.stars ? "on":""}">★</button>`).join("")}</div>
+      <span class="mono" style="font-size:12px; color:var(--ink-dim);">${avg? avg.toFixed(1)+" avg · "+_ratings.length+" rating"+(_ratings.length===1?"":"s") : "No ratings yet"} ${flags? " · "+flags+" flagged ambiguous":""}</span>
+      <label style="display:flex; align-items:center; gap:5px; font-size:12px; margin-left:auto;"><input type="checkbox" id="flag-amb" ${myRating?.ambiguous?"checked":""}/> Flag ambiguous</label>
+    </div>
+    <div class="section-label">Comments (${_comments.length})</div>
+    <div id="comments-list">${_comments.length? _comments.map(c=>`<div class="comment"><span class="who">${escapeHtml(c.authorName)}</span> <span class="when">${fmtDate(c.createdAt)}</span><div class="txt">${escapeHtml(c.text)}</div></div>`).join("") : `<div class="hint">No comments yet — be the first to give feedback.</div>`}</div>
+    <div class="field" style="margin-top:10px;"><textarea id="new-comment" rows="2" placeholder="Add a comment for other teachers…"></textarea><button class="btn small primary" id="post-comment" style="align-self:flex-start;">Post comment</button></div>
+    <div class="section-label">Edit history</div>
+    <ul class="edit-log">${(q.editHistory||[]).slice().reverse().map(h=>`<li>${fmtDate(h.ts)} — <b>${escapeHtml(h.by)}</b>: ${escapeHtml(h.note)}</li>`).join("")}</ul>
+  `;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("edit-q").addEventListener("click", ()=>openForm(q));
+  body.querySelectorAll("[data-status]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
+      catch(err){ toast("Couldn't update status"); }
+    });
+  });
+  document.getElementById("post-comment").addEventListener("click", async ()=>{
+    const txt = document.getElementById("new-comment").value.trim();
+    if(!txt) return;
+    try{
+      await addDoc(collection(db,"questions",q.id,"comments"), {authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email, text:txt, createdAt:new Date().toISOString()});
+      document.getElementById("new-comment").value = "";
+    }catch(err){ toast("Couldn't post comment"); }
+  });
+  document.getElementById("star-btns").addEventListener("click", async e=>{
+    const b = e.target.closest("[data-star]"); if(!b) return;
+    const stars = parseInt(b.dataset.star,10);
+    const ambiguous = document.getElementById("flag-amb").checked;
+    try{
+      await setDoc(doc(db,"questions",q.id,"ratings",slugEmail(currentUser.email)), {stars, ambiguous, authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email, updatedAt:new Date().toISOString()});
+      toast("Rating saved");
+    }catch(err){ toast("Couldn't save rating"); }
+  });
+  document.getElementById("flag-amb").addEventListener("change", async e=>{
+    try{
+      await setDoc(doc(db,"questions",q.id,"ratings",slugEmail(currentUser.email)), {
+        stars: myRating?.stars || 0, ambiguous: e.target.checked, authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email, updatedAt:new Date().toISOString()
+      });
+    }catch(err){}
+  });
+}
+
+/* ================= CURRICULUM TAB ================= */
+function renderCurriculum(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>Contest Curriculum Map</h1></div>
+    <p class="desc">Test-blueprint scaffold (Teacher Guide §7). Every Math Aptitude item should be tagged against one row below.</p>
+    ${CURRICULUM.map(c=>`
+      <div class="level-block">
+        <h3>${c.level} <span class="mono" style="font-weight:400; color:var(--ink-dim); font-size:12px;">— ${c.age}</span></h3>
+        <div class="sub">${c.book}</div>
+        <table class="curr-table"><thead><tr><th style="width:70px;">Unit</th><th style="width:160px;">Topic</th><th>Subtopics</th></tr></thead>
+        <tbody>${c.units.map(u=>`<tr><td><span class="unit-chip">${u.u}</span></td><td>${u.t}</td><td>${u.sub}</td></tr>`).join("")}</tbody></table>
+      </div>`).join("")}
+    <p class="note">Source: publicly listed Beast Academy Level 3, 4, and 5 chapter guides (beastacademy.com).</p>
+  `;
+}
+
+/* ================= ADMIN TAB ================= */
+function renderAdmin(){
+  const main = document.getElementById("main");
+  if(!isAdminUser){
+    main.innerHTML = `<div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
+      <div class="empty">Your account isn't marked as an admin. Ask whoever manages the <span class="mono">teachers</span> collection to set <span class="mono">role: "admin"</span> on your document.</div>`;
+    return;
+  }
+  const byStatus = {}; STATUSES.forEach(s=>byStatus[s.v]=0);
+  questions.forEach(q=>{ byStatus[q.status] = (byStatus[q.status]||0)+1; });
+  main.innerHTML = `
+    <div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
+    <p class="desc">Enter post-test performance per question to compute p-value and discrimination index (Teacher Guide §10).</p>
+    <div class="admin-grid">
+      ${STATUSES.map(s=>`<div class="stat-tile"><div class="num">${byStatus[s.v]||0}</div><div class="lbl">${s.l}</div></div>`).join("")}
+      <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
+    </div>
+    <div class="section-label">Enter post-test statistics</div>
+    <div class="filters" style="align-items:flex-end;">
+      <div class="field" style="margin:0; min-width:220px; flex:1;">
+        <label>Question</label>
+        <select id="stat-q"><option value="">Select a finalized/uploaded question…</option>
+          ${questions.filter(q=>q.status==="finalized"||q.status==="uploaded").map(q=>`<option value="${q.id}">${escapeHtml(q.titleEn)} (${(q.level||[]).join(", ")})</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div id="stat-form-wrap"></div>
+    <div class="section-label">Scored questions</div>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Question</th><th>Level</th><th>p-value</th><th>Discrimination</th><th>Quality</th><th>Attempts</th></tr></thead>
+      <tbody id="stats-tbody"><tr><td colspan="6" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+    </table></div>
+  `;
+  document.getElementById("stat-q").addEventListener("change", e=>{
+    if(e.target.value) renderStatForm(e.target.value);
+    else document.getElementById("stat-form-wrap").innerHTML = "";
+  });
+  loadAllStats();
+}
+
+function qualityLabel2(p,d){
+  if(d===null||isNaN(d)) return {v:"fair", l:"—"};
+  if(d>=0.40) return {v:"excellent", l:"Excellent"};
+  if(d>=0.30) return {v:"good", l:"Good"};
+  if(d>=0.20) return {v:"fair", l:"Fair / Marginal"};
+  return {v:"ambiguous", l:"Poor / Highly Ambiguous"};
+}
+
+function renderStatForm(qid){
+  const wrap = document.getElementById("stat-form-wrap");
+  wrap.innerHTML = `
+    <div class="level-block">
+      <div class="row2">
+        <div class="field"><label>Total attempts</label><input type="number" min="0" id="s-total" /></div>
+        <div class="field"><label>Total correct</label><input type="number" min="0" id="s-correct" /></div>
+        <div class="field"><label>Top-group (top ~27%) count</label><input type="number" min="0" id="s-topn" /></div>
+        <div class="field"><label>Top-group correct</label><input type="number" min="0" id="s-topc" /></div>
+        <div class="field"><label>Bottom-group (bottom ~27%) count</label><input type="number" min="0" id="s-botn" /></div>
+        <div class="field"><label>Bottom-group correct</label><input type="number" min="0" id="s-botc" /></div>
+      </div>
+      <button class="btn primary" id="save-stats">Compute &amp; save</button>
+      <span id="stat-preview" class="mono" style="margin-left:12px; font-size:12.5px;"></span>
+    </div>`;
+  document.getElementById("save-stats").addEventListener("click", async ()=>{
+    const total = parseFloat(document.getElementById("s-total").value);
+    const correct = parseFloat(document.getElementById("s-correct").value);
+    const topN = parseFloat(document.getElementById("s-topn").value);
+    const topC = parseFloat(document.getElementById("s-topc").value);
+    const botN = parseFloat(document.getElementById("s-botn").value);
+    const botC = parseFloat(document.getElementById("s-botc").value);
+    if([total,correct,topN,topC,botN,botC].some(v=>isNaN(v)||v<0) || total<=0 || topN<=0 || botN<=0){ toast("Fill in all fields with valid numbers"); return; }
+    const p = correct/total;
+    const d = (topC/topN) - (botC/botN);
+    const ql = qualityLabel2(p,d);
+    document.getElementById("stat-preview").textContent = `p = ${p.toFixed(2)} · D = ${d.toFixed(2)} · ${ql.l}`;
+    try{
+      await setDoc(doc(db,"questions",qid,"stats","post_test"), {
+        attempts:total, correct, topN, topCorrect:topC, botN, botCorrect:botC,
+        pValue:p, discrimination:d, qualityLabel:ql.l, qualityKey:ql.v,
+        enteredBy: currentUser.displayName||currentUser.email, updatedAt:new Date().toISOString()
+      });
+      toast("Statistics saved"); loadAllStats();
+    }catch(err){ console.error(err); toast("Couldn't save statistics"); }
+  });
+}
+
+async function loadAllStats(){
+  const tbody = document.getElementById("stats-tbody");
+  if(!tbody) return;
+  const rows = [];
+  const candidates = questions.filter(q=>q.status==="finalized"||q.status==="uploaded");
+  await Promise.all(candidates.map(async q=>{
+    try{
+      const snap = await getDoc(doc(db,"questions",q.id,"stats","post_test"));
+      if(snap.exists()) rows.push({q, d:snap.data()});
+    }catch(e){}
+  }));
+  if(!document.getElementById("stats-tbody")) return;
+  if(rows.length===0){ tbody.innerHTML = `<tr><td colspan="6" class="hint" style="padding:14px;">No post-test statistics entered yet.</td></tr>`; return; }
+  rows.sort((a,b)=> (a.d.discrimination??0) - (b.d.discrimination??0));
+  tbody.innerHTML = rows.map(({q,d})=>`
+    <tr>
+      <td>${escapeHtml(q.titleEn)}</td><td>${(q.level||[]).join(", ")}</td>
+      <td class="mono">${d.pValue!=null? d.pValue.toFixed(2):"—"}</td>
+      <td class="mono">${d.discrimination!=null? d.discrimination.toFixed(2):"—"}</td>
+      <td><span class="quality ${d.qualityKey}">${d.qualityLabel}</span></td>
+      <td class="mono">${d.attempts??"—"}</td>
+    </tr>`).join("");
+}
+</script>
+</body>
+</html>

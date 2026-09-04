@@ -1,0 +1,59 @@
+rules_version = '2';
+
+// PMC Question Bank — Firestore security rules
+// Access model: a signed-in Google user may read/write question data only
+// if they have a document in `teachers/{their email}`. Admin-only actions
+// (post-test statistics) additionally require role == "admin" on that doc.
+// Teacher documents are managed by hand in the Firebase console (or by an
+// existing admin) — there is no self-service sign-up.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isTeacher() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/teachers/$(request.auth.token.email));
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role == "admin";
+    }
+
+    // Each teacher can read their own allow-list entry (to check status);
+    // nobody can write it from the client — add/edit teachers from the
+    // Firebase console only.
+    match /teachers/{email} {
+      allow read: if isSignedIn() && request.auth.token.email == email;
+      allow write: if false;
+    }
+
+    match /questions/{questionId} {
+      allow read, create, update: if isTeacher();
+      allow delete: if isAdmin();
+
+      match /comments/{commentId} {
+        allow read, create: if isTeacher();
+        allow update, delete: if isAdmin();
+      }
+
+      match /ratings/{ratingId} {
+        // a teacher may only write a rating document whose authorEmail
+        // field matches their own signed-in email — prevents one teacher
+        // overwriting another's rating even though ratingId is client-set.
+        allow read: if isTeacher();
+        allow write: if isTeacher() &&
+          request.resource.data.authorEmail == request.auth.token.email;
+      }
+
+      match /stats/{statId} {
+        allow read: if isTeacher();
+        allow write: if isAdmin();
+      }
+    }
+  }
+}
