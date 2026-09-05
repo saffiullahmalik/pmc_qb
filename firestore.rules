@@ -36,6 +36,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /contests/{contestId} {
+      allow read, create, update: if isTeacher();
+      allow delete: if isAdmin();
+    }
+
     match /questions/{questionId} {
       allow read, create, update: if isTeacher();
       allow delete: if isAdmin();

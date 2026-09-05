@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PMC Question Bank</title>
+<title>Question Bank by SundarSTEM</title>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&display=swap');
 
   :root{
     --bg:#f4f6f3; --surface:#ffffff; --surface-2:#eceef0; --border:#d9ddd7; --ink:#1a221e; --ink-dim:#5b6660;
@@ -45,6 +46,7 @@
   .sidebar{ width:216px; flex:0 0 216px; background:var(--surface); border-right:1px solid var(--border); padding:20px 14px; display:flex; flex-direction:column; gap:22px; position:sticky; top:0; height:100vh; }
   .brand{ display:flex; align-items:center; gap:9px; padding:0 6px; }
   .brand .mark{ width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--accent-ink); display:flex;align-items:center;justify-content:center;font-family:'Lexend';font-weight:700;font-size:13px;flex:0 0 auto; }
+  .logo-mark{ background:transparent !important; object-fit:contain; }
   .brand .name{ font-family:'Lexend'; font-weight:600; font-size:14.5px; line-height:1.2; }
   .brand .sub{ font-size:10.5px; color:var(--ink-dim); letter-spacing:.02em; }
   .nav{ display:flex; flex-direction:column; gap:2px; }
@@ -68,6 +70,9 @@
   .btn.ghost{ background:transparent; border-color:transparent; color:var(--ink-dim); }
   .btn.ghost:hover{ background:var(--surface-2); color:var(--ink); }
   .btn.small{ padding:5px 9px; font-size:12px; }
+  .btn:disabled{ opacity:.65; cursor:default; }
+  .spinner{ display:inline-block; width:13px; height:13px; border-radius:50%; border:2px solid rgba(255,255,255,.4); border-top-color:currentColor; animation:spin .7s linear infinite; vertical-align:-2px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
   .filters{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:18px; padding:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
   .filters .search{ flex:1 1 180px; min-width:150px; }
   .filters .count{ margin-left:auto; font-size:12px; color:var(--ink-dim); white-space:nowrap; }
@@ -161,6 +166,35 @@
     .row2{ grid-template-columns:1fr; }
     .drawer{ width:100vw; }
   }
+
+  /* ---- print / contest paper ---- */
+  .print-overlay{ position:fixed; inset:0; background:#fff; z-index:200; overflow-y:auto; color:#161b19; }
+  .print-toolbar{ position:sticky; top:0; background:#f4f6f3; border-bottom:1px solid #d9ddd7; padding:10px 16px; display:flex; gap:10px; align-items:center; z-index:5; }
+  .print-page{ max-width:900px; margin:0 auto; padding:26px 22px 60px; }
+  .print-header{ display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #0f6b5c; padding-bottom:12px; margin-bottom:16px; }
+  .print-header img{ height:70px; }
+  .print-header h1{ font-size:1.4rem; margin:0 0 4px; }
+  .print-student-info{ display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; margin-top:14px; font-size:13px; }
+  .print-student-info span{ display:inline-block; border-bottom:1px solid #999; min-width:160px; }
+  .question-container{ border:0.75pt solid #333; border-radius:4px; padding:10px 12px; margin-bottom:14px; page-break-inside:avoid; }
+  .question-container.no-borders{ border-color:transparent; }
+  .q-text-row{ display:flex; align-items:stretch; gap:12px; }
+  .q-lang-box{ flex:1 1 50%; min-width:0; }
+  .q-lang-box.urdu{ font-family:'Noto Nastaliq Urdu', serif; direction:rtl; text-align:right; font-size:1.05rem; }
+  .q-lang-box .box-label{ display:block; font-size:11px; font-weight:700; color:#0f6b5c; margin-bottom:4px; }
+  .print-graphic{ text-align:center; margin:10px 0; }
+  .print-options-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-top:8px; }
+  .print-opt-item{ display:flex; align-items:baseline; gap:6px; font-size:13.5px; }
+  .print-opt-item .k{ font-weight:700; }
+  .answer-key{ page-break-before:always; }
+  .answer-key-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; font-size:13.5px; }
+  @media print{
+    body *{ visibility:hidden; }
+    .print-overlay, .print-overlay *{ visibility:visible; }
+    .print-overlay{ position:absolute; inset:0; overflow:visible; }
+    .print-toolbar{ display:none; }
+    @page{ size:A4; margin:1.2cm; }
+  }
 </style>
 </head>
 <body>
@@ -168,14 +202,15 @@
 <div class="app">
   <nav class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="mark">PMC</div>
+      <img class="mark logo-mark" src="sundarstem_logo.png" alt="SundarSTEM" />
       <div>
         <div class="name">Question Bank</div>
-        <div class="sub">Sundar STEM &middot; PMC 4&ndash;7</div>
+        <div class="sub">by SundarSTEM &middot; PMC 4&ndash;7</div>
       </div>
     </div>
     <div class="nav" id="nav">
       <button data-tab="bank" class="active"><span class="dot"></span>Question Bank</button>
+      <button data-tab="contests"><span class="dot"></span>Contests</button>
       <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
       <button data-tab="admin"><span class="dot"></span>Admin &amp; Analytics</button>
     </div>
@@ -218,11 +253,11 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
-  collection, query, orderBy, limit, onSnapshot
+  collection, query, orderBy, limit, onSnapshot, arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
-   PMC Question Bank — GitHub Pages + Firebase edition.
+   Question Bank by SundarSTEM — GitHub Pages + Firebase edition.
    Auth: email + password (Firebase Auth). Accounts are created only
    by an admin, from the Admin tab — there is no self-service sign-up.
    Access control: a viewer must have a document in the `teachers`
@@ -276,9 +311,10 @@ let isTeacherApproved = null; // null = checking, true/false once resolved
 let isAdminUser = false;
 
 let questions = [];
+let contests = [];
 let currentTab = "bank";
 let openQuestionId = null;
-let unsubQuestions = null, unsubComments = null, unsubRatings = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null;
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", q:"" };
 
@@ -303,26 +339,33 @@ function renderSignedOut(){
   document.getElementById("modal-root").innerHTML = `
     <div class="gate">
       <div class="gate-card">
-        <div class="mark">PMC</div>
-        <h2>PMC Question Bank</h2>
+        <img class="mark logo-mark" src="sundarstem_logo.png" alt="SundarSTEM" />
+        <h2>Question Bank by SundarSTEM</h2>
         <p>Sign in with the email and password your admin gave you.</p>
         <div style="text-align:left;">
           <div class="field"><label>Email</label><input type="email" id="login-email" autocomplete="username" /></div>
           <div class="field"><label>Password</label><input type="password" id="login-password" autocomplete="current-password" /></div>
         </div>
-        <button class="btn primary" id="login-btn" style="width:100%; justify-content:center;">Sign in</button>
+        <button class="btn primary" id="login-btn" style="width:100%; justify-content:center;"><span id="login-btn-label">Sign in</span></button>
         <button class="btn ghost" id="forgot-btn" style="width:100%; justify-content:center; margin-top:6px;">Forgot password?</button>
         <p class="note">Access is limited to teachers your admin has created an account for. There is no self sign-up — ask your admin if you don't have credentials.</p>
       </div>
     </div>`;
   const emailEl = document.getElementById("login-email");
   const passEl = document.getElementById("login-password");
+  const loginBtn = document.getElementById("login-btn");
   const doLogin = async ()=>{
     const email = emailEl.value.trim().toLowerCase();
     const password = passEl.value;
     if(!email || !password){ toast("Enter email and password"); return; }
+    loginBtn.disabled = true;
+    document.getElementById("login-btn-label").innerHTML = `<span class="spinner"></span> Signing in…`;
     try{ await signInWithEmailAndPassword(auth, email, password); }
-    catch(err){ console.error(err); toast("Sign-in failed: "+err.code); }
+    catch(err){
+      console.error(err); toast("Sign-in failed: "+err.code);
+      loginBtn.disabled = false;
+      document.getElementById("login-btn-label").textContent = "Sign in";
+    }
   };
   document.getElementById("login-btn").addEventListener("click", doLogin);
   passEl.addEventListener("keydown", e=>{ if(e.key==="Enter") doLogin(); });
@@ -338,7 +381,7 @@ function renderPending(){
   document.getElementById("modal-root").innerHTML = `
     <div class="gate">
       <div class="gate-card">
-        <div class="mark">PMC</div>
+        <img class="mark logo-mark" src="sundarstem_logo.png" alt="SundarSTEM" />
         <h2>Access pending</h2>
         <p>Signed in as <b>${escapeHtml(currentUser.email)}</b>, but this account isn't on the approved teacher list yet. Ask your admin to add your email in the Admin tab's Manage Teachers section (see SETUP.md).</p>
         <button class="btn" id="recheck">I've been added — recheck</button>
@@ -380,6 +423,7 @@ onAuthStateChanged(auth, user=>{
   currentUser = user;
   if(unsubQuestions){ unsubQuestions(); unsubQuestions=null; }
   if(unsubTeachers){ unsubTeachers(); unsubTeachers=null; }
+  if(unsubContests){ unsubContests(); unsubContests=null; }
   if(!user){
     isTeacherApproved = null;
     document.getElementById("who-box").innerHTML = "";
@@ -403,13 +447,20 @@ function startDataSubscriptions(){
   unsubQuestions = onSnapshot(qy, snap=>{
     questions = snap.docs.map(d=>({id:d.id, ...d.data()}));
     if(currentTab==="bank") renderTab();
+    if(currentTab==="contests") renderTab();
     if(openQuestionId) renderDrawer();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
+  const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
+  unsubContests = onSnapshot(cy, snap=>{
+    contests = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(currentTab==="contests") renderTab();
+  }, err=>{ console.error(err); toast("Couldn't load contests ("+err.code+")"); });
 }
 
 function renderTab(){
   if(!isTeacherApproved) return;
   if(currentTab==="bank") renderBank();
+  else if(currentTab==="contests") renderContests();
   else if(currentTab==="curriculum") renderCurriculum();
   else if(currentTab==="admin") renderAdmin();
 }
@@ -469,6 +520,8 @@ function cardHtml(q){
         <span class="pill type">${typeLbl}</span>
         <span class="pill diff-${q.difficulty}">${diffLbl}</span>
         <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+        ${q.uploadedToQuilgo ? `<span class="pill status-uploaded">Added to Quilgo</span>` : ""}
+        ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
       </div>
       <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
       <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
@@ -601,6 +654,8 @@ function renderDrawerBody(){
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}</span>
           <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+          ${q.uploadedToQuilgo ? `<span class="pill status-uploaded">Added to Quilgo</span>` : ""}
+          ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>
       </div>
       <button class="btn ghost small" id="close-form">Close</button>
@@ -616,6 +671,8 @@ function renderDrawerBody(){
       ${STATUSES.map(s=>`<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}">${s.l}</button>`).join("")}
       <button class="btn small ghost" id="edit-q" style="margin-left:auto;">Edit question</button>
     </div>
+    ${(q.status==="finalized"||q.status==="uploaded"||(q.usedIn||[]).length) ? `
+    <button class="btn small ${q.uploadedToQuilgo?"primary":""}" id="toggle-quilgo" style="margin-top:8px;">${q.uploadedToQuilgo ? "Uploaded to Quilgo — undo" : "Mark as Uploaded to Quilgo"}</button>` : ""}
     <div class="section-label">Rate this question</div>
     <div class="rate-row">
       <div class="star-btns" id="star-btns">${[1,2,3,4,5].map(n=>`<button data-star="${n}" class="${myRating && n<=myRating.stars ? "on":""}">★</button>`).join("")}</div>
@@ -635,6 +692,10 @@ function renderDrawerBody(){
       try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
       catch(err){ toast("Couldn't update status"); }
     });
+  });
+  document.getElementById("toggle-quilgo")?.addEventListener("click", async ()=>{
+    try{ await updateDoc(doc(db,"questions",q.id), {uploadedToQuilgo: !q.uploadedToQuilgo}); }
+    catch(err){ toast("Couldn't update Quilgo tag"); }
   });
   document.getElementById("post-comment").addEventListener("click", async ()=>{
     const txt = document.getElementById("new-comment").value.trim();
@@ -660,6 +721,149 @@ function renderDrawerBody(){
       });
     }catch(err){}
   });
+}
+
+/* ================= CONTESTS TAB ================= */
+function renderContests(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>Contests</h1><button class="btn primary" id="new-contest">+ Create New Contest</button></div>
+    <p class="desc">Assemble a paper from finalized questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
+    ${contests.length===0 ? `<div class="empty">No contests created yet.</div>` : `
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th></th></tr></thead>
+      <tbody>
+        ${contests.map(c=>`
+        <tr>
+          <td>${escapeHtml(c.name)}</td>
+          <td class="mono">${fmtDate(c.createdAt)}</td>
+          <td class="mono">${(c.questionIds||[]).length}</td>
+          <td class="mono">${c.durationMinutes?c.durationMinutes+" min":"—"}</td>
+          <td class="mono">${c.totalMarks??"—"}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
+            ${isAdminUser?`<button class="btn small" style="color:var(--red);" data-delete-contest="${c.id}">Delete</button>`:""}
+          </td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>`}
+  `;
+  document.getElementById("new-contest").addEventListener("click", openContestForm);
+  main.querySelectorAll("[data-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.print)));
+  main.querySelectorAll("[data-delete-contest]").forEach(b=>b.addEventListener("click", async ()=>{
+    if(!confirm("Delete this contest record? This won't remove the usage tags already applied to its questions.")) return;
+    try{ await deleteDoc(doc(db,"contests",b.dataset.deleteContest)); }
+    catch(err){ toast("Couldn't delete contest"); }
+  }));
+}
+
+function openContestForm(){
+  const root = document.getElementById("modal-root");
+  const eligible = questions.filter(q=>q.status==="finalized"||q.status==="uploaded");
+  root.innerHTML = `
+    <div class="overlay" id="ov"><div class="drawer">
+      <div class="drawer-head"><h2>Create new contest</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <form id="contest-form">
+        <div class="field"><label>Contest name <span class="hint">(also stamped on each question as a usage tag)</span></label><input type="text" name="name" required placeholder="e.g. PMC Fall 2026 – Round 1 – Day 1 – Slot 1" /></div>
+        <div class="field"><label>Paper header text</label><input type="text" name="headerText" placeholder="e.g. PMC 4 (Fall 2026) — Round 1" /></div>
+        <div class="row2">
+          <div class="field"><label>Duration (minutes)</label><input type="number" name="durationMinutes" min="1" placeholder="60" /></div>
+          <div class="field"><label>Total marks</label><input type="number" name="totalMarks" min="1" placeholder="30" /></div>
+        </div>
+        <div class="section-label">Select questions (${eligible.length} finalized/uploaded available)</div>
+        ${eligible.length===0 ? `<div class="empty">No finalized or uploaded questions yet.</div>` : `
+        <div id="q-picker" style="max-height:320px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
+          ${eligible.map(q=>`
+          <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+            <input type="checkbox" name="qid" value="${q.id}" style="margin-top:3px;" />
+            <span><b>${escapeHtml(q.titleEn||"Untitled")}</b> — ${(q.level||[]).join(", ")} · ${q.unit||"—"}</span>
+          </label>`).join("")}
+        </div>`}
+        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:12px;" ${eligible.length===0?"disabled":""}>Create contest</button>
+      </form>
+    </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  document.getElementById("contest-form").addEventListener("submit", async e=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = fd.get("name").trim();
+    const questionIds = fd.getAll("qid");
+    if(questionIds.length===0){ toast("Pick at least one question"); return; }
+    try{
+      await addDoc(collection(db,"contests"), {
+        name, headerText: fd.get("headerText").trim(),
+        durationMinutes: fd.get("durationMinutes") ? parseInt(fd.get("durationMinutes"),10) : null,
+        totalMarks: fd.get("totalMarks") ? parseInt(fd.get("totalMarks"),10) : null,
+        questionIds, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+        createdAt: new Date().toISOString()
+      });
+      await Promise.all(questionIds.map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayUnion(name)})));
+      toast("Contest created");
+      closeModal();
+    }catch(err){ console.error(err); toast("Couldn't create contest ("+err.code+")"); }
+  });
+}
+
+function renderPrintView(contestId){
+  const c = contests.find(x=>x.id===contestId);
+  if(!c){ toast("Contest not found"); return; }
+  const qs = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+    <div class="print-overlay" id="print-overlay">
+      <div class="print-toolbar">
+        <button class="btn ghost small" id="close-print">Close</button>
+        <button class="btn primary small" id="do-print">Print / Save as PDF</button>
+        <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; margin-left:auto;"><input type="checkbox" id="toggle-borders" checked/> Question box borders</label>
+      </div>
+      <div class="print-page">
+        <div class="print-header">
+          <div>
+            <img src="sundarstem_logo.png" alt="SundarSTEM" />
+          </div>
+          <div style="text-align:right;">
+            <h1>${escapeHtml(c.headerText || c.name)}</h1>
+            <p class="mono" style="margin:0;">${c.durationMinutes?"Time: "+c.durationMinutes+" Minutes":""}${c.durationMinutes && qs.length ? " | " : ""}${qs.length?"Total Questions: "+qs.length:""}${c.totalMarks?" | Total Marks: "+c.totalMarks:""}</p>
+          </div>
+        </div>
+        <div class="print-student-info">
+          <div>Name: <span>&nbsp;</span></div>
+          <div>Roll Number: <span>&nbsp;</span></div>
+          <div>School: <span>&nbsp;</span></div>
+          <div>Date: <span>&nbsp;</span></div>
+        </div>
+        ${qs.map((q,i)=>`
+        <div class="question-container">
+          <div class="q-text-row">
+            <div class="q-lang-box english">
+              <span class="box-label">Question ${i+1}</span>
+              <p>${escapeHtml(q.promptEn||"")}</p>
+            </div>
+            <div class="q-lang-box urdu">
+              <span class="box-label">سوال ${i+1}</span>
+              <p>${escapeHtml(q.promptUr||"")}</p>
+            </div>
+          </div>
+          ${q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : ""}
+          <div class="print-options-grid">
+            ${(q.optionsEn||[]).map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${escapeHtml(o)}</div>`).join("")}
+          </div>
+        </div>`).join("")}
+        <div class="answer-key">
+          <h2>Answer Key — ${escapeHtml(c.name)}</h2>
+          <div class="answer-key-grid">
+            ${qs.map((q,i)=>`<div><b>Q${i+1}.</b> ${String.fromCharCode(65+(q.correctIndex??0))}</div>`).join("")}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById("close-print").addEventListener("click", closeModal);
+  document.getElementById("do-print").addEventListener("click", ()=>window.print());
+  document.getElementById("toggle-borders").addEventListener("change", e=>{
+    document.querySelectorAll("#print-overlay .question-container").forEach(el=>el.classList.toggle("no-borders", !e.target.checked));
+  });
+  if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("print-overlay")]).catch(console.error);
 }
 
 /* ================= CURRICULUM TAB ================= */

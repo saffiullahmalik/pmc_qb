@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMC 4 (Round 2): Bubble Answer Sheet</title>
+    <link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400..700;1,400..700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --border: #cbd5e1;
+            --bubble: #1e293b;
+        }
+
+        @media print {
+            body {
+                padding: 0;
+            }
+
+            @page {
+                size: A4;
+                margin: 0.8cm;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'STIX Two Text', serif;
+            color: #1e293b;
+            line-height: 1.3;
+            padding: 0.5cm;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            border-bottom: 3px solid var(--primary);
+            padding-bottom: 0.6rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .logo-img {
+            max-height: 90px;
+            width: auto;
+            margin-bottom: 0.6rem;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.2rem;
+        }
+
+        .meta-info {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            font-weight: 600;
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+
+        .student-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .info-field {
+            border: 1px solid var(--border);
+            padding: 0.6rem;
+            border-radius: 4px;
+        }
+
+        .label {
+            display: block;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #64748b;
+            margin-bottom: 0.2rem;
+        }
+
+        .value-line {
+            height: 1.3rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .bubble-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem 3.5rem;
+        }
+
+        .q-row {
+            display: flex;
+            align-items: center;
+            padding: 0.4rem 0;
+            border-bottom: 1px dashed #f1f5f9;
+        }
+
+        .q-num {
+            width: 30px;
+            font-weight: 700;
+            font-size: 1rem;
+            color: var(--primary);
+        }
+
+        .options {
+            display: flex;
+            gap: 0.8rem;
+            flex-grow: 1;
+            justify-content: space-between;
+        }
+
+        .bubble-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .bubble {
+            width: 26px;
+            height: 26px;
+            border: 1.5px solid var(--bubble);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .instructions {
+            margin-top: 1.2rem;
+            padding: 1rem;
+            border: 1px solid #fde68a;
+            background: #fffbeb;
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+
+        .instructions h3 {
+            font-size: 0.95rem;
+            margin-bottom: 0.3rem;
+            color: #92400e;
+        }
+
+        .footer {
+            margin-top: 1rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <header>
+            <img src="sundarstem_logo.png" alt="SundarSTEM Logo" class="logo-img">
+            <h1>PMC 4 (Round 2): Bubble Sheet</h1>
+            <div class="meta-info">
+                <span>Total Questions: 25</span>
+                <span>Time: 60 Minutes</span>
+            </div>
+        </header>
+
+        <div class="student-info">
+            <div class="info-field">
+                <span class="label">Roll Number</span>
+                <div class="value-line"></div>
+            </div>
+            <div class="info-field">
+                <span class="label">Name of Student</span>
+                <div class="value-line"></div>
+            </div>
+            <div class="info-field">
+                <span class="label">School Name</span>
+                <div class="value-line"></div>
+            </div>
+            <div class="info-field">
+                <span class="label">City</span>
+                <div class="value-line"></div>
+            </div>
+        </div>
+
+        <div class="bubble-grid">
+            <div class="column">
+                
+                <div class="q-row">
+                    <span class="q-num">1</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">2</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">3</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">4</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">5</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">6</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">7</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">8</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">9</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">10</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">11</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">12</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">13</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="column">
+                
+                <div class="q-row">
+                    <span class="q-num">14</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">15</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">16</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">17</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">18</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">19</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">20</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">21</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">22</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">23</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">24</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+
+                <div class="q-row">
+                    <span class="q-num">25</span>
+                    <div class="options">
+                        <div class="bubble-item"><div class="bubble">A</div></div><div class="bubble-item"><div class="bubble">B</div></div><div class="bubble-item"><div class="bubble">C</div></div><div class="bubble-item"><div class="bubble">D</div></div><div class="bubble-item"><div class="bubble">E</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ul style="padding-left: 1.25rem;">
+                <li>Use a blue or black ballpoint pen to fill the bubbles completely.</li>
+                <li>Fill only one bubble for each question.</li>
+                <li>Ensure your Name and Roll Number are clearly written above.</li>
+                <li>Do not fold or damage this sheet.</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            &copy; 2026 SundarSTEM School
+        </div>
+    </div>
+
+</body>
+
+</html>
