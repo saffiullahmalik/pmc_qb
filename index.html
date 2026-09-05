@@ -1115,6 +1115,7 @@ function renderDrawerBody(){
       }).join("")}
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image</button>
       <button class="btn small ghost" id="edit-q">Edit question</button>
+      ${isAdminUser ? `<button class="btn small" style="color:var(--red);" id="delete-q">Delete question</button>` : ""}
     </div>
     <div class="section-label">Rate this question</div>
     <div class="rate-row">
@@ -1131,6 +1132,11 @@ function renderDrawerBody(){
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("edit-q").addEventListener("click", ()=>openForm(q));
   document.getElementById("download-img").addEventListener("click", ()=>downloadQuestionImage(q));
+  document.getElementById("delete-q")?.addEventListener("click", async ()=>{
+    if(!confirm(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`)) return;
+    try{ await deleteDoc(doc(db,"questions",q.id)); toast("Question deleted"); closeModal(); }
+    catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
+  });
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can finalize a question"); return; }
