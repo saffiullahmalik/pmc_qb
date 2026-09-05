@@ -233,6 +233,7 @@
     <div class="nav" id="nav">
       <button data-tab="bank" class="active"><span class="dot"></span>Question Bank</button>
       <button data-tab="contests"><span class="dot"></span>Contests</button>
+      <button data-tab="quilgo"><span class="dot"></span>Quilgo</button>
       <button data-tab="workload"><span class="dot"></span>Assignment</button>
       <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
       <button data-tab="sop"><span class="dot"></span>SOP</button>
@@ -278,7 +279,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
-  collection, query, orderBy, limit, onSnapshot, arrayUnion
+  collection, query, orderBy, limit, onSnapshot, arrayUnion, deleteField
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
@@ -417,6 +418,8 @@ let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null;
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", q:"" };
+let quilgoContestId = "";
+let quilgoSearch = "";
 
 function escapeHtml(s){
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -425,6 +428,10 @@ function fmtDate(iso){
   if(!iso) return "";
   const d = new Date(iso);
   return d.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+}
+function fmtDateOnly(dateStr){
+  if(!dateStr) return "";
+  return new Date(dateStr+"T00:00:00").toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
 }
 function toast(msg){
   const t = document.getElementById("toast");
@@ -444,6 +451,18 @@ function getCorrectOptionId(q){
   return "legacy-"+(q.correctIndex??0);
 }
 function newOptionId(){ return "o"+Date.now()+"-"+Math.floor(Math.random()*10000); }
+
+/* ---------------- Quilgo upload tracking (lives on the contest, not the question) ---------------- */
+// A question can only be usefully "uploaded to Quilgo" in the context of a
+// specific contest paper — this scans loaded contests for the first one
+// whose uploadStatus map has an entry for this question.
+function getQuilgoUploadInfo(questionId){
+  for(const c of contests){
+    const info = c.uploadStatus?.[questionId];
+    if(info) return {...info, contestId:c.id, contestName:c.name};
+  }
+  return null;
+}
 function shuffleArray(arr){
   const a = arr.slice();
   for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
@@ -594,14 +613,13 @@ function startDataSubscriptions(){
   const qy = query(collection(db,"questions"), orderBy("createdAt","desc"), limit(500));
   unsubQuestions = onSnapshot(qy, snap=>{
     questions = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(currentTab==="bank") renderTab();
-    if(currentTab==="contests") renderTab();
+    if(currentTab==="bank" || currentTab==="contests" || currentTab==="quilgo") renderTab();
     if(openQuestionId) renderDrawer();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
   const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
   unsubContests = onSnapshot(cy, snap=>{
     contests = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(currentTab==="contests") renderTab();
+    if(currentTab==="contests" || currentTab==="quilgo") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contests ("+err.code+")"); });
   const ay = query(collection(db,"assignments"), orderBy("createdAt","desc"), limit(200));
   unsubAssignments = onSnapshot(ay, snap=>{
@@ -614,6 +632,7 @@ function renderTab(){
   if(!isTeacherApproved) return;
   if(currentTab==="bank") renderBank();
   else if(currentTab==="contests") renderContests();
+  else if(currentTab==="quilgo") renderQuilgo();
   else if(currentTab==="workload") renderWorkload();
   else if(currentTab==="curriculum") renderCurriculum();
   else if(currentTab==="sop") renderSOP();
@@ -668,6 +687,7 @@ function renderBank(){
 function cardHtml(q){
   const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
   const typeLbl = QTYPES.find(t=>t.v===q.qType)?.l || q.qType;
+  const quilgo = getQuilgoUploadInfo(q.id);
   return `
     <div class="card" data-id="${q.id}">
       <div class="tags">
@@ -675,7 +695,7 @@ function cardHtml(q){
         <span class="pill type">${typeLbl}</span>
         <span class="pill diff-${q.difficulty}">${diffLbl}</span>
         <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
-        ${q.uploadedToQuilgo ? `<span class="pill status-uploaded">Added to Quilgo</span>` : ""}
+        ${quilgo ? `<span class="pill status-uploaded" title="Uploaded by ${escapeHtml(quilgo.uploadedByName||"")} · ${fmtDate(quilgo.uploadedAt)}">Uploaded — ${escapeHtml(quilgo.contestName)}</span>` : ""}
         ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
       </div>
       <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
@@ -693,6 +713,7 @@ function openForm(existing){
   if(!isEdit) optionsState = Array.from({length:6}, ()=>({id:newOptionId(), text:"", image:null}));
   let correctOptionId = isEdit ? getCorrectOptionId(existing) : optionsState[0].id;
   let graphicImageState = existing?.graphicImage || null;
+  let graphicImageWidthState = existing?.graphicImageWidth || 400;
   let step = 1;
   const totalSteps = 4;
 
@@ -733,6 +754,17 @@ function openForm(existing){
 
           <div class="step-panel" data-step="2" hidden>
             <div class="field"><label>Prompt (English)</label><textarea name="promptEn" rows="3" required placeholder="Keep it short and unambiguous — see SOP §2.1.">${escapeHtml(existing?.promptEn||"")}</textarea></div>
+            <details style="margin:-4px 0 12px;">
+              <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:600;">How to write math (LaTeX) in a prompt or option</summary>
+              <div class="callout" style="margin-top:6px;">
+                Wrap math in <span class="mono">$...$</span> for inline, or <span class="mono">$$...$$</span> for a centered display equation. It renders the same way in English or Urdu text and in options. Examples:<br>
+                <span class="mono">$x^2 + y^2 = r^2$</span> → x² + y² = r²<br>
+                <span class="mono">$\\frac{a}{b}$</span> → a fraction<br>
+                <span class="mono">$\\sqrt{x}$</span> → a square root<br>
+                <span class="mono">$5 \\times 3$</span> and <span class="mono">$12 \\div 4$</span> for × and ÷<br>
+                The Live Preview on the last step shows exactly how it will render.
+              </div>
+            </details>
             <div class="field">
               <label>Options <span class="hint">(mark the correct one)</span></label>
               <div class="callout">${escapeHtml(OPTIONS_CONSTRUCTION_NOTE)}</div>
@@ -745,6 +777,7 @@ function openForm(existing){
             <div class="field"><label>Figure / diagram image <span class="hint">(optional)</span></label>
               <div id="figure-wrap"></div>
               <input type="file" accept="image/*" id="figure-file" style="margin-top:6px;" />
+              <div id="figure-resize-wrap"></div>
             </div>
             <div class="field"><label>Graphic note <span class="hint">(text description, in case a figure needs to be produced)</span></label><textarea name="graphicNote" rows="2">${escapeHtml(existing?.graphicNote||"")}</textarea></div>
           </div>
@@ -817,9 +850,23 @@ function openForm(existing){
 
   function renderFigureWrap(){
     document.getElementById("figure-wrap").innerHTML = graphicImageState
-      ? `<img src="${graphicImageState}" style="max-height:120px; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="figure-remove">Remove image</button>`
+      ? `<img src="${graphicImageState}" id="figure-img-preview" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="figure-remove">Remove image</button>`
       : `<span class="hint">No figure uploaded yet.</span>`;
-    document.getElementById("figure-remove")?.addEventListener("click", ()=>{ graphicImageState=null; renderFigureWrap(); });
+    document.getElementById("figure-remove")?.addEventListener("click", ()=>{ graphicImageState=null; renderFigureWrap(); renderResizeWrap(); });
+    renderResizeWrap();
+  }
+  function renderResizeWrap(){
+    const wrap = document.getElementById("figure-resize-wrap");
+    wrap.innerHTML = graphicImageState ? `
+      <div class="field" style="margin-top:8px;"><label>Figure size <span class="hint mono" id="figure-width-label">${graphicImageWidthState}px wide</span></label>
+        <input type="range" min="150" max="900" step="25" id="figure-width" value="${graphicImageWidthState}" />
+      </div>` : "";
+    document.getElementById("figure-width")?.addEventListener("input", e=>{
+      graphicImageWidthState = parseInt(e.target.value,10);
+      document.getElementById("figure-width-label").textContent = graphicImageWidthState+"px wide";
+      const img = document.getElementById("figure-img-preview");
+      if(img) img.style.width = graphicImageWidthState+"px";
+    });
   }
   renderFigureWrap();
   document.getElementById("figure-file").addEventListener("change", async e=>{
@@ -864,7 +911,7 @@ function openForm(existing){
             <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
-        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" style="max-height:180px; border-radius:6px;" /></div>` : ""}
+        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" /></div>` : ""}
         <div class="print-options-grid">
           ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
         </div>
@@ -899,7 +946,7 @@ function openForm(existing){
       unit: fd.get("unit"), subtopic: fd.get("subtopic").trim(),
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
       options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
-      correctOptionId, graphicImage: graphicImageState||null,
+      correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
       graphicNote: fd.get("graphicNote").trim(), solutionEn: fd.get("solutionEn").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
@@ -1002,7 +1049,7 @@ async function downloadQuestionImage(q){
         <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${escapeHtml(q.promptEn||"")}</p></div>
         <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${escapeHtml(q.promptUr||"")}</p></div>
       </div>
-      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="max-height:220px; border-radius:6px;" /></div>` : ""}
+      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : ""}
       <div class="print-options-grid">
         ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
       </div>
@@ -1035,6 +1082,7 @@ function renderDrawerBody(){
   const avg = _ratings.length ? (_ratings.reduce((s,r)=>s+(r.stars||0),0)/_ratings.length) : null;
   const flags = _ratings.filter(r=>r.ambiguous).length;
   const myRating = _ratings.find(r=>r.id===slugEmail(currentUser.email));
+  const quilgo = getQuilgoUploadInfo(q.id);
   body.innerHTML = `
     <div class="drawer-head">
       <div>
@@ -1044,16 +1092,17 @@ function renderDrawerBody(){
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}</span>
           <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
-          ${q.uploadedToQuilgo ? `<span class="pill status-uploaded">Added to Quilgo</span>` : ""}
+          ${quilgo ? `<span class="pill status-uploaded">Uploaded to Quilgo — ${escapeHtml(quilgo.contestName)}</span>` : ""}
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>
+        ${quilgo ? `<div class="hint" style="margin-top:4px;">Uploaded by <b>${escapeHtml(quilgo.uploadedByName||"—")}</b> on ${fmtDate(quilgo.uploadedAt)} — manage this from the Quilgo tab.</div>` : ""}
       </div>
       <button class="btn ghost small" id="close-form">Close</button>
     </div>
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
     <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
-    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" style="max-height:220px; border-radius:8px;" /></div>` : ""}
+    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" /></div>` : ""}
     <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
     ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
     ${q.graphicNote ? `<div class="section-label">Graphic note</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
@@ -1067,8 +1116,6 @@ function renderDrawerBody(){
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image</button>
       <button class="btn small ghost" id="edit-q">Edit question</button>
     </div>
-    ${(q.status==="finalized"||q.status==="uploaded"||(q.usedIn||[]).length) ? `
-    <button class="btn small ${q.uploadedToQuilgo?"primary":""}" id="toggle-quilgo" style="margin-top:8px;">${q.uploadedToQuilgo ? "Uploaded to Quilgo — undo" : "Mark as Uploaded to Quilgo"}</button>` : ""}
     <div class="section-label">Rate this question</div>
     <div class="rate-row">
       <div class="star-btns" id="star-btns">${[1,2,3,4,5].map(n=>`<button data-star="${n}" class="${myRating && n<=myRating.stars ? "on":""}">★</button>`).join("")}</div>
@@ -1090,10 +1137,6 @@ function renderDrawerBody(){
       try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
       catch(err){ toast("Couldn't update status"); }
     });
-  });
-  document.getElementById("toggle-quilgo")?.addEventListener("click", async ()=>{
-    try{ await updateDoc(doc(db,"questions",q.id), {uploadedToQuilgo: !q.uploadedToQuilgo}); }
-    catch(err){ toast("Couldn't update Quilgo tag"); }
   });
   document.getElementById("post-comment").addEventListener("click", async ()=>{
     const txt = document.getElementById("new-comment").value.trim();
@@ -1171,15 +1214,9 @@ function openContestForm(){
         </div>
         <div class="row2" style="align-items:start;">
           <div>
-            <div class="section-label" style="margin-top:0;">Select questions (${eligible.length} finalized/uploaded available)</div>
-            ${eligible.length===0 ? `<div class="empty">No finalized or uploaded questions yet.</div>` : `
-            <div id="q-picker" style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
-              ${eligible.map(q=>`
-              <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
-                <input type="checkbox" data-qid="${q.id}" style="margin-top:3px;" />
-                <span><b>${escapeHtml(q.titleEn||"Untitled")}</b> — ${(q.level||[]).join(", ")} · ${escapeHtml(chapterLabel(q.unit))}</span>
-              </label>`).join("")}
-            </div>`}
+            <div class="section-label" style="margin-top:0;">Select questions</div>
+            <select id="picker-level" style="margin-bottom:8px;"><option value="">All levels (${eligible.length} finalized/uploaded)</option>${LEVELS.map(l=>`<option value="${l}">${l} (${eligible.filter(q=>(q.level||[]).includes(l)).length})</option>`).join("")}</select>
+            <div id="q-picker" style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;"></div>
           </div>
           <div>
             <div class="section-label" style="margin-top:0;">Selected order <span class="hint">(drag to reorder — this is the paper order)</span></div>
@@ -1193,6 +1230,30 @@ function openContestForm(){
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+
+  function renderPicker(){
+    const level = document.getElementById("picker-level").value;
+    const list = eligible.filter(q=>!level || (q.level||[]).includes(level));
+    const picker = document.getElementById("q-picker");
+    picker.innerHTML = list.length===0 ? `<div class="empty">No finalized or uploaded questions match.</div>` : list.map(q=>{
+      const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
+      return `
+      <label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+        <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
+        <span style="flex:1; min-width:0;">
+          <b>${escapeHtml(q.titleEn||"Untitled")}</b>
+          <div class="tags" style="margin:3px 0;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}</span></div>
+          <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
+        </span>
+      </label>`;
+    }).join("");
+    picker.querySelectorAll("[data-qid]").forEach(cb=>cb.addEventListener("change", ()=>{
+      if(cb.checked) selectedOrder.push(cb.dataset.qid);
+      else selectedOrder = selectedOrder.filter(id=>id!==cb.dataset.qid);
+      renderOrderList();
+    }));
+  }
+  document.getElementById("picker-level").addEventListener("change", renderPicker);
 
   function renderOrderList(){
     const list = document.getElementById("order-list");
@@ -1219,11 +1280,7 @@ function openContestForm(){
       });
     });
   }
-  document.querySelectorAll("[data-qid]").forEach(cb=>cb.addEventListener("change", ()=>{
-    if(cb.checked) selectedOrder.push(cb.dataset.qid);
-    else selectedOrder = selectedOrder.filter(id=>id!==cb.dataset.qid);
-    renderOrderList();
-  }));
+  renderPicker();
 
   document.getElementById("contest-form").addEventListener("submit", async e=>{
     e.preventDefault();
@@ -1293,7 +1350,7 @@ function renderPrintView(contestId, opts){
               <p>${escapeHtml(q.promptUr||"")}</p>
             </div>
           </div>
-          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="max-height:220px; border-radius:6px;" /></div>` : (q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : "")}
+          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : (q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : "")}
           <div class="print-options-grid">
             ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
           </div>
@@ -1350,6 +1407,12 @@ function progressCard(label, actual, target, sublabel){
     </div>`;
 }
 
+function dueDateLabel(dueDate){
+  if(!dueDate) return "";
+  const overdue = new Date(dueDate+"T00:00:00") < new Date(new Date().toDateString());
+  return `<span class="mono" style="${overdue?"color:var(--red); font-weight:600;":""}">${overdue?"Overdue — ":"Due "}${fmtDateOnly(dueDate)}</span>`;
+}
+
 function renderWorkload(){
   const main = document.getElementById("main");
   const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
@@ -1359,7 +1422,7 @@ function renderWorkload(){
     html += `<div class="empty">No topics assigned to you yet.</div>`;
   } else {
     mine.forEach(a=>{
-      html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)}</p>`;
+      html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)} ${a.dueDate?" · "+dueDateLabel(a.dueDate):""}</p>`;
       Object.entries(a.quotas[currentUser.email]).forEach(([unit,target])=>{
         const c = countByStatus(currentUser.email, a.contestLevel, unit);
         html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} finalized/uploaded`);
@@ -1367,7 +1430,24 @@ function renderWorkload(){
     });
   }
   if(isAdminUser){
-    html += `<div class="section-label" style="margin-top:26px;">Command view — all assignments</div>`;
+    html += `<div class="section-label" style="margin-top:26px;">Manage assignments</div>`;
+    if(assignments.length===0){
+      html += `<div class="empty">No assignments created yet.</div>`;
+    } else {
+      html += `<div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Level</th><th>Teachers</th><th>Due</th><th></th></tr></thead><tbody>
+        ${assignments.map(a=>`<tr>
+          <td>${escapeHtml(a.name)}</td>
+          <td class="mono">${escapeHtml(a.contestLevel)}</td>
+          <td class="mono">${(a.teacherEmails||[]).length}</td>
+          <td>${a.dueDate?dueDateLabel(a.dueDate):"—"}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn small" data-edit-assignment="${a.id}">Edit</button>
+            <button class="btn small" style="color:var(--red);" data-delete-assignment="${a.id}">Delete</button>
+          </td>
+        </tr>`).join("")}
+      </tbody></table></div>`;
+    }
+    html += `<div class="section-label" style="margin-top:22px;">Command view — all assignments</div>`;
     if(assignments.length===0){
       html += `<div class="empty">No assignments created yet.</div>`;
     } else {
@@ -1387,52 +1467,60 @@ function renderWorkload(){
   main.innerHTML = html;
   if(isAdminUser){
     subscribeTeachers();
-    document.getElementById("new-assignment").addEventListener("click", openAssignmentForm);
+    document.getElementById("new-assignment").addEventListener("click", ()=>openAssignmentForm());
+    document.querySelectorAll("[data-edit-assignment]").forEach(b=>b.addEventListener("click", ()=>{
+      const a = assignments.find(x=>x.id===b.dataset.editAssignment);
+      if(a) openAssignmentForm(a);
+    }));
+    document.querySelectorAll("[data-delete-assignment]").forEach(b=>b.addEventListener("click", async ()=>{
+      if(!confirm("Delete this assignment? Teachers will no longer see this quota.")) return;
+      try{ await deleteDoc(doc(db,"assignments",b.dataset.deleteAssignment)); toast("Assignment deleted"); }
+      catch(err){ toast("Couldn't delete assignment"); }
+    }));
   }
 }
 
-function openAssignmentForm(){
+function openAssignmentForm(existing){
+  const isEdit = !!existing;
   const root = document.getElementById("modal-root");
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer">
-      <div class="drawer-head"><h2>New workload assignment</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC 4 Fall 2026 Prep" /></div>
-      <div class="field"><label>Contest level</label><select id="as-level">${LEVELS.map(l=>`<option>${l}</option>`).join("")}</select></div>
+      <div class="drawer-head"><h2>${isEdit?"Edit":"New"} workload assignment</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC 4 Fall 2026 Prep" value="${escapeHtml(existing?.name||"")}" /></div>
+      <div class="row2">
+        <div class="field"><label>Contest level</label><select id="as-level">${LEVELS.map(l=>`<option ${existing?.contestLevel===l?"selected":""}>${l}</option>`).join("")}</select></div>
+        <div class="field"><label>Due date <span class="hint">(optional)</span></label><input type="date" id="as-due" value="${existing?.dueDate||""}" /></div>
+      </div>
       <div class="section-label">Target question count per unit</div>
       <div id="as-units"></div>
       <div class="section-label">Assign to teachers</div>
       <div id="as-teachers" style="max-height:160px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
-        ${allTeachers.map(t=>`<label style="display:flex; align-items:center; gap:8px; padding:4px; font-weight:400; font-size:13px;"><input type="checkbox" value="${escapeHtml(t.email)}" /> ${escapeHtml(t.name||t.email)}</label>`).join("") || `<div class="hint">No teachers found.</div>`}
+        ${allTeachers.map(t=>`<label style="display:flex; align-items:center; gap:8px; padding:4px; font-weight:400; font-size:13px;"><input type="checkbox" value="${escapeHtml(t.email)}" ${(existing?.teacherEmails||[]).includes(t.email)?"checked":""} /> ${escapeHtml(t.name||t.email)}</label>`).join("") || `<div class="hint">No teachers found.</div>`}
       </div>
       <button class="btn" id="as-split" style="margin-top:10px;">Split evenly &amp; preview quotas</button>
       <div class="section-label">Quotas (editable before saving)</div>
       <div id="as-grid"></div>
-      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:12px;" disabled>Create assignment</button>
+      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:12px;" ${isEdit?"":"disabled"}>${isEdit?"Save changes":"Create assignment"}</button>
     </div></div>`;
   const renderUnitInputs = ()=>{
     const level = document.getElementById("as-level").value;
+    const existingTargets = isEdit && existing.contestLevel===level ? Object.fromEntries((existing.units||[]).map(u=>[u.unit,u.target])) : {};
     document.getElementById("as-units").innerHTML = `<div class="row2">${chaptersForLevel(level).map(c=>`
-      <div class="field"><label>${c.code} — ${escapeHtml(c.title)}</label><input type="number" min="0" class="as-unit-target" data-unit="${c.code}" value="0" /></div>`).join("")}</div>`;
+      <div class="field"><label>${c.code} — ${escapeHtml(c.title)}</label><input type="number" min="0" class="as-unit-target" data-unit="${c.code}" value="${existingTargets[c.code]||0}" /></div>`).join("")}</div>`;
   };
   renderUnitInputs();
   document.getElementById("as-level").addEventListener("change", renderUnitInputs);
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
-  document.getElementById("as-split").addEventListener("click", ()=>{
-    const teacherEmails = Array.from(document.querySelectorAll("#as-teachers input:checked")).map(el=>el.value);
-    if(teacherEmails.length===0){ toast("Pick at least one teacher"); return; }
-    const unitTargets = Array.from(document.querySelectorAll(".as-unit-target"))
-      .map(el=>({unit:el.dataset.unit, target:parseInt(el.value,10)||0}))
-      .filter(u=>u.target>0);
-    if(unitTargets.length===0){ toast("Set a target for at least one unit"); return; }
+
+  function buildGrid(teacherEmails, unitTargets, prefillQuotas){
     const grid = document.getElementById("as-grid");
     grid.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Teacher</th>${unitTargets.map(u=>`<th>${u.unit}</th>`).join("")}</tr></thead><tbody>
-      ${teacherEmails.map(email=>{
+      ${teacherEmails.map((email,idx)=>{
         const t = allTeachers.find(x=>x.email===email);
         return `<tr><td>${escapeHtml(t?.name||email)}<div class="hint">${escapeHtml(email)}</div></td>${unitTargets.map(u=>{
-          const split = splitQuota(u.target, teacherEmails.length);
-          const idx = teacherEmails.indexOf(email);
-          return `<td><input type="number" min="0" class="as-quota-cell" data-email="${escapeHtml(email)}" data-unit="${u.unit}" value="${split[idx]}" style="width:64px;" /></td>`;
+          const val = prefillQuotas?.[email]?.[u.unit] ?? splitQuota(u.target, teacherEmails.length)[idx];
+          return `<td><input type="number" min="0" class="as-quota-cell" data-email="${escapeHtml(email)}" data-unit="${u.unit}" value="${val}" style="width:64px;" /></td>`;
         }).join("")}</tr>`;
       }).join("")}
     </tbody></table></div>`;
@@ -1440,6 +1528,7 @@ function openAssignmentForm(){
     document.getElementById("as-save").onclick = async ()=>{
       const name = document.getElementById("as-name").value.trim() || `${document.getElementById("as-level").value} assignment`;
       const level = document.getElementById("as-level").value;
+      const dueDate = document.getElementById("as-due").value || null;
       const quotas = {};
       document.querySelectorAll(".as-quota-cell").forEach(cell=>{
         const email = cell.dataset.email, unit = cell.dataset.unit, val = parseInt(cell.value,10)||0;
@@ -1447,17 +1536,104 @@ function openAssignmentForm(){
         quotas[email] = quotas[email] || {};
         quotas[email][unit] = val;
       });
+      const body = {
+        name, contestLevel: level, units: unitTargets, teacherEmails, quotas, dueDate,
+      };
       try{
-        await addDoc(collection(db,"assignments"), {
-          name, contestLevel: level, units: unitTargets, teacherEmails,
-          quotas, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
-          createdAt: new Date().toISOString()
-        });
-        toast("Assignment created");
+        if(isEdit){
+          await updateDoc(doc(db,"assignments",existing.id), body);
+          toast("Assignment updated");
+        } else {
+          await addDoc(collection(db,"assignments"), {
+            ...body, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+            createdAt: new Date().toISOString()
+          });
+          toast("Assignment created");
+        }
         closeModal();
-      }catch(err){ console.error(err); toast("Couldn't create assignment ("+err.code+")"); }
+      }catch(err){ console.error(err); toast("Couldn't save assignment ("+err.code+")"); }
     };
+  }
+
+  document.getElementById("as-split").addEventListener("click", ()=>{
+    const teacherEmails = Array.from(document.querySelectorAll("#as-teachers input:checked")).map(el=>el.value);
+    if(teacherEmails.length===0){ toast("Pick at least one teacher"); return; }
+    const unitTargets = Array.from(document.querySelectorAll(".as-unit-target"))
+      .map(el=>({unit:el.dataset.unit, target:parseInt(el.value,10)||0}))
+      .filter(u=>u.target>0);
+    if(unitTargets.length===0){ toast("Set a target for at least one unit"); return; }
+    buildGrid(teacherEmails, unitTargets, null);
   });
+
+  if(isEdit){
+    buildGrid(existing.teacherEmails||[], existing.units||[], existing.quotas||{});
+  }
+}
+
+/* ================= QUILGO TAB ================= */
+function renderQuilgo(){
+  const main = document.getElementById("main");
+  const filteredContests = contests.filter(c=>!quilgoSearch || c.name.toLowerCase().includes(quilgoSearch.toLowerCase()));
+  main.innerHTML = `
+    <div class="pagehead"><h1>Quilgo Upload</h1></div>
+    <p class="desc">Pick a contest paper below to see its questions in print order, download each as an image, and mark it uploaded once it's live on Quilgo.</p>
+    <div class="filters">
+      <input class="search" id="quilgo-search" type="search" placeholder="Search contests (e.g. PMC 4 Round 1 Slot 1)…" value="${escapeHtml(quilgoSearch)}" />
+      <select id="quilgo-contest"><option value="">Select a contest…</option>${filteredContests.map(c=>`<option value="${c.id}" ${quilgoContestId===c.id?"selected":""}>${escapeHtml(c.name)}</option>`).join("")}</select>
+    </div>
+    <div id="quilgo-body"></div>
+  `;
+  document.getElementById("quilgo-search").addEventListener("input", e=>{ quilgoSearch = e.target.value; renderQuilgo(); });
+  document.getElementById("quilgo-contest").addEventListener("change", e=>{ quilgoContestId = e.target.value; renderQuilgoBody(); });
+  renderQuilgoBody();
+}
+
+function renderQuilgoBody(){
+  const body = document.getElementById("quilgo-body");
+  if(!body) return;
+  const c = contests.find(x=>x.id===quilgoContestId);
+  if(!c){ body.innerHTML = `<div class="empty">Pick a contest above to see its questions.</div>`; return; }
+  const qs = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
+  const uploadStatus = c.uploadStatus || {};
+  const row = (q)=>{
+    const info = uploadStatus[q.id];
+    return `
+    <div class="progress-card" style="display:flex; align-items:center; gap:12px;">
+      <span class="mono" style="width:26px; flex:0 0 auto;">${qs.indexOf(q)+1}.</span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:600; font-size:13.5px;">${escapeHtml(q.titleEn||"Untitled")}</div>
+        <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
+        ${info ? `<div class="hint">Uploaded by <b>${escapeHtml(info.uploadedByName||"—")}</b> · ${fmtDate(info.uploadedAt)}</div>` : ""}
+      </div>
+      <button class="btn small" data-dl="${q.id}">Download image</button>
+      ${info ? `<button class="btn small" data-undo="${q.id}">Undo</button>` : `<button class="btn small primary" data-mark="${q.id}">Mark uploaded</button>`}
+    </div>`;
+  };
+  const pending = qs.filter(q=>!uploadStatus[q.id]);
+  const done = qs.filter(q=>uploadStatus[q.id]);
+  body.innerHTML = `
+    <div class="section-label">Pending upload (${pending.length})</div>
+    ${pending.length===0 ? `<div class="empty">${qs.length===0?"This contest has no questions.":"All questions in this contest are uploaded."}</div>` : pending.map(row).join("")}
+    <div class="section-label" style="margin-top:22px;">Already uploaded (${done.length})</div>
+    ${done.length===0 ? `<div class="hint">None yet.</div>` : done.map(row).join("")}
+  `;
+  body.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{
+    const q = questions.find(x=>x.id===b.dataset.dl); if(q) downloadQuestionImage(q);
+  }));
+  body.querySelectorAll("[data-mark]").forEach(b=>b.addEventListener("click", async ()=>{
+    try{
+      await updateDoc(doc(db,"contests",c.id), {
+        [`uploadStatus.${b.dataset.mark}`]: { uploadedBy: currentUser.email, uploadedByName: currentUser.displayName||currentUser.email, uploadedAt: new Date().toISOString() }
+      });
+      toast("Marked as uploaded");
+    }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
+  }));
+  body.querySelectorAll("[data-undo]").forEach(b=>b.addEventListener("click", async ()=>{
+    try{
+      await updateDoc(doc(db,"contests",c.id), { [`uploadStatus.${b.dataset.undo}`]: deleteField() });
+      toast("Marked as not uploaded");
+    }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
+  }));
 }
 
 /* ================= CURRICULUM TAB ================= */

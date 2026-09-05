@@ -46,11 +46,14 @@ questions/{questionId}
   titleEn, promptEn, promptUr,
   options: [{id, text, image}]   -- image is a compressed data-URL string or null
   correctOptionId,                -- id of the option in `options` that's correct
-  graphicImage (data-URL or null), graphicNote (free text),
+  graphicImage (data-URL or null), graphicImageWidth (px, teacher-adjustable), graphicNote (free text),
   solutionEn (free text, feeds the print engine's Solution Manual),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
   difficulty (medium|hard|very_hard), unit (chapter code, e.g. "B3-C1"), subtopic,
-  uploadedToQuilgo (bool), usedIn: [contest name, ...],
+  usedIn: [contest name, ...],   -- NOTE: `uploadedToQuilgo` (bool) is deprecated/removed
+  -- from the UI — Quilgo upload status now lives on contests/{id}.uploadStatus
+  -- instead (see below), since "uploaded" only makes sense per contest paper.
+  -- Old docs may still carry a stray uploadedToQuilgo field; it's just ignored.
   status (draft|in_review|finalized|uploaded),
   authorName, authorEmail, createdAt, updatedAt,
   editHistory: [{ts, by, note}, ...]
@@ -73,12 +76,18 @@ questions/{questionId}
 contests/{contestId}
   name, headerText, durationMinutes, totalMarks,
   questionIds: [id, ...]   -- order here is the paper's printed order (drag-and-drop set in the UI)
+  uploadStatus: { [questionId]: {uploadedBy, uploadedByName, uploadedAt} }
+    -- Quilgo-upload tracking lives HERE, not on the question doc, because
+    -- "uploaded" only makes sense in the context of a specific contest paper.
+    -- The Quilgo tab reads/writes this map keyed by question id.
   createdBy, createdByName, createdAt
 
 assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   name, contestLevel, units: [{unit, targetCount}], teacherEmails: [...],
-  quotas: { [teacherEmail]: { [unit]: number } },
+  quotas: { [teacherEmail]: { [unit]: number } }, dueDate (YYYY-MM-DD or null),
   createdBy, createdByName, createdAt
+  -- admins can edit/delete assignments from the Assignment tab's "Manage
+  -- assignments" table, not just create new ones.
 
 teachers/{email, lowercase}
   role: "teacher" | "qb_lead" | "admin"
