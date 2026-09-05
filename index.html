@@ -610,7 +610,7 @@ document.getElementById("nav").addEventListener("click", e=>{
 
 /* ---------------- data ---------------- */
 function startDataSubscriptions(){
-  const qy = query(collection(db,"questions"), orderBy("createdAt","desc"), limit(500));
+  const qy = query(collection(db,"questions"), orderBy("createdAt","desc"), limit(5000));
   unsubQuestions = onSnapshot(qy, snap=>{
     questions = snap.docs.map(d=>({id:d.id, ...d.data()}));
     if(currentTab==="bank" || currentTab==="contests" || currentTab==="quilgo") renderTab();
@@ -769,9 +769,10 @@ function openForm(existing){
               <label>Options <span class="hint">(mark the correct one)</span></label>
               <div class="callout">${escapeHtml(OPTIONS_CONSTRUCTION_NOTE)}</div>
               <div id="opts-wrap" style="margin-top:8px;"></div>
-              <div style="display:flex; gap:8px; margin-top:8px;">
-                <button type="button" class="btn small" id="opt-add">+ Add option</button>
-                <button type="button" class="btn small" id="opt-shuffle">🔀 Shuffle order</button>
+              <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                <button type="button" class="btn small" id="opt-add" aria-label="Add another option">+ Add option</button>
+                <button type="button" class="btn small" id="opt-shuffle" aria-label="Shuffle option order">🔀 Shuffle order</button>
+                <span class="hint mono" id="image-size-indicator" style="margin-left:auto;"></span>
               </div>
             </div>
             <div class="field"><label>Figure / diagram image <span class="hint">(optional)</span></label>
@@ -836,6 +837,7 @@ function openForm(existing){
       if(correctOptionId===id) correctOptionId = optionsState[0].id;
       renderOptionRows();
     }));
+    updateImageSizeIndicator();
   }
   renderOptionRows();
   document.getElementById("opt-add").addEventListener("click", ()=>{
@@ -854,6 +856,26 @@ function openForm(existing){
       : `<span class="hint">No figure uploaded yet.</span>`;
     document.getElementById("figure-remove")?.addEventListener("click", ()=>{ graphicImageState=null; renderFigureWrap(); renderResizeWrap(); });
     renderResizeWrap();
+    updateImageSizeIndicator();
+  }
+
+  // Firestore hard-caps a document at 1MiB; a question can carry a figure
+  // plus up to 8 option images, so this budget check catches it before a
+  // save fails with an opaque error rather than after.
+  const IMAGE_SIZE_WARN_BYTES = 700_000, IMAGE_SIZE_BLOCK_BYTES = 900_000;
+  function totalImageBytes(){
+    let total = (graphicImageState||"").length;
+    optionsState.forEach(o=>{ total += (o.image||"").length; });
+    return total;
+  }
+  function updateImageSizeIndicator(){
+    const el = document.getElementById("image-size-indicator");
+    if(!el) return;
+    const bytes = totalImageBytes();
+    if(bytes===0){ el.textContent = ""; return; }
+    const kb = Math.round(bytes/1000);
+    el.textContent = `Images: ~${kb}KB`;
+    el.style.color = bytes>IMAGE_SIZE_BLOCK_BYTES ? "var(--red)" : bytes>IMAGE_SIZE_WARN_BYTES ? "var(--gold)" : "";
   }
   function renderResizeWrap(){
     const wrap = document.getElementById("figure-resize-wrap");
@@ -977,6 +999,7 @@ function openForm(existing){
     if(fd.getAll("level").length===0){ toast("Pick at least one contest level"); showStep(1); return; }
     if(!fd.get("promptEn").trim()){ toast("English prompt is required"); showStep(2); return; }
     if(optionsState.some(o=>!o.text.trim() && !o.image)){ toast("Every option needs text or an image"); showStep(2); return; }
+    if(totalImageBytes() > IMAGE_SIZE_BLOCK_BYTES){ toast("Couldn't save — images are too large together; remove one or shrink a figure before saving"); showStep(2); return; }
     const correctOpt = optionsState.find(o=>o.id===correctOptionId);
     openConfirmPopup({
       promptEn: fd.get("promptEn").trim(), correctOpt,
@@ -1675,6 +1698,22 @@ function renderSOP(){
 }
 
 /* ================= ADMIN TAB ================= */
+function exportAllData(){
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    exportedBy: currentUser.email,
+    questions, contests, assignments, teachers: allTeachers,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `pmc-qb-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast("Backup downloaded");
+}
+
 function renderAdmin(){
   const main = document.getElementById("main");
   if(!isAdminUser){
@@ -1691,6 +1730,9 @@ function renderAdmin(){
       ${STATUSES.map(s=>`<div class="stat-tile"><div class="num">${byStatus[s.v]||0}</div><div class="lbl">${s.l}</div></div>`).join("")}
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
+    <div class="section-label">Backup</div>
+    <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
+    <button class="btn" id="export-data">⬇ Export all data as JSON</button>
     <div class="section-label">Manage teachers</div>
     <p class="desc">Create a login for a teacher — they can sign in immediately with this email and password (and change it later via "Forgot password").</p>
     <div class="filters" style="align-items:flex-end;">
@@ -1740,6 +1782,7 @@ function renderAdmin(){
     else document.getElementById("stat-form-wrap").innerHTML = "";
   });
   loadAllStats();
+  document.getElementById("export-data").addEventListener("click", exportAllData);
   document.getElementById("add-teacher-btn").addEventListener("click", addTeacher);
   document.getElementById("gen-password-btn").addEventListener("click", ()=>{
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
