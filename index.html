@@ -1770,9 +1770,11 @@ function renderTeachersTable(list){
         <select data-role-select="${escapeHtml(t.email)}" style="padding:4px 6px; font-size:12px;">
           ${Object.keys(ROLE_LABEL).map(r=>`<option value="${r}" ${t.role===r?"selected":""}>${ROLE_LABEL[r]}</option>`).join("")}
         </select>
+        <button class="btn small" data-reset-password="${escapeHtml(t.email)}">Reset password</button>
         <button class="btn small" style="color:var(--red);" data-remove-teacher="${escapeHtml(t.email)}">Remove</button>
       </td>
     </tr>`).join("");
+  tbody.querySelectorAll("[data-reset-password]").forEach(b=>b.addEventListener("click", ()=>resetTeacherPassword(b.dataset.resetPassword)));
   tbody.querySelectorAll("[data-role-select]").forEach(sel=>sel.addEventListener("change", ()=>setTeacherRole(sel.dataset.roleSelect, sel.value, sel)));
   tbody.querySelectorAll("[data-remove-teacher]").forEach(b=>b.addEventListener("click", ()=>removeTeacher(b.dataset.removeTeacher)));
 }
@@ -1823,6 +1825,17 @@ async function setTeacherRole(email, newRole, selectEl){
     await setDoc(doc(db,"teachers",email), {role:newRole}, {merge:true});
     toast(`Role updated to ${ROLE_LABEL[newRole]}`);
   }catch(err){ console.error(err); toast("Couldn't update role ("+err.code+")"); }
+}
+
+async function resetTeacherPassword(email){
+  // The client SDK has no way for an admin to directly set someone else's
+  // password without a backend (Admin SDK) — this sends them the same
+  // "Forgot password" reset email teachers can trigger for themselves.
+  if(!confirm(`Send a password reset email to ${email}?`)) return;
+  try{
+    await sendPasswordResetEmail(auth, email);
+    toast("Password reset email sent to "+email);
+  }catch(err){ console.error(err); toast("Couldn't send reset email ("+err.code+")"); }
 }
 
 async function removeTeacher(email){
