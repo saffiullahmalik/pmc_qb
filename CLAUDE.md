@@ -26,10 +26,14 @@ The portal's design follows an official school SOP ("Preparation, Review, Admini
 
 ## Access control model (important — don't weaken this without discussion)
 
-A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote to admin), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in). A `role: "admin"` field on that same document additionally unlocks:
-- Entering post-test statistics (p-value / discrimination index)
-- Deleting questions
-- Deleting/updating others' comments
+A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of three roles: `teacher` | `qb_lead` | `admin`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
+
+- `qb_lead` ("QB Lead" — was called "Head Teacher" until this rename) additionally unlocks setting a question's status to `finalized` — a plain `teacher` cannot finalize, and once finalized, further edits also require `qb_lead`/`admin` (enforced by `isQBLeadOrAdmin()` in `firestore.rules`, not just hidden client-side).
+- `role: "admin"` additionally unlocks:
+  - Entering post-test statistics (p-value / discrimination index)
+  - Deleting questions
+  - Deleting/updating others' comments
+  - Managing workload `assignments` (the Assignment tab)
 
 All of this is enforced in `firestore.rules`, not in client-side JS — the client UI hides admin controls from non-admins, but the real enforcement is server-side. Emails are lowercased on both sides (client lookup and rules) specifically because Firestore document IDs are case-sensitive and admins type them by hand — this was a real bug caught during setup and fixed.
 
@@ -39,12 +43,22 @@ Note: **"Remove" in Manage Teachers only deletes the `teachers/{email}` doc** (r
 
 ```
 questions/{questionId}
-  titleEn, promptEn, promptUr, optionsEn[4], correctIndex,
+  titleEn, promptEn, promptUr,
+  options: [{id, text, image}]   -- image is a compressed data-URL string or null
+  correctOptionId,                -- id of the option in `options` that's correct
+  graphicImage (data-URL or null), graphicNote (free text),
+  solutionEn (free text, feeds the print engine's Solution Manual),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
-  difficulty (medium|hard|very_hard), unit (e.g. "5C"), subtopic,
-  graphicNote, status (draft|in_review|finalized|uploaded),
+  difficulty (medium|hard|very_hard), unit (chapter code, e.g. "B3-C1"), subtopic,
+  uploadedToQuilgo (bool), usedIn: [contest name, ...],
+  status (draft|in_review|finalized|uploaded),
   authorName, authorEmail, createdAt, updatedAt,
   editHistory: [{ts, by, note}, ...]
+
+  -- legacy fields optionsEn[4]/correctIndex may still exist on questions
+  -- created before the options rewrite; getQuestionOptions()/getCorrectOptionId()
+  -- in index.html synthesize {id:"legacy-"+i, text, image:null} from them on
+  -- read so old data keeps working without a migration script.
 
   questions/{id}/comments/{commentId}
     authorName, authorEmail, text, createdAt
@@ -56,11 +70,23 @@ questions/{questionId}
     attempts, correct, topN, topCorrect, botN, botCorrect,
     pValue, discrimination, qualityLabel, qualityKey, enteredBy, updatedAt
 
+contests/{contestId}
+  name, headerText, durationMinutes, totalMarks,
+  questionIds: [id, ...]   -- order here is the paper's printed order (drag-and-drop set in the UI)
+  createdBy, createdByName, createdAt
+
+assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
+  name, contestLevel, units: [{unit, targetCount}], teacherEmails: [...],
+  quotas: { [teacherEmail]: { [unit]: number } },
+  createdBy, createdByName, createdAt
+
 teachers/{email, lowercase}
-  role: "teacher" | "admin"
+  role: "teacher" | "qb_lead" | "admin"
 ```
 
 Filtering in the UI (level, type, difficulty, status, unit, search) is done **client-side** over the full `questions` collection (subscribed via `onSnapshot`, ordered by `createdAt desc`, capped at 500) — deliberately not server-side compound queries, since the dataset is small (a school's worth of exam questions, not a large-scale product).
+
+Images (question figure + per-option images) are stored **inline on the Firestore document as compressed JPEG data-URLs**, not in Firebase Storage — a deliberate choice to stay on the free Spark plan (Storage now requires Blaze billing even for free-tier usage). `fileToCompressedDataUrl()` in `index.html` resizes/compresses client-side before writing, with a soft ~250KB-per-image budget so a question with several option images stays under Firestore's 1MB/doc cap. The Print/Export view can also shuffle each question's option order per printout (anti-copying) — grading stays correct either way because correctness is tracked by `correctOptionId`, never by array position.
 
 ## Files in this repo
 
@@ -68,8 +94,12 @@ Filtering in the UI (level, type, difficulty, status, unit, search) is done **cl
 - `firestore.rules` — security rules, kept in the repo as the source of truth; must match what's actually published in the Firebase console (they can drift — the console is the live copy).
 - `SETUP.md` — full click-by-click setup walkthrough (GitHub Pages + Firebase project creation, auth, Firestore, rules, teacher allow-list, auto-deploy). Written for a non-technical project owner, not a developer — verbose and screenshot-oriented in tone.
 - `.github/workflows/deploy-firestore-rules.yml` — GitHub Action that deploys `firestore.rules` to Firebase automatically on push, **if** two repo secrets are set (`FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT`). As of this writing it's unconfirmed whether those secrets were ever actually added — check before assuming this is live; if not, rules changes still need manual console paste.
+- `PMC_Examination_SOP_v2.pdf` — the real official SOP; transcribed into the app's own "SOP" tab and into the difficulty/options-construction callouts in the question editor (`DIFFICULTY_SOP`/`OPTIONS_CONSTRUCTION_NOTE` in `index.html`). If this PDF is ever revised, those transcriptions need updating too — they're not generated from the PDF at runtime.
+- `design-reference/` — prototype/source-art files (`pmc_4_v1.html`, a bubble-answer-sheet prototype, the logo's Illustrator source) kept for design reference, not runtime assets. `sundarstem_logo.png` stays at the repo root since `index.html` references it directly.
 
 ## Status as of this writing (Sept 2026)
+
+**Note:** the section below describes the original MVP handoff and is now out of date — three feature phases have shipped since (rebrand/contests/print engine; QB Lead role/live preview/workload; dynamic options with images/shuffle/full-page editor/drag-and-drop contest ordering/SOP tab). See `git log` for the real history; treat this section as historical context for the *original* build, not current status.
 
 Done and verified working end-to-end by the project owner:
 - GitHub Pages live and serving `index.html` at the URL above.

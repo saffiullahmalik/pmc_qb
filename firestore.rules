@@ -25,9 +25,9 @@ service cloud.firestore {
         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role == "admin";
     }
 
-    function isHeadTeacherOrAdmin() {
+    function isQBLeadOrAdmin() {
       return isSignedIn() &&
-        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["head_teacher", "admin"];
+        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["qb_lead", "admin"];
     }
 
     // Each teacher can read their own allow-list entry (to check status);
@@ -37,7 +37,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && (request.auth.token.email == email || isAdmin());
       allow create, update: if isAdmin() &&
         email == email.lower() &&
-        request.resource.data.role in ["teacher", "head_teacher", "admin"];
+        request.resource.data.role in ["teacher", "qb_lead", "admin"];
       allow delete: if isAdmin();
     }
 
@@ -56,10 +56,10 @@ service cloud.firestore {
     match /questions/{questionId} {
       allow read: if isTeacher();
       // Setting (or keeping) a question's status at "finalized" is
-      // restricted to head teachers/admins — once finalized, further
+      // restricted to QB Leads/admins — once finalized, further
       // edits by a plain teacher are rejected until it's unfinalized.
       allow create, update: if isTeacher() &&
-        (request.resource.data.status != "finalized" || isHeadTeacherOrAdmin());
+        (request.resource.data.status != "finalized" || isQBLeadOrAdmin());
       allow delete: if isAdmin();
 
       match /comments/{commentId} {

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Question Bank by SundarSTEM</title>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&display=swap');
 
@@ -89,7 +90,7 @@
   :root:not([data-theme="light"]) .pill.status-uploaded{ background:#1a2e27; color:#7ee0c4; }
   .pill.role-admin{ background:var(--accent-soft); color:var(--accent); }
   .pill.role-teacher{ background:var(--surface-2); color:var(--ink-dim); }
-  .pill.role-head_teacher{ background:var(--blue-soft); color:var(--blue); }
+  .pill.role-qb_lead{ background:var(--blue-soft); color:var(--blue); }
   .progress-bar{ height:8px; border-radius:5px; background:var(--surface-2); overflow:hidden; }
   .progress-bar-fill{ height:100%; background:var(--accent); border-radius:5px 0 0 5px; }
   .progress-card{ border:1px solid var(--border); border-radius:9px; padding:12px 14px; margin-bottom:10px; }
@@ -97,10 +98,18 @@
   .checklist{ display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
   .checklist label{ display:flex; align-items:flex-start; gap:7px; font-weight:400; }
   .drawer.wide{ width:min(980px, 100vw); }
-  .form-2col{ display:grid; grid-template-columns:1fr 1fr; gap:22px; align-items:start; }
-  #live-preview{ background:#fff; color:#161b19; border-radius:8px; padding:4px; border:1px solid var(--border); position:sticky; top:0; }
+  #live-preview{ background:#fff; color:#161b19; border-radius:8px; padding:4px; border:1px solid var(--border); }
   #live-preview .hint{ color:#6b7280; }
-  @media (max-width:900px){ .form-2col{ grid-template-columns:1fr; } }
+  .callout{ background:var(--accent-soft); color:var(--ink); border-left:3px solid var(--accent); padding:8px 11px; border-radius:6px; font-size:12px; line-height:1.5; margin-top:6px; }
+  .opt-thumb{ height:34px; border-radius:5px; }
+  .editor-page{ position:fixed; inset:0; background:var(--bg); z-index:150; overflow-y:auto; }
+  .editor-topbar{ position:sticky; top:0; background:var(--surface); border-bottom:1px solid var(--border); padding:12px 20px; display:flex; align-items:center; gap:14px; z-index:5; }
+  .editor-steps{ display:flex; gap:4px; overflow-x:auto; padding:10px 16px 0; background:var(--surface); border-bottom:1px solid var(--border); position:sticky; top:53px; z-index:4; }
+  .editor-steps button{ padding:8px 12px; font-size:12.5px; font-weight:600; color:var(--ink-dim); border-radius:8px 8px 0 0; white-space:nowrap; border:1px solid transparent; background:transparent; }
+  .editor-steps button.active{ color:var(--accent); border-color:var(--border); border-bottom-color:var(--surface); background:var(--surface); }
+  .editor-body{ max-width:760px; margin:0 auto; padding:20px 16px 90px; }
+  .editor-nav{ display:flex; gap:8px; margin-top:18px; max-width:760px; margin-left:auto; margin-right:auto; padding:0 16px; }
+  .step-panel .opt-row{ flex-wrap:wrap; }
   .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
   .card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 15px; box-shadow:var(--shadow); cursor:pointer; display:flex; flex-direction:column; gap:9px; }
   .card:hover{ border-color:var(--accent); }
@@ -124,9 +133,10 @@
   .prompt-box{ background:var(--surface-2); border-radius:9px; padding:12px 13px; font-size:13.5px; line-height:1.6; white-space:pre-wrap; }
   .prompt-box.ur{ direction:rtl; text-align:right; font-size:15px; }
   .opt-list{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-  .opt-item{ display:flex; align-items:center; gap:8px; font-size:13px; padding:7px 10px; border-radius:7px; background:var(--surface-2); }
+  .opt-item{ display:flex; align-items:center; gap:9px; font-size:13px; padding:8px 11px; border-radius:8px; background:var(--surface-2); }
   .opt-item.correct{ background:var(--accent-soft); color:var(--accent); font-weight:600; }
-  .opt-item .k{ font-family:'IBM Plex Mono'; font-size:11px; color:var(--ink-dim); }
+  .opt-item .k{ font-family:'IBM Plex Mono'; font-size:11px; color:var(--ink-dim); width:20px; height:20px; border-radius:50%; background:var(--surface); display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
+  .opt-item.correct .k{ background:var(--accent); color:var(--accent-ink); }
   .status-track{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;}
   .comment{ padding:10px 0; border-bottom:1px solid var(--border); }
   .comment:last-child{ border-bottom:none; }
@@ -188,7 +198,7 @@
   .print-header h1{ font-size:1.4rem; margin:0 0 4px; }
   .print-student-info{ display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; margin-top:14px; font-size:13px; }
   .print-student-info span{ display:inline-block; border-bottom:1px solid #999; min-width:160px; }
-  .question-container{ border:0.75pt solid #333; border-radius:4px; padding:10px 12px; margin-bottom:14px; page-break-inside:avoid; }
+  .question-container{ border:0.75pt solid #333; border-radius:8px; padding:14px 16px; margin-bottom:16px; page-break-inside:avoid; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
   .question-container.no-borders{ border-color:transparent; }
   .q-text-row{ display:flex; align-items:stretch; gap:12px; }
   .q-lang-box{ flex:1 1 50%; min-width:0; }
@@ -196,8 +206,8 @@
   .q-lang-box .box-label{ display:block; font-size:11px; font-weight:700; color:#0f6b5c; margin-bottom:4px; }
   .print-graphic{ text-align:center; margin:10px 0; }
   .print-options-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-top:8px; }
-  .print-opt-item{ display:flex; align-items:baseline; gap:6px; font-size:13.5px; }
-  .print-opt-item .k{ font-weight:700; }
+  .print-opt-item{ display:flex; align-items:center; gap:7px; font-size:13.5px; padding:3px 0; }
+  .print-opt-item .k{ font-weight:700; width:20px; height:20px; border-radius:50%; background:#eef1ee; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; font-size:11px; }
   .answer-key{ page-break-before:always; }
   .answer-key-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; font-size:13.5px; }
   @media print{
@@ -223,8 +233,9 @@
     <div class="nav" id="nav">
       <button data-tab="bank" class="active"><span class="dot"></span>Question Bank</button>
       <button data-tab="contests"><span class="dot"></span>Contests</button>
-      <button data-tab="workload"><span class="dot"></span>Workload</button>
+      <button data-tab="workload"><span class="dot"></span>Assignment</button>
       <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
+      <button data-tab="sop"><span class="dot"></span>SOP</button>
       <button data-tab="admin"><span class="dot"></span>Admin &amp; Analytics</button>
     </div>
     <div class="side-foot">
@@ -236,6 +247,7 @@
 </div>
 
 <div id="modal-root"></div>
+<div id="confirm-root"></div>
 <div class="toast" id="toast"></div>
 
 <!--
@@ -351,6 +363,46 @@ function chapterByCode(code){ return allChapters().find(c=>c.code===code); }
 function chapterLabel(code){ const c=chapterByCode(code); return c ? `${c.code} — ${c.title}` : (code||"—"); }
 function chaptersForLevel(level){ return (CURRICULUM.find(b=>b.levels.includes(level))?.chapters) || []; }
 
+// Transcribed from PMC_Examination_SOP_v2.pdf ("Preparation, Review,
+// Administration, and Publication of PMC Examination Papers", Sundar STEM
+// School) — the authoritative source for the SOP tab and the in-editor
+// difficulty/options callouts. Keep this in sync if the PDF is revised.
+const DIFFICULTY_SOP = {
+  medium: "Medium — Challenging problems derived from the Single National Curriculum.",
+  hard: "Hard — 1-Star or 2-Star level problems (AoPS/Beast Academy standard).",
+  very_hard: "Very Hard — Problems requiring highly creative, outside-the-box thinking.",
+};
+const DIFFICULTY_DISTRIBUTION_NOTE = "SOP §2.4: Level 1 exams should be ~33% Medium / 33% Hard / 33% Very Hard; Level 2 (screening) exams should be 50% Hard / 50% Very Hard. SMEs may recalibrate tier definitions based on historical PMC performance data.";
+const OPTIONS_CONSTRUCTION_NOTE = "SOP §2.1: Wrong options should correspond to predictable errors, not random numbers.";
+
+const SOP_TEXT = [
+  { heading: "1. Purpose & Principles", body: [
+    "This SOP defines the quality assurance process for designing, reviewing, approving, and grading Pakistan Math Contest (PMC) examination papers.",
+    "Because the PMC is a national-level selection mechanism for Sundar STEM School, all examinations must be academically rigorous, fair, and entirely free of ambiguities or typographical errors.",
+    "To ensure transparency and provide authentic preparation resources, the school mandates the publication of the examination paper, answer key, and detailed solutions after every testing cycle.",
+  ]},
+  { heading: "2. Examination Design & Structure", body: [
+    "2.1 Assessment Philosophy — The PMC measures genuine mathematical aptitude: a student's capacity to execute mathematical procedures, make sound logical extensions of ideas, perform multi-level analysis, and identify patterns.",
+    "The contest is not designed to trick students into selecting the wrong answer. Problems must avoid artificial difficulty: no hidden meanings, semantic traps, or crucial information buried in fine print. The challenge must lie entirely in the mathematical resolution, not in deciphering the question's intent.",
+    "All problems must maintain a low language load — short sentences, and figural or numeric items preferred over verbally heavy ones — so the PMC measures reasoning ability rather than language proficiency.",
+    "Options Construction: for multiple-choice items, wrong options must correspond to predictable errors rather than random numbers.",
+    "2.2 Test Blueprint — Before drafting an examination, Subject Matter Experts (SMEs) must create a test blueprint ensuring major curriculum topics, logic applications, and pattern recognition are proportionally represented per the assessment philosophy.",
+    "2.3 Difficulty Tiers — Medium: challenging problems derived from the Single National Curriculum. Hard: 1-Star or 2-Star level problems (AoPS/Beast Academy standard). Very Hard: problems requiring highly creative, outside-the-box thinking. (SMEs may recalibrate these definitions based on historical PMC performance data.)",
+    "2.4 Difficulty Distribution — Level 1 exams: distributed evenly (~33% Medium, 33% Hard, 33% Very Hard) to assess a broad spectrum of abilities. Level 2 exams (screening-stage qualifiers): exclusively 50% Hard and 50% Very Hard.",
+    "2.5 Organization — To minimize cognitive switching, questions must be grouped logically by type (e.g. Mathematical vs. Logic/Pattern-recognition) and style, sequencing progressively from easier to more difficult within each section.",
+  ]},
+  { heading: "3. Preparation & Independent Review", body: [
+    "The Examination Author is responsible for drafting the examination paper alongside an answer key and a solution manual.",
+    "Before final approval, the complete examination package must undergo an independent review. The reviewer, uninvolved in the drafting process, must attempt the paper under examination conditions to verify accuracy, appropriate difficulty, and adherence to the test blueprint.",
+    "The reviewer should also flag any questions which take considerably longer than the intended time, or have an alternative defensible answer.",
+  ]},
+  { heading: "4. Grading, Publication & Continuous Improvement", body: [
+    "During the evaluation phase, graders must record individual question scores alongside the student's total score.",
+    "Following the declaration of results, Sundar STEM School will publish the examination paper, the answer key, and the solution manual.",
+    "The academic team will conduct a post-cycle review of the examination statistics (e.g. question success rates) to refine and improve the quality of subsequent PMC exams.",
+  ]},
+];
+
 let currentUser = null;   // Firebase Auth user
 let isTeacherApproved = null; // null = checking, true/false once resolved
 let isAdminUser = false;
@@ -381,6 +433,52 @@ function toast(msg){
   toast._h = setTimeout(()=>t.classList.remove("show"), 2400);
 }
 function slugEmail(e){ return String(e||"").toLowerCase().replace(/[^a-z0-9@.]/g,"_"); }
+
+/* ---------------- options model (with legacy fallback) ---------------- */
+function getQuestionOptions(q){
+  if(Array.isArray(q.options) && q.options.length) return q.options;
+  return (q.optionsEn||[]).map((t,i)=>({id:"legacy-"+i, text:t, image:null}));
+}
+function getCorrectOptionId(q){
+  if(q.correctOptionId) return q.correctOptionId;
+  return "legacy-"+(q.correctIndex??0);
+}
+function newOptionId(){ return "o"+Date.now()+"-"+Math.floor(Math.random()*10000); }
+function shuffleArray(arr){
+  const a = arr.slice();
+  for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+
+/* ---------------- image compression (Firestore-stored, no Storage bucket) ---------------- */
+function compressImageFile(file, maxWidth, quality){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = ()=>{
+        const scale = Math.min(1, maxWidth/img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width*scale);
+        canvas.height = Math.round(img.height*scale);
+        canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function fileToCompressedDataUrl(file){
+  let dataUrl = await compressImageFile(file, 700, 0.6);
+  if(dataUrl.length > 250000){
+    dataUrl = await compressImageFile(file, 500, 0.4);
+    if(dataUrl.length > 250000) toast("Image is still fairly large after compression — consider a smaller/simpler picture");
+  }
+  return dataUrl;
+}
 
 /* ---------------- auth ---------------- */
 function renderSignedOut(){
@@ -445,7 +543,7 @@ async function checkTeacherStatus(){
     if(snap.exists()){
       isTeacherApproved = true;
       isAdminUser = snap.data().role === "admin";
-      canFinalize = isAdminUser || snap.data().role === "head_teacher";
+      canFinalize = isAdminUser || snap.data().role === "qb_lead";
       document.getElementById("modal-root").innerHTML = "";
       renderSignedInChrome();
       startDataSubscriptions();
@@ -518,6 +616,7 @@ function renderTab(){
   else if(currentTab==="contests") renderContests();
   else if(currentTab==="workload") renderWorkload();
   else if(currentTab==="curriculum") renderCurriculum();
+  else if(currentTab==="sop") renderSOP();
   else if(currentTab==="admin") renderAdmin();
 }
 
@@ -585,131 +684,223 @@ function cardHtml(q){
     </div>`;
 }
 
-function renderLivePreview(formEl){
-  const pane = document.getElementById("live-preview");
-  if(!pane) return;
-  const fd = new FormData(formEl);
-  const promptEn = fd.get("promptEn")||"";
-  const promptUr = fd.get("promptUr")||"";
-  const graphicNote = fd.get("graphicNote")||"";
-  const optionsEn = Array.from(formEl.querySelectorAll("[data-opt]")).map(el=>el.value);
-  pane.innerHTML = `
-    <div class="question-container">
-      <div class="q-text-row">
-        <div class="q-lang-box english">
-          <span class="box-label">Question</span>
-          <p>${escapeHtml(promptEn)||`<span class="hint">English prompt will appear here…</span>`}</p>
-        </div>
-        <div class="q-lang-box urdu">
-          <span class="box-label">سوال</span>
-          <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
-        </div>
-      </div>
-      ${graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(graphicNote)}]</div>` : ""}
-      <div class="print-options-grid">
-        ${optionsEn.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}.</span> ${escapeHtml(o)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
-      </div>
-    </div>`;
-  if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([pane]).catch(console.error);
-}
-
 function openForm(existing){
   const isEdit = !!existing;
   const locked = isEdit && existing.status==="finalized" && !canFinalize;
   const root = document.getElementById("modal-root");
   const levelSet = new Set(existing?.level||[]);
+  let optionsState = getQuestionOptions(existing||{}).map(o=>({...o}));
+  if(!isEdit) optionsState = Array.from({length:6}, ()=>({id:newOptionId(), text:"", image:null}));
+  let correctOptionId = isEdit ? getCorrectOptionId(existing) : optionsState[0].id;
+  let graphicImageState = existing?.graphicImage || null;
+  let step = 1;
+  const totalSteps = 4;
+
   root.innerHTML = `
-    <div class="overlay" id="ov"><div class="drawer wide">
-      <div class="drawer-head"><h2>${isEdit? "Edit question" : "New question"}</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is finalized — only a Head Teacher or Admin can edit it.</div>` : ""}
-      <div class="form-2col">
-      <form id="q-form" ${locked?"inert":""}>
-        <div class="field"><label>Title (internal, short)</label><input type="text" name="titleEn" required value="${escapeHtml(existing?.titleEn||"")}" placeholder="e.g. Grid path counting — 3x3" /></div>
-        <div class="section-label">Tags</div>
-        <div class="field"><label>Contest level(s)</label>
-          <div style="display:flex; gap:12px; flex-wrap:wrap;">
-            ${LEVELS.map(l=>`<label style="display:flex; align-items:center; gap:5px; font-weight:400; font-size:13px;"><input type="checkbox" name="level" value="${l}" ${levelSet.has(l)?"checked":""}/> ${l}</label>`).join("")}
+    <div class="editor-page" id="editor-page">
+      <div class="editor-topbar">
+        <button class="btn ghost small" id="close-form">Close</button>
+        <h2 style="margin:0; font-size:15px;">${isEdit? "Edit question" : "New question"}</h2>
+      </div>
+      <div class="editor-steps" id="editor-steps">
+        <button type="button" data-step="1" class="active">1. Tags &amp; Difficulty</button>
+        <button type="button" data-step="2">2. English &amp; Options</button>
+        <button type="button" data-step="3">3. Urdu</button>
+        <button type="button" data-step="4">4. Notes &amp; Review</button>
+      </div>
+      <div class="editor-body">
+        ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is finalized — only a QB Lead or Admin can edit it.</div>` : ""}
+        <form id="q-form" ${locked?"inert":""}>
+          <div class="step-panel" data-step="1">
+            <div class="field"><label>Title (internal, short)</label><input type="text" name="titleEn" required value="${escapeHtml(existing?.titleEn||"")}" placeholder="e.g. Grid path counting — 3x3" /></div>
+            <div class="field"><label>Contest level(s)</label>
+              <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                ${LEVELS.map(l=>`<label style="display:flex; align-items:center; gap:5px; font-weight:400; font-size:13px;"><input type="checkbox" name="level" value="${l}" ${levelSet.has(l)?"checked":""}/> ${l}</label>`).join("")}
+              </div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Question type</label><select name="qType">${QTYPES.map(t=>`<option value="${t.v}" ${existing?.qType===t.v?"selected":""}>${t.l}</option>`).join("")}</select></div>
+              <div class="field"><label>Difficulty</label>
+                <select name="difficulty" id="f-difficulty">${DIFFS.map(t=>`<option value="${t.v}" ${existing?.difficulty===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+                <div class="callout" id="difficulty-callout"></div>
+              </div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Chapter</label><select name="unit" id="f-chapter">${CURRICULUM.map(b=>b.book ? `<optgroup label="${escapeHtml(b.book)}">${b.chapters.map(c=>`<option value="${c.code}" ${existing?.unit===c.code?"selected":""}>${c.code} — ${escapeHtml(c.title)}</option>`).join("")}</optgroup>` : b.chapters.map(c=>`<option value="${c.code}" ${existing?.unit===c.code?"selected":""}>${escapeHtml(c.title)}</option>`).join("")).join("")}</select></div>
+              <div class="field"><label>Subtopic</label><select name="subtopic" id="f-subtopic"></select></div>
+            </div>
           </div>
-        </div>
-        <div class="row2">
-          <div class="field"><label>Question type</label><select name="qType">${QTYPES.map(t=>`<option value="${t.v}" ${existing?.qType===t.v?"selected":""}>${t.l}</option>`).join("")}</select></div>
-          <div class="field"><label>Difficulty</label><select name="difficulty">${DIFFS.map(t=>`<option value="${t.v}" ${existing?.difficulty===t.v?"selected":""}>${t.l}</option>`).join("")}</select></div>
-        </div>
-        <div class="row2">
-          <div class="field"><label>Chapter</label><select name="unit" id="f-chapter">${CURRICULUM.map(b=>b.book ? `<optgroup label="${escapeHtml(b.book)}">${b.chapters.map(c=>`<option value="${c.code}" ${existing?.unit===c.code?"selected":""}>${c.code} — ${escapeHtml(c.title)}</option>`).join("")}</optgroup>` : b.chapters.map(c=>`<option value="${c.code}" ${existing?.unit===c.code?"selected":""}>${escapeHtml(c.title)}</option>`).join("")).join("")}</select></div>
-          <div class="field"><label>Subtopic</label><select name="subtopic" id="f-subtopic"></select></div>
-        </div>
-        <div class="section-label">Question (English)</div>
-        <div class="field"><label>Prompt</label><textarea name="promptEn" rows="3" required placeholder="Keep it short and unambiguous — see the Teacher Guide §6.">${escapeHtml(existing?.promptEn||"")}</textarea></div>
-        <div class="field"><label>Options (mark the correct one)</label><div id="opts-en"></div></div>
-        <div class="section-label">Question (Urdu)</div>
-        <div class="field"><label>Prompt (اردو)</label><textarea name="promptUr" rows="3" dir="rtl" style="text-align:right;" placeholder="Translate meaning, not word-for-word — see Teacher Guide §6.3.">${escapeHtml(existing?.promptUr||"")}</textarea></div>
-        <div class="section-label">Notes</div>
-        <div class="field"><label>Graphic needed? <span class="hint">(for math-puzzle items)</span></label><textarea name="graphicNote" rows="2">${escapeHtml(existing?.graphicNote||"")}</textarea></div>
-        <div class="field"><label>Solution <span class="hint">(feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" rows="3" placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
-        <div class="field"><label>Status</label><select name="status">${STATUSES.map(t=>`<option value="${t.v}" ${t.v==="finalized" && !canFinalize && existing?.status!=="finalized" ? "disabled":""} ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}${t.v==="finalized"&&!canFinalize?" (Head Teacher/Admin only)":""}</option>`).join("")}</select></div>
-        ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
-        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:8px;" ${locked?"disabled":""}>${isEdit?"Save changes":"Post question"}</button>
-      </form>
-      <div>
-        <div class="section-label" style="margin-top:0;">Live preview</div>
-        <div id="live-preview"></div>
-        <div class="section-label">Quality &amp; age checklist <span class="hint">(reminder only, doesn't block posting)</span></div>
-        <div class="checklist">
-          <label><input type="checkbox" /> Wording is unambiguous — only one defensible correct answer</label>
-          <label><input type="checkbox" /> Difficulty and phrasing fit the target age group (see Curriculum Map)</label>
-          <label><input type="checkbox" /> Urdu translation conveys meaning, not a literal word-for-word rendering</label>
-          <label><input type="checkbox" /> Graphic note (if any) is clear enough for a designer to produce</label>
+
+          <div class="step-panel" data-step="2" hidden>
+            <div class="field"><label>Prompt (English)</label><textarea name="promptEn" rows="3" required placeholder="Keep it short and unambiguous — see SOP §2.1.">${escapeHtml(existing?.promptEn||"")}</textarea></div>
+            <div class="field">
+              <label>Options <span class="hint">(mark the correct one)</span></label>
+              <div class="callout">${escapeHtml(OPTIONS_CONSTRUCTION_NOTE)}</div>
+              <div id="opts-wrap" style="margin-top:8px;"></div>
+              <div style="display:flex; gap:8px; margin-top:8px;">
+                <button type="button" class="btn small" id="opt-add">+ Add option</button>
+                <button type="button" class="btn small" id="opt-shuffle">🔀 Shuffle order</button>
+              </div>
+            </div>
+            <div class="field"><label>Figure / diagram image <span class="hint">(optional)</span></label>
+              <div id="figure-wrap"></div>
+              <input type="file" accept="image/*" id="figure-file" style="margin-top:6px;" />
+            </div>
+            <div class="field"><label>Graphic note <span class="hint">(text description, in case a figure needs to be produced)</span></label><textarea name="graphicNote" rows="2">${escapeHtml(existing?.graphicNote||"")}</textarea></div>
+          </div>
+
+          <div class="step-panel" data-step="3" hidden>
+            <div class="field"><label>Prompt (اردو)</label><textarea name="promptUr" rows="4" dir="rtl" style="text-align:right;" placeholder="Translate meaning, not word-for-word — see Teacher Guide §6.3.">${escapeHtml(existing?.promptUr||"")}</textarea></div>
+          </div>
+
+          <div class="step-panel" data-step="4" hidden>
+            <div class="field"><label>Solution <span class="hint">(feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" rows="3" placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
+            <div class="field"><label>Status</label><select name="status">${STATUSES.map(t=>`<option value="${t.v}" ${t.v==="finalized" && !canFinalize && existing?.status!=="finalized" ? "disabled":""} ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}${t.v==="finalized"&&!canFinalize?" (QB Lead/Admin only)":""}</option>`).join("")}</select></div>
+            ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
+            <div class="section-label">Live preview</div>
+            <div id="live-preview"></div>
+          </div>
+        </form>
+        <div class="editor-nav">
+          <button type="button" class="btn ghost" id="step-back" hidden>Back</button>
+          <button type="button" class="btn primary" id="step-next" style="margin-left:auto;">Next</button>
+          <button type="button" class="btn primary" id="step-submit" style="margin-left:auto;" hidden ${locked?"disabled":""}>Review &amp; Save</button>
         </div>
       </div>
-      </div>
-    </div></div>`;
-  const optsWrap = document.getElementById("opts-en");
-  const existingOpts = existing?.optionsEn && existing.optionsEn.length===4 ? existing.optionsEn : ["","","",""];
-  const correctIdx = existing?.correctIndex ?? 0;
-  optsWrap.innerHTML = existingOpts.map((o,i)=>`
-    <div class="opt-row">
-      <input type="radio" name="correctIndex" value="${i}" ${i===correctIdx?"checked":""} title="Mark correct" />
-      <span class="k">${String.fromCharCode(65+i)}</span>
-      <input type="text" data-opt="${i}" value="${escapeHtml(o)}" placeholder="Option ${String.fromCharCode(65+i)}" required />
-    </div>`).join("");
+    </div>`;
+
+  const formEl = document.getElementById("q-form");
+
+  function renderOptionRows(){
+    const wrap = document.getElementById("opts-wrap");
+    wrap.innerHTML = optionsState.map((o,i)=>`
+      <div class="opt-row">
+        <input type="radio" name="correctOpt" value="${o.id}" ${o.id===correctOptionId?"checked":""} title="Mark correct" />
+        <span class="k">${String.fromCharCode(65+i)}</span>
+        <input type="text" data-opt-text="${o.id}" value="${escapeHtml(o.text)}" placeholder="Option ${String.fromCharCode(65+i)}" style="flex:1; min-width:120px;" />
+        <label class="btn small" title="Add image" style="cursor:pointer;">📷<input type="file" accept="image/*" data-opt-img="${o.id}" hidden /></label>
+        ${o.image ? `<img src="${o.image}" class="opt-thumb" /><button type="button" class="btn small" data-opt-rmimg="${o.id}">✕ img</button>` : ""}
+        <button type="button" class="btn small" style="color:var(--red);" data-opt-remove="${o.id}" ${optionsState.length<=2?"disabled":""}>Remove</button>
+      </div>`).join("");
+    wrap.querySelectorAll("[name=correctOpt]").forEach(el=>el.addEventListener("change", ()=>{ correctOptionId = el.value; }));
+    wrap.querySelectorAll("[data-opt-text]").forEach(el=>el.addEventListener("input", ()=>{
+      optionsState.find(o=>o.id===el.dataset.optText).text = el.value;
+    }));
+    wrap.querySelectorAll("[data-opt-img]").forEach(el=>el.addEventListener("change", async ()=>{
+      const file = el.files[0]; if(!file) return;
+      const opt = optionsState.find(o=>o.id===el.dataset.optImg);
+      opt.image = await fileToCompressedDataUrl(file);
+      renderOptionRows();
+    }));
+    wrap.querySelectorAll("[data-opt-rmimg]").forEach(el=>el.addEventListener("click", ()=>{
+      optionsState.find(o=>o.id===el.dataset.optRmimg).image = null;
+      renderOptionRows();
+    }));
+    wrap.querySelectorAll("[data-opt-remove]").forEach(el=>el.addEventListener("click", ()=>{
+      if(optionsState.length<=2) return;
+      const id = el.dataset.optRemove;
+      optionsState = optionsState.filter(o=>o.id!==id);
+      if(correctOptionId===id) correctOptionId = optionsState[0].id;
+      renderOptionRows();
+    }));
+  }
+  renderOptionRows();
+  document.getElementById("opt-add").addEventListener("click", ()=>{
+    if(optionsState.length>=8){ toast("Maximum 8 options"); return; }
+    optionsState.push({id:newOptionId(), text:"", image:null});
+    renderOptionRows();
+  });
+  document.getElementById("opt-shuffle").addEventListener("click", ()=>{
+    optionsState = shuffleArray(optionsState);
+    renderOptionRows();
+  });
+
+  function renderFigureWrap(){
+    document.getElementById("figure-wrap").innerHTML = graphicImageState
+      ? `<img src="${graphicImageState}" style="max-height:120px; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="figure-remove">Remove image</button>`
+      : `<span class="hint">No figure uploaded yet.</span>`;
+    document.getElementById("figure-remove")?.addEventListener("click", ()=>{ graphicImageState=null; renderFigureWrap(); });
+  }
+  renderFigureWrap();
+  document.getElementById("figure-file").addEventListener("change", async e=>{
+    const file = e.target.files[0]; if(!file) return;
+    graphicImageState = await fileToCompressedDataUrl(file);
+    renderFigureWrap();
+  });
+
+  function updateDifficultyCallout(){
+    const v = document.getElementById("f-difficulty").value;
+    document.getElementById("difficulty-callout").innerHTML = `${escapeHtml(DIFFICULTY_SOP[v]||"")}<br><span class="hint">${escapeHtml(DIFFICULTY_DISTRIBUTION_NOTE)}</span>`;
+  }
+  updateDifficultyCallout();
+  document.getElementById("f-difficulty").addEventListener("change", updateDifficultyCallout);
+
   const populateSubtopics = ()=>{
     const chapterCode = document.getElementById("f-chapter").value;
     const chapter = chapterByCode(chapterCode);
     const subs = chapter ? chapter.subtopics.slice() : [];
-    // Only carry over a legacy free-typed subtopic while the chapter hasn't
-    // been changed away from the question's original one.
     const keepExisting = existing?.subtopic && existing.unit===chapterCode && !subs.includes(existing.subtopic);
     if(keepExisting) subs.unshift(existing.subtopic);
     document.getElementById("f-subtopic").innerHTML = subs.map(s=>`<option ${existing?.subtopic===s?"selected":""}>${escapeHtml(s)}</option>`).join("");
   };
   populateSubtopics();
-  document.getElementById("f-chapter").addEventListener("change", ()=>{
-    document.getElementById("f-subtopic").innerHTML = "";
-    populateSubtopics();
+  document.getElementById("f-chapter").addEventListener("change", populateSubtopics);
+
+  function renderLivePreview(){
+    const pane = document.getElementById("live-preview");
+    if(!pane) return;
+    const fd = new FormData(formEl);
+    const promptEn = fd.get("promptEn")||"";
+    const promptUr = fd.get("promptUr")||"";
+    pane.innerHTML = `
+      <div class="question-container">
+        <div class="q-text-row">
+          <div class="q-lang-box english">
+            <span class="box-label">Question</span>
+            <p>${escapeHtml(promptEn)||`<span class="hint">English prompt will appear here…</span>`}</p>
+          </div>
+          <div class="q-lang-box urdu">
+            <span class="box-label">سوال</span>
+            <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
+          </div>
+        </div>
+        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" style="max-height:180px; border-radius:6px;" /></div>` : ""}
+        <div class="print-options-grid">
+          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
+        </div>
+      </div>`;
+    if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([pane]).catch(console.error);
+  }
+
+  function showStep(n){
+    step = n;
+    document.querySelectorAll(".step-panel").forEach(p=>{ p.hidden = (parseInt(p.dataset.step,10)!==n); });
+    document.querySelectorAll("#editor-steps button").forEach(b=>b.classList.toggle("active", parseInt(b.dataset.step,10)===n));
+    document.getElementById("step-back").hidden = n===1;
+    document.getElementById("step-next").hidden = n===totalSteps;
+    document.getElementById("step-submit").hidden = n!==totalSteps;
+    document.getElementById("editor-page").scrollTop = 0;
+    if(n===totalSteps) renderLivePreview();
+  }
+  document.getElementById("editor-steps").addEventListener("click", e=>{
+    const b = e.target.closest("[data-step]"); if(!b) return;
+    showStep(parseInt(b.dataset.step,10));
   });
+  document.getElementById("step-back").addEventListener("click", ()=>showStep(step-1));
+  document.getElementById("step-next").addEventListener("click", ()=>showStep(step+1));
+
   document.getElementById("close-form").addEventListener("click", closeModal);
-  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
-  const formEl = document.getElementById("q-form");
-  let previewTimer = null;
-  const scheduleLivePreview = ()=>{ clearTimeout(previewTimer); previewTimer = setTimeout(()=>renderLivePreview(formEl), 350); };
-  formEl.addEventListener("input", scheduleLivePreview);
-  formEl.addEventListener("change", scheduleLivePreview);
-  renderLivePreview(formEl);
-  document.getElementById("q-form").addEventListener("submit", async e=>{
-    e.preventDefault();
-    const fd = new FormData(e.target);
+
+  async function doSave(fd){
     const level = fd.getAll("level");
-    if(level.length===0){ toast("Pick at least one contest level"); return; }
-    const optionsEn = [0,1,2,3].map(i=>optsWrap.querySelector(`[data-opt="${i}"]`).value.trim());
-    if(optionsEn.some(o=>!o)){ toast("All four options are required"); return; }
-    const correctIndex = parseInt(fd.get("correctIndex"),10);
     const authorName = currentUser.displayName || currentUser.email;
     const body = {
       titleEn: fd.get("titleEn").trim(), level, qType: fd.get("qType"), difficulty: fd.get("difficulty"),
       unit: fd.get("unit"), subtopic: fd.get("subtopic").trim(),
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
-      optionsEn, correctIndex, graphicNote: fd.get("graphicNote").trim(), solutionEn: fd.get("solutionEn").trim(),
+      options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
+      correctOptionId, graphicImage: graphicImageState||null,
+      graphicNote: fd.get("graphicNote").trim(), solutionEn: fd.get("solutionEn").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
@@ -727,9 +918,58 @@ function openForm(existing){
         await addDoc(collection(db,"questions"), body);
         toast("Question posted");
       }
+      document.getElementById("confirm-root").innerHTML = "";
       closeModal();
-    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
+      return true;
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); return false; }
+  }
+
+  document.getElementById("step-submit").addEventListener("click", ()=>{
+    const fd = new FormData(formEl);
+    if(!fd.get("titleEn").trim()){ toast("Enter a title"); showStep(1); return; }
+    if(fd.getAll("level").length===0){ toast("Pick at least one contest level"); showStep(1); return; }
+    if(!fd.get("promptEn").trim()){ toast("English prompt is required"); showStep(2); return; }
+    if(optionsState.some(o=>!o.text.trim() && !o.image)){ toast("Every option needs text or an image"); showStep(2); return; }
+    const correctOpt = optionsState.find(o=>o.id===correctOptionId);
+    openConfirmPopup({
+      promptEn: fd.get("promptEn").trim(), correctOpt,
+      difficultyLabel: DIFFS.find(d=>d.v===fd.get("difficulty"))?.l || fd.get("difficulty"),
+      levels: fd.getAll("level"),
+      hasGraphic: !!(graphicImageState || fd.get("graphicNote").trim()),
+      onConfirm: ()=>doSave(fd),
+    });
   });
+}
+
+function openConfirmPopup({promptEn, correctOpt, difficultyLabel, levels, hasGraphic, onConfirm}){
+  const root = document.getElementById("confirm-root");
+  const items = [
+    "This statement is ambiguity-free — only one defensible correct answer",
+    "The correct option has been verified",
+    "Difficulty and age-appropriateness are confirmed",
+  ];
+  if(hasGraphic) items.push("The graphic/figure is clear enough to be produced or is already attached correctly");
+  root.innerHTML = `
+    <div class="overlay" id="confirm-ov" style="z-index:210;">
+      <div class="gate-card" style="width:min(480px,92vw); text-align:left;">
+        <h2 style="margin-top:0;">Before you save…</h2>
+        <div class="prompt-box">${escapeHtml(promptEn)}</div>
+        <p style="font-size:13px;"><b>Marked correct:</b> ${correctOpt.image?`<img src="${correctOpt.image}" style="height:20px; vertical-align:middle; margin-right:5px;"/>`:""}${escapeHtml(correctOpt.text)||"(image option)"}</p>
+        <p class="mono" style="font-size:11.5px; color:var(--ink-dim);">${escapeHtml(difficultyLabel)} · ${levels.join(", ")}</p>
+        <div class="checklist" style="margin-top:8px;">
+          ${items.map(t=>`<label><input type="checkbox" data-confirm-box /> ${escapeHtml(t)}</label>`).join("")}
+        </div>
+        <div style="display:flex; gap:8px; margin-top:16px;">
+          <button class="btn ghost" id="confirm-back" style="flex:1; justify-content:center;">Go back</button>
+          <button class="btn primary" id="confirm-save" disabled style="flex:1; justify-content:center;">Confirm &amp; Save</button>
+        </div>
+      </div>
+    </div>`;
+  const boxes = root.querySelectorAll("[data-confirm-box]");
+  const saveBtn = document.getElementById("confirm-save");
+  boxes.forEach(b=>b.addEventListener("change", ()=>{ saveBtn.disabled = !Array.from(boxes).every(x=>x.checked); }));
+  document.getElementById("confirm-back").addEventListener("click", ()=>{ root.innerHTML = ""; });
+  saveBtn.addEventListener("click", async ()=>{ saveBtn.disabled = true; const ok = await onConfirm(); if(!ok) saveBtn.disabled = false; });
 }
 
 function closeModal(){
@@ -748,6 +988,35 @@ function openQuestion(id){
   unsubComments = onSnapshot(commentsQ, snap=>{ _comments = snap.docs.map(d=>({id:d.id,...d.data()})); if(openQuestionId===id) renderDrawerBody(); }, console.error);
   const ratingsQ = query(collection(db,"questions",id,"ratings"), limit(200));
   unsubRatings = onSnapshot(ratingsQ, snap=>{ _ratings = snap.docs.map(d=>({id:d.id,...d.data()})); if(openQuestionId===id) renderDrawerBody(); }, console.error);
+}
+
+async function downloadQuestionImage(q){
+  if(!window.html2canvas){ toast("Still loading — try again in a second"); return; }
+  const opts = getQuestionOptions(q);
+  const correctId = getCorrectOptionId(q);
+  const node = document.createElement("div");
+  node.style.cssText = "position:fixed; left:-9999px; top:0; width:800px; background:#fff; color:#161b19; padding:16px;";
+  node.innerHTML = `
+    <div class="question-container">
+      <div class="q-text-row">
+        <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${escapeHtml(q.promptEn||"")}</p></div>
+        <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${escapeHtml(q.promptUr||"")}</p></div>
+      </div>
+      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="max-height:220px; border-radius:6px;" /></div>` : ""}
+      <div class="print-options-grid">
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
+      </div>
+    </div>`;
+  document.body.appendChild(node);
+  if(window.MathJax?.typesetPromise) await window.MathJax.typesetPromise([node]).catch(()=>{});
+  try{
+    const canvas = await window.html2canvas(node, {scale:2, backgroundColor:"#ffffff"});
+    const a = document.createElement("a");
+    a.download = (q.titleEn||"question").replace(/[^a-z0-9]+/gi,"_").toLowerCase()+".png";
+    a.href = canvas.toDataURL("image/png");
+    a.click();
+  }catch(err){ console.error(err); toast("Couldn't generate image"); }
+  finally{ node.remove(); }
 }
 
 function renderDrawer(){
@@ -784,17 +1053,19 @@ function renderDrawerBody(){
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
     <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
-    <div class="opt-list">${(q.optionsEn||[]).map((o,i)=>`<div class="opt-item ${i===q.correctIndex?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${escapeHtml(o)} ${i===q.correctIndex?"✓":""}</div>`).join("")}</div>
+    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" style="max-height:220px; border-radius:8px;" /></div>` : ""}
+    <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
     ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
-    ${q.graphicNote ? `<div class="section-label">Graphic needed</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
+    ${q.graphicNote ? `<div class="section-label">Graphic note</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
     <div class="section-label">Status</div>
     <div class="status-track">
       ${STATUSES.map(s=>{
         const locked = s.v==="finalized" && !canFinalize;
-        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only Head Teachers or Admins can finalize a question"`:""}>${s.l}</button>`;
+        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only QB Leads or Admins can finalize a question"`:""}>${s.l}</button>`;
       }).join("")}
-      <button class="btn small ghost" id="edit-q" style="margin-left:auto;">Edit question</button>
+      <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image</button>
+      <button class="btn small ghost" id="edit-q">Edit question</button>
     </div>
     ${(q.status==="finalized"||q.status==="uploaded"||(q.usedIn||[]).length) ? `
     <button class="btn small ${q.uploadedToQuilgo?"primary":""}" id="toggle-quilgo" style="margin-top:8px;">${q.uploadedToQuilgo ? "Uploaded to Quilgo — undo" : "Mark as Uploaded to Quilgo"}</button>` : ""}
@@ -812,9 +1083,10 @@ function renderDrawerBody(){
   `;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("edit-q").addEventListener("click", ()=>openForm(q));
+  document.getElementById("download-img").addEventListener("click", ()=>downloadQuestionImage(q));
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
-      if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only Head Teachers or Admins can finalize a question"); return; }
+      if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can finalize a question"); return; }
       try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
       catch(err){ toast("Couldn't update status"); }
     });
@@ -886,8 +1158,9 @@ function renderContests(){
 function openContestForm(){
   const root = document.getElementById("modal-root");
   const eligible = questions.filter(q=>q.status==="finalized"||q.status==="uploaded");
+  let selectedOrder = [];
   root.innerHTML = `
-    <div class="overlay" id="ov"><div class="drawer">
+    <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>Create new contest</h2><button class="btn ghost small" id="close-form">Close</button></div>
       <form id="contest-form">
         <div class="field"><label>Contest name <span class="hint">(also stamped on each question as a usage tag)</span></label><input type="text" name="name" required placeholder="e.g. PMC Fall 2026 – Round 1 – Day 1 – Slot 1" /></div>
@@ -896,52 +1169,101 @@ function openContestForm(){
           <div class="field"><label>Duration (minutes)</label><input type="number" name="durationMinutes" min="1" placeholder="60" /></div>
           <div class="field"><label>Total marks</label><input type="number" name="totalMarks" min="1" placeholder="30" /></div>
         </div>
-        <div class="section-label">Select questions (${eligible.length} finalized/uploaded available)</div>
-        ${eligible.length===0 ? `<div class="empty">No finalized or uploaded questions yet.</div>` : `
-        <div id="q-picker" style="max-height:320px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
-          ${eligible.map(q=>`
-          <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
-            <input type="checkbox" name="qid" value="${q.id}" style="margin-top:3px;" />
-            <span><b>${escapeHtml(q.titleEn||"Untitled")}</b> — ${(q.level||[]).join(", ")} · ${escapeHtml(chapterLabel(q.unit))}</span>
-          </label>`).join("")}
-        </div>`}
+        <div class="row2" style="align-items:start;">
+          <div>
+            <div class="section-label" style="margin-top:0;">Select questions (${eligible.length} finalized/uploaded available)</div>
+            ${eligible.length===0 ? `<div class="empty">No finalized or uploaded questions yet.</div>` : `
+            <div id="q-picker" style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
+              ${eligible.map(q=>`
+              <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+                <input type="checkbox" data-qid="${q.id}" style="margin-top:3px;" />
+                <span><b>${escapeHtml(q.titleEn||"Untitled")}</b> — ${(q.level||[]).join(", ")} · ${escapeHtml(chapterLabel(q.unit))}</span>
+              </label>`).join("")}
+            </div>`}
+          </div>
+          <div>
+            <div class="section-label" style="margin-top:0;">Selected order <span class="hint">(drag to reorder — this is the paper order)</span></div>
+            <div id="order-list" style="min-height:80px; border:1px solid var(--border); border-radius:9px; padding:8px;">
+              <div class="hint" style="padding:6px;">Check questions on the left to add them here.</div>
+            </div>
+          </div>
+        </div>
         <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:12px;" ${eligible.length===0?"disabled":""}>Create contest</button>
       </form>
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+
+  function renderOrderList(){
+    const list = document.getElementById("order-list");
+    if(selectedOrder.length===0){ list.innerHTML = `<div class="hint" style="padding:6px;">Check questions on the left to add them here.</div>`; return; }
+    list.innerHTML = selectedOrder.map((id,i)=>{
+      const q = eligible.find(x=>x.id===id);
+      return `<div class="opt-row" draggable="true" data-id="${id}" style="cursor:grab; background:var(--surface-2); border-radius:6px; padding:6px 8px; margin-bottom:5px;">
+        <span class="mono" style="width:20px;">${i+1}.</span>
+        <span style="flex:1;">${escapeHtml(q?.titleEn||"Untitled")}</span>
+        <span class="hint">⠿</span>
+      </div>`;
+    }).join("");
+    let dragId = null;
+    list.querySelectorAll("[data-id]").forEach(row=>{
+      row.addEventListener("dragstart", ()=>{ dragId = row.dataset.id; });
+      row.addEventListener("dragover", e=>e.preventDefault());
+      row.addEventListener("drop", e=>{
+        e.preventDefault();
+        if(!dragId || dragId===row.dataset.id) return;
+        const from = selectedOrder.indexOf(dragId), to = selectedOrder.indexOf(row.dataset.id);
+        selectedOrder.splice(from,1);
+        selectedOrder.splice(to,0,dragId);
+        renderOrderList();
+      });
+    });
+  }
+  document.querySelectorAll("[data-qid]").forEach(cb=>cb.addEventListener("change", ()=>{
+    if(cb.checked) selectedOrder.push(cb.dataset.qid);
+    else selectedOrder = selectedOrder.filter(id=>id!==cb.dataset.qid);
+    renderOrderList();
+  }));
+
   document.getElementById("contest-form").addEventListener("submit", async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const name = fd.get("name").trim();
-    const questionIds = fd.getAll("qid");
-    if(questionIds.length===0){ toast("Pick at least one question"); return; }
+    if(selectedOrder.length===0){ toast("Pick at least one question"); return; }
     try{
       await addDoc(collection(db,"contests"), {
         name, headerText: fd.get("headerText").trim(),
         durationMinutes: fd.get("durationMinutes") ? parseInt(fd.get("durationMinutes"),10) : null,
         totalMarks: fd.get("totalMarks") ? parseInt(fd.get("totalMarks"),10) : null,
-        questionIds, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+        questionIds: selectedOrder, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
         createdAt: new Date().toISOString()
       });
-      await Promise.all(questionIds.map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayUnion(name)})));
+      await Promise.all(selectedOrder.map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayUnion(name)})));
       toast("Contest created");
       closeModal();
     }catch(err){ console.error(err); toast("Couldn't create contest ("+err.code+")"); }
   });
 }
 
-function renderPrintView(contestId){
+function renderPrintView(contestId, opts){
+  const shuffled = opts?.shuffled !== false;
   const c = contests.find(x=>x.id===contestId);
   if(!c){ toast("Contest not found"); return; }
   const qs = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
+  // Each question's option order for THIS print run — shuffled per printout
+  // (SOP-independent anti-copying measure) or the stored order, toggleable.
+  const printOptions = qs.map(q=>{
+    const base = getQuestionOptions(q);
+    return shuffled ? shuffleArray(base) : base;
+  });
   const root = document.getElementById("modal-root");
   root.innerHTML = `
     <div class="print-overlay" id="print-overlay">
       <div class="print-toolbar">
         <button class="btn ghost small" id="close-print">Close</button>
         <button class="btn primary small" id="do-print">Print / Save as PDF</button>
-        <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; margin-left:auto;"><input type="checkbox" id="toggle-borders" checked/> Question box borders</label>
+        <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; margin-left:14px;"><input type="checkbox" id="toggle-borders" checked/> Question box borders</label>
+        <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; margin-left:14px;"><input type="checkbox" id="toggle-shuffle" ${shuffled?"checked":""}/> Shuffle option order</label>
       </div>
       <div class="print-page">
         <div class="print-header">
@@ -971,15 +1293,15 @@ function renderPrintView(contestId){
               <p>${escapeHtml(q.promptUr||"")}</p>
             </div>
           </div>
-          ${q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : ""}
+          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="max-height:220px; border-radius:6px;" /></div>` : (q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : "")}
           <div class="print-options-grid">
-            ${(q.optionsEn||[]).map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${escapeHtml(o)}</div>`).join("")}
+            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
           </div>
         </div>`).join("")}
         <div class="answer-key">
           <h2>Answer Key — ${escapeHtml(c.name)}</h2>
           <div class="answer-key-grid">
-            ${qs.map((q,i)=>`<div><b>Q${i+1}.</b> ${String.fromCharCode(65+(q.correctIndex??0))}</div>`).join("")}
+            ${qs.map((q,i)=>{ const idx = printOptions[i].findIndex(o=>o.id===getCorrectOptionId(q)); return `<div><b>Q${i+1}.</b> ${idx>=0?String.fromCharCode(65+idx):"—"}</div>`; }).join("")}
           </div>
         </div>
         <div class="answer-key">
@@ -992,6 +1314,9 @@ function renderPrintView(contestId){
   document.getElementById("do-print").addEventListener("click", ()=>window.print());
   document.getElementById("toggle-borders").addEventListener("change", e=>{
     document.querySelectorAll("#print-overlay .question-container").forEach(el=>el.classList.toggle("no-borders", !e.target.checked));
+  });
+  document.getElementById("toggle-shuffle").addEventListener("change", e=>{
+    renderPrintView(contestId, {shuffled: e.target.checked});
   });
   if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("print-overlay")]).catch(console.error);
 }
@@ -1028,7 +1353,7 @@ function progressCard(label, actual, target, sublabel){
 function renderWorkload(){
   const main = document.getElementById("main");
   const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
-  let html = `<div class="pagehead"><h1>Workload</h1>${isAdminUser?`<button class="btn primary" id="new-assignment">+ New Assignment</button>`:""}</div>`;
+  let html = `<div class="pagehead"><h1>Assignment</h1>${isAdminUser?`<button class="btn primary" id="new-assignment">+ New Assignment</button>`:""}</div>`;
   html += `<div class="section-label">My workload</div>`;
   if(mine.length===0){
     html += `<div class="empty">No topics assigned to you yet.</div>`;
@@ -1152,6 +1477,21 @@ function renderCurriculum(){
   `;
 }
 
+/* ================= SOP TAB ================= */
+function renderSOP(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>PMC Examination SOP</h1></div>
+    <p class="desc">Preparation, Review, Administration, and Publication of PMC Examination Papers — Sundar STEM School.</p>
+    ${SOP_TEXT.map(s=>`
+      <div class="level-block">
+        <h3>${escapeHtml(s.heading)}</h3>
+        ${s.body.map(p=>`<p style="font-size:13.5px; line-height:1.65; margin:0 0 10px;">${escapeHtml(p)}</p>`).join("")}
+      </div>`).join("")}
+    <p class="note">Source: PMC_Examination_SOP_v2.pdf.</p>
+  `;
+}
+
 /* ================= ADMIN TAB ================= */
 function renderAdmin(){
   const main = document.getElementById("main");
@@ -1189,7 +1529,7 @@ function renderAdmin(){
       </div>
       <div class="field" style="margin:0; min-width:120px;">
         <label>Role</label>
-        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="head_teacher">Head Teacher</option><option value="admin">Admin</option></select>
+        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="qb_lead">QB Lead</option><option value="admin">Admin</option></select>
       </div>
       <button class="btn primary" id="add-teacher-btn">Create account</button>
     </div>
@@ -1236,7 +1576,7 @@ function subscribeTeachers(){
   }, err=>{ console.error(err); toast("Couldn't load teachers ("+err.code+")"); });
 }
 
-const ROLE_LABEL = {teacher:"Teacher", head_teacher:"Head Teacher", admin:"Admin"};
+const ROLE_LABEL = {teacher:"Teacher", qb_lead:"QB Lead", admin:"Admin"};
 
 function renderTeachersTable(list){
   allTeachers = list;
