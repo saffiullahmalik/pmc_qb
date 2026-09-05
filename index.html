@@ -296,28 +296,60 @@ const STATUSES = [
   {v:"draft", l:"Draft"}, {v:"in_review", l:"In Review"},
   {v:"finalized", l:"Finalized"}, {v:"uploaded", l:"Uploaded to Quilgo"}
 ];
-const UNIT_OPTIONS = ["3A","3B","3C","3D","4A","4B","4C","4D","5A","5B","5C","5D","N/A — pure logic"];
-
+// Full Beast Academy table-of-contents, chapter by chapter, transcribed from
+// the official Books 3/4/5 guides. Teachers pick a chapter + subtopic from
+// these lists in the question editor — no free-typed subtopic text anymore,
+// so tagging stays consistent across the whole bank.
 const CURRICULUM = [
-  { level:"PMC-4", age:"10 yrs", book:"Beast Academy Book 3", units:[
-    {u:"3A", t:"Shapes", sub:"Angles, triangles, quadrilaterals, other polygons, polyomino puzzles; skip-counting, repeated addition, arithmetic sequences"},
-    {u:"3B", t:"Multiplication", sub:"Times tables, commutative & associative properties, multiplying by numbers ending in zero(es); perfect squares & properties of squaring"},
-    {u:"3C", t:"Variables", sub:"Writing/evaluating expressions & equations, solving simple equations; division models & strategies, distributive property"},
-    {u:"3D", t:"Fractions", sub:"Unit fractions, number line, mixed numbers, equivalent/comparing/ordering/simplifying fractions; measurement & area"},
+  { levels:["PMC-4"], age:"10 yrs", book:"Beast Academy Book 3", chapters:[
+    {code:"B3-C1", title:"Shapes", subtopics:["Angles","Triangles","Don't Make a Triangle","Quadrilaterals","Grogg's Notes — polygons over four sides","Polyominoes"]},
+    {code:"B3-C2", title:"Skip-Counting", subtopics:["Skip-Counting","Hundred Charts","Balance","The 100 Game"]},
+    {code:"B3-C3", title:"Perimeter and Area", subtopics:["Perimeter and Area","Perimeter","Rectilinear Shapes","Math Meet — Triangle Inequality","Area","Lizzie's Notes — area of rectilinear shapes","Rep-Tiles","Grogg's Notes — rep-tiles"]},
+    {code:"B3-C4", title:"Multiplication", subtopics:["St. Ives","The Times Table","The Commutative Property","Block Blob","Multiplying Big Numbers","The Associative Property","Multiplying by 4 and by 5","Winnie's Notes","Penny Rows","Grogg's Notes"]},
+    {code:"B3-C5", title:"Perfect Squares", subtopics:["Perfect Squares","Squares that End in 5","Squaring Up","Winnie's Notes","Dots and Boxes","In the Garden","Dissections","Alex's Notes"]},
+    {code:"B3-C6", title:"The Distributive Property", subtopics:["Order of Operations","Big Rectangles","Pirate Booty","The Distributive Property","Math Meet"]},
+    {code:"B3-C7", title:"Variables", subtopics:["The number n","Variables","Winnie's Notes","Writing Equations","Lizzie's Notes","Solving Equations","Wild Tic-tac-toe","Capsules"]},
+    {code:"B3-C8", title:"Division", subtopics:["Grouping and sharing models","Inverse multiplication relationships","Division facts","Remainders"]},
+    {code:"B3-C9", title:"Measurement", subtopics:["Length","Weight","Liquid volume","Custom and metric systems","Conversions"]},
+    {code:"B3-C10", title:"Fractions", subtopics:["Parts of a whole","Fraction notation","Comparing fractions","Equivalent fractions"]},
+    {code:"B3-C11", title:"Estimation", subtopics:["Rounding numbers","Estimating sums","Estimating differences","Estimating products"]},
+    {code:"B3-C12", title:"Probability", subtopics:["Basic chance","Outcomes","Spinners","Coin flips","Combinations"]},
   ]},
-  { level:"PMC-5", age:"11 yrs", book:"Beast Academy Book 4", units:[
-    {u:"4A", t:"Shapes & Multiplication", sub:"Angle measurement, parallel/perpendicular lines, symmetry; distributive property, multi-digit multiplication, units-digit patterns"},
-    {u:"4B", t:"Counting & Division", sub:"Counting lists, independent events, Venn diagrams, factorials, counting pairs; special quotients, long division, divisibility"},
-    {u:"4C", t:"Factors & Fractions", sub:"Prime/composite numbers, divisibility, prime factorization, factor trees; adding/subtracting/converting fractions"},
-    {u:"4D", t:"Exponents, Logic, Integers & Probability", sub:"Powers, order of operations, perfect squares, binary; deductive reasoning, logic/grid puzzles; negative integers; probability"},
+  { levels:["PMC-5"], age:"11 yrs", book:"Beast Academy Book 4", chapters:[
+    {code:"B4-C1", title:"Shapes", subtopics:["Definitions","Measuring Angles","Parallel and Perpendicular","Symmetry","Carronade","Grogg's Notes"]},
+    {code:"B4-C2", title:"Multiplication", subtopics:["One Part at a Time — area model","The Algorithm","The Units Digit","1's and 0's"]},
+    {code:"B4-C3", title:"Exponents", subtopics:["Exponents","Lizzie's Notes","Order of Operations","Power Play","Perfect Squares","Math Meet","Binary Island","Base-2","Grogg's Notes — happy numbers"]},
+    {code:"B4-C4", title:"Counting", subtopics:["Counting","Choices","Venn Diagrams","Factorials","Alex's Notes","Counting Pairs","Lizzie's Notes — sum 1 to 50"]},
+    {code:"B4-C5", title:"Division", subtopics:["Special Quotients","Multiples of Ten","Long Division","Carpool","Divisibility"]},
+    {code:"B4-C6", title:"Logic", subtopics:["Logic Puzzles","Bon Voyage","Grid Puzzles","Code Breaker","Truth-tellers and Liars","The Math Bowl"]},
+    {code:"B4-C7", title:"Factors", subtopics:["Factors","The Sieve","Fizz Buzz","Divisibility","Prime Factorization"]},
+    {code:"B4-C8", title:"Fractions", subtopics:["Mixed numbers","Improper fraction conversions","Adding/subtracting unlike denominators"]},
+    {code:"B4-C9", title:"Decimals", subtopics:["Place values","Fraction-to-decimal conversions","Basic operations with decimals"]},
+    {code:"B4-C10", title:"Probability", subtopics:["Outcomes","Dependent/independent events","Tree diagrams"]},
+    {code:"B4-C11", title:"Area", subtopics:["Parallelograms","Triangles","Trapezoids","Complex polygons"]},
+    {code:"B4-C12", title:"Integers", subtopics:["Positive and negative integers","Coordinates","Basic vector movements"]},
   ]},
-  { level:"PMC-6 / PMC-7", age:"12–13 yrs", book:"Beast Academy Book 5 (PMC-7 weighted toward 5C–5D & Very Hard tier)", units:[
-    {u:"5A", t:"3D Solids & Integers", sub:"Classifying solids, nets, surface area, volume; multiplication, long products, division, exponents, negation"},
-    {u:"5B", t:"Statistics & Factors/Multiples", sub:"Median, mean, weighted average, range, mode; factors, GCF, multiples, LCM, factorials"},
-    {u:"5C", t:"Sequences & Ratios/Rates", sub:"Patterns, unknown terms, arithmetic sequences, triangular numbers; ratios, proportions, speed, rates, unit conversions"},
-    {u:"5D", t:"Percents, Roots, Expressions/Equations, Decimals, Exponents", sub:"Fraction/decimal/percent conversion, percent change; square/cube roots, Pythagorean theorem; expressions, multi-step equations; scientific notation"},
+  { levels:["PMC-6","PMC-7"], age:"12–13 yrs", book:"Beast Academy Book 5 (PMC-7 weighted toward Ch.8–12 & Very Hard tier)", chapters:[
+    {code:"B5-C1", title:"3D Solids", subtopics:["3D","Solids","Grogg's Notes — Platonic solids","Nets","Surface Area","Alex's Notes","Volume"]},
+    {code:"B5-C2", title:"Integers", subtopics:["Review","Lunch","Multiplying Integers","Winnie's Homework","Carpool","Dividing Integers","Exponents","Lizzie's Notes"]},
+    {code:"B5-C3", title:"Expressions & Equations", subtopics:["Notation","Simplifying","Isolating x","Solving Equations","Carpool","Math Meet"]},
+    {code:"B5-C4", title:"Statistics", subtopics:["The Middle","Average","Averaging — weighted average","Range & Mode","Stat Stumped"]},
+    {code:"B5-C5", title:"Factors & Multiples", subtopics:["Factors","GCF","GCF Game","LCM","Grogg's Notes — Venn diagram","Factorials"]},
+    {code:"B5-C6", title:"Fractions", subtopics:["Addition & Subtraction","Multiplication","More Multiplication","Cancelling","Training — dividing fractions","Channel 5","The Final Round"]},
+    {code:"B5-C7", title:"Sequences", subtopics:["Next","Sequences","Subtractionacci","Arithmetic Sequences","Triangular Numbers"]},
+    {code:"B5-C8", title:"Ratios & Rates", subtopics:["Scaling","Proportions","Unit rates","Speed, distance & time"]},
+    {code:"B5-C9", title:"Decimals", subtopics:["Advanced decimal calculations","Dividing decimals","Rounding","Repeating decimals"]},
+    {code:"B5-C10", title:"Percents", subtopics:["Understanding percents","Converting formats","Discounts, taxes & interest"]},
+    {code:"B5-C11", title:"Square Roots", subtopics:["Perfect squares","Estimating non-perfect square roots","Geometric square calculations"]},
+    {code:"B5-C12", title:"Exponents", subtopics:["Scientific notation","Laws of exponents","Negative exponents","Power relationships"]},
   ]},
+  { levels:[], age:"", book:"", chapters:[ {code:"N/A", title:"N/A — pure logic", subtopics:["IQ / logic puzzle, no curriculum tie-in"]} ] },
 ];
+
+function allChapters(){ return CURRICULUM.flatMap(b=>b.chapters); }
+function chapterByCode(code){ return allChapters().find(c=>c.code===code); }
+function chapterLabel(code){ const c=chapterByCode(code); return c ? `${c.code} — ${c.title}` : (code||"—"); }
+function chaptersForLevel(level){ return (CURRICULUM.find(b=>b.levels.includes(level))?.chapters) || []; }
 
 let currentUser = null;   // Firebase Auth user
 let isTeacherApproved = null; // null = checking, true/false once resolved
@@ -516,7 +548,7 @@ function renderBank(){
       <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
       <select id="f-diff"><option value="">All difficulty</option>${DIFFS.map(t=>`<option value="${t.v}" ${filters.diff===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
       <select id="f-status"><option value="">All statuses</option>${STATUSES.map(t=>`<option value="${t.v}" ${filters.status===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
-      <select id="f-unit"><option value="">All units</option>${UNIT_OPTIONS.map(u=>`<option ${filters.unit===u?"selected":""}>${u}</option>`).join("")}</select>
+      <select id="f-unit"><option value="">All chapters</option>${CURRICULUM.map(b=>b.chapters.length && b.book ? `<optgroup label="${escapeHtml(b.book)}">${b.chapters.map(c=>`<option value="${c.code}" ${filters.unit===c.code?"selected":""}>${c.code} — ${escapeHtml(c.title)}</option>`).join("")}</optgroup>` : b.chapters.map(c=>`<option value="${c.code}" ${filters.unit===c.code?"selected":""}>${escapeHtml(c.title)}</option>`).join("")).join("")}</select>
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
     </div>
@@ -549,7 +581,7 @@ function cardHtml(q){
       </div>
       <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
       <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
-      <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${q.unit||"—"}</span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
+      <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${escapeHtml(chapterLabel(q.unit))}</span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
     </div>`;
 }
 
@@ -604,8 +636,8 @@ function openForm(existing){
           <div class="field"><label>Difficulty</label><select name="difficulty">${DIFFS.map(t=>`<option value="${t.v}" ${existing?.difficulty===t.v?"selected":""}>${t.l}</option>`).join("")}</select></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Unit / Book</label><select name="unit">${UNIT_OPTIONS.map(u=>`<option ${existing?.unit===u?"selected":""}>${u}</option>`).join("")}</select></div>
-          <div class="field"><label>Subtopic</label><input type="text" name="subtopic" value="${escapeHtml(existing?.subtopic||"")}" placeholder="e.g. prime factorization" /></div>
+          <div class="field"><label>Chapter</label><select name="unit" id="f-chapter">${CURRICULUM.map(b=>b.book ? `<optgroup label="${escapeHtml(b.book)}">${b.chapters.map(c=>`<option value="${c.code}" ${existing?.unit===c.code?"selected":""}>${c.code} — ${escapeHtml(c.title)}</option>`).join("")}</optgroup>` : b.chapters.map(c=>`<option value="${c.code}" ${existing?.unit===c.code?"selected":""}>${escapeHtml(c.title)}</option>`).join("")).join("")}</select></div>
+          <div class="field"><label>Subtopic</label><select name="subtopic" id="f-subtopic"></select></div>
         </div>
         <div class="section-label">Question (English)</div>
         <div class="field"><label>Prompt</label><textarea name="promptEn" rows="3" required placeholder="Keep it short and unambiguous — see the Teacher Guide §6.">${escapeHtml(existing?.promptEn||"")}</textarea></div>
@@ -641,6 +673,21 @@ function openForm(existing){
       <span class="k">${String.fromCharCode(65+i)}</span>
       <input type="text" data-opt="${i}" value="${escapeHtml(o)}" placeholder="Option ${String.fromCharCode(65+i)}" required />
     </div>`).join("");
+  const populateSubtopics = ()=>{
+    const chapterCode = document.getElementById("f-chapter").value;
+    const chapter = chapterByCode(chapterCode);
+    const subs = chapter ? chapter.subtopics.slice() : [];
+    // Only carry over a legacy free-typed subtopic while the chapter hasn't
+    // been changed away from the question's original one.
+    const keepExisting = existing?.subtopic && existing.unit===chapterCode && !subs.includes(existing.subtopic);
+    if(keepExisting) subs.unshift(existing.subtopic);
+    document.getElementById("f-subtopic").innerHTML = subs.map(s=>`<option ${existing?.subtopic===s?"selected":""}>${escapeHtml(s)}</option>`).join("");
+  };
+  populateSubtopics();
+  document.getElementById("f-chapter").addEventListener("change", ()=>{
+    document.getElementById("f-subtopic").innerHTML = "";
+    populateSubtopics();
+  });
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
   const formEl = document.getElementById("q-form");
@@ -734,7 +781,7 @@ function renderDrawerBody(){
       </div>
       <button class="btn ghost small" id="close-form">Close</button>
     </div>
-    <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${q.unit||"—"} / ${escapeHtml(q.subtopic||"—")}</div>
+    <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
     <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
     <div class="opt-list">${(q.optionsEn||[]).map((o,i)=>`<div class="opt-item ${i===q.correctIndex?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${escapeHtml(o)} ${i===q.correctIndex?"✓":""}</div>`).join("")}</div>
@@ -855,7 +902,7 @@ function openContestForm(){
           ${eligible.map(q=>`
           <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
             <input type="checkbox" name="qid" value="${q.id}" style="margin-top:3px;" />
-            <span><b>${escapeHtml(q.titleEn||"Untitled")}</b> — ${(q.level||[]).join(", ")} · ${q.unit||"—"}</span>
+            <span><b>${escapeHtml(q.titleEn||"Untitled")}</b> — ${(q.level||[]).join(", ")} · ${escapeHtml(chapterLabel(q.unit))}</span>
           </label>`).join("")}
         </div>`}
         <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:12px;" ${eligible.length===0?"disabled":""}>Create contest</button>
@@ -957,8 +1004,7 @@ function splitQuota(target, n){
 }
 
 function unitsForLevel(level){
-  const entry = CURRICULUM.find(c=>c.level===level || c.level.split(" / ").includes(level));
-  return entry ? entry.units.map(u=>u.u) : [];
+  return chaptersForLevel(level).map(c=>c.code);
 }
 
 function countByStatus(email, level, unit){
@@ -991,7 +1037,7 @@ function renderWorkload(){
       html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)}</p>`;
       Object.entries(a.quotas[currentUser.email]).forEach(([unit,target])=>{
         const c = countByStatus(currentUser.email, a.contestLevel, unit);
-        html += progressCard(`Unit ${unit}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} finalized/uploaded`);
+        html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} finalized/uploaded`);
       });
     });
   }
@@ -1008,7 +1054,7 @@ function renderWorkload(){
         });
         Object.entries(unitTargets).forEach(([unit,target])=>{
           const finalized = questions.filter(q=>(q.level||[]).includes(a.contestLevel) && q.unit===unit && (q.status==="finalized"||q.status==="uploaded")).length;
-          html += progressCard(`Unit ${unit} (all teachers)`, finalized, target);
+          html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""} (all teachers)`, finalized, target);
         });
       });
     }
@@ -1040,8 +1086,8 @@ function openAssignmentForm(){
     </div></div>`;
   const renderUnitInputs = ()=>{
     const level = document.getElementById("as-level").value;
-    document.getElementById("as-units").innerHTML = `<div class="row2">${unitsForLevel(level).map(u=>`
-      <div class="field"><label>Unit ${u}</label><input type="number" min="0" class="as-unit-target" data-unit="${u}" value="0" /></div>`).join("")}</div>`;
+    document.getElementById("as-units").innerHTML = `<div class="row2">${chaptersForLevel(level).map(c=>`
+      <div class="field"><label>${c.code} — ${escapeHtml(c.title)}</label><input type="number" min="0" class="as-unit-target" data-unit="${c.code}" value="0" /></div>`).join("")}</div>`;
   };
   renderUnitInputs();
   document.getElementById("as-level").addEventListener("change", renderUnitInputs);
@@ -1095,12 +1141,12 @@ function renderCurriculum(){
   main.innerHTML = `
     <div class="pagehead"><h1>Contest Curriculum Map</h1></div>
     <p class="desc">Test-blueprint scaffold (Teacher Guide §7). Every Math Aptitude item should be tagged against one row below.</p>
-    ${CURRICULUM.map(c=>`
+    ${CURRICULUM.filter(c=>c.book).map(c=>`
       <div class="level-block">
-        <h3>${c.level} <span class="mono" style="font-weight:400; color:var(--ink-dim); font-size:12px;">— ${c.age}</span></h3>
-        <div class="sub">${c.book}</div>
-        <table class="curr-table"><thead><tr><th style="width:70px;">Unit</th><th style="width:160px;">Topic</th><th>Subtopics</th></tr></thead>
-        <tbody>${c.units.map(u=>`<tr><td><span class="unit-chip">${u.u}</span></td><td>${u.t}</td><td>${u.sub}</td></tr>`).join("")}</tbody></table>
+        <h3>${c.levels.join(" / ")} <span class="mono" style="font-weight:400; color:var(--ink-dim); font-size:12px;">— ${c.age}</span></h3>
+        <div class="sub">${escapeHtml(c.book)}</div>
+        <table class="curr-table"><thead><tr><th style="width:80px;">Chapter</th><th style="width:170px;">Topic</th><th>Subtopics</th></tr></thead>
+        <tbody>${c.chapters.map(ch=>`<tr><td><span class="unit-chip">${ch.code}</span></td><td>${escapeHtml(ch.title)}</td><td>${ch.subtopics.map(escapeHtml).join(", ")}</td></tr>`).join("")}</tbody></table>
       </div>`).join("")}
     <p class="note">Source: publicly listed Beast Academy Level 3, 4, and 5 chapter guides (beastacademy.com).</p>
   `;
