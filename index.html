@@ -10,25 +10,25 @@
   @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&display=swap');
 
   :root{
-    --bg:#f4f6f3; --surface:#ffffff; --surface-2:#eceef0; --border:#d9ddd7; --ink:#1a221e; --ink-dim:#5b6660;
+    --bg:#f7f4ec; --surface:#fffdf8; --surface-2:#eee8da; --border:#e0d8c4; --ink:#221e17; --ink-dim:#6b6355;
     --accent:#0f6b5c; --accent-ink:#ffffff; --accent-soft:#e2efe9; --gold:#b5791f; --gold-soft:#f6ecd9;
-    --red:#a4372b; --red-soft:#f7e3df; --blue:#2f5f8a; --blue-soft:#e4edf5;
+    --red:#a4372b; --red-soft:#f7e3df; --blue:#2f5f8a; --blue-soft:#e4edf5; --violet:#6a5a9e; --violet-soft:#e9e5f3;
     --shadow: 0 1px 2px rgba(20,30,25,0.06), 0 6px 20px -10px rgba(20,30,25,0.18);
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
-      --bg:#111815; --surface:#182019; --surface-2:#1f2a23; --border:#2c3a32; --ink:#e9efe9; --ink-dim:#9db0a5;
+      --bg:#161c15; --surface:#1c231b; --surface-2:#232d24; --border:#333f34; --ink:#e9efe9; --ink-dim:#9db0a5;
       --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --gold:#d9a34a; --gold-soft:#332711;
-      --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39;
+      --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39; --violet:#b3a3e0; --violet-soft:#2a2440;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.55);
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"]{
-    --bg:#111815; --surface:#182019; --surface-2:#1f2a23; --border:#2c3a32; --ink:#e9efe9; --ink-dim:#9db0a5;
+    --bg:#161c15; --surface:#1c231b; --surface-2:#232d24; --border:#333f34; --ink:#e9efe9; --ink-dim:#9db0a5;
     --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --gold:#d9a34a; --gold-soft:#332711;
-    --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39;
+    --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39; --violet:#b3a3e0; --violet-soft:#2a2440;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.55);
     color-scheme: dark;
   }
@@ -61,7 +61,10 @@
   .who b{ color:var(--ink); font-weight:600; display:block; font-size:12px; }
   .link-btn{ all:unset; cursor:pointer; color:var(--accent); font-size:11.5px; }
   .main{ flex:1 1 auto; min-width:0; padding:26px 32px 60px; max-width:1180px; }
-  .pagehead{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:4px; flex-wrap:wrap;}
+  .pagehead{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:4px; padding-top:10px; border-top:3px solid transparent; flex-wrap:wrap;}
+  [data-section="contests"] .pagehead{ border-top-color:var(--blue); }
+  [data-section="quilgo"] .pagehead{ border-top-color:var(--gold); }
+  [data-section="workload"] .pagehead{ border-top-color:var(--violet); }
   .pagehead h1{ font-size:21px; font-weight:700; margin:0; }
   .pagehead .desc{ color:var(--ink-dim); font-size:13px; margin:4px 0 20px; max-width:66ch; }
   .btn{ display:inline-flex; align-items:center; gap:6px; border-radius:7px; border:1px solid var(--border); background:var(--surface); padding:8px 13px; font-size:13px; font-weight:600; color:var(--ink); }
@@ -80,6 +83,7 @@
   .pill{ display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; letter-spacing:.01em; }
   .pill.level{ background:var(--blue-soft); color:var(--blue); }
   .pill.type{ background:var(--accent-soft); color:var(--accent); }
+  .diff-dots{ font-size:7px; letter-spacing:1.5px; margin-left:2px; }
   .pill.diff-medium{ background:var(--gold-soft); color:var(--gold); }
   .pill.diff-hard{ background:#f3e3d4; color:#a15a1e; }
   .pill.diff-very_hard{ background:var(--red-soft); color:var(--red); }
@@ -308,6 +312,12 @@ const QTYPES = [
 const DIFFS = [
   {v:"medium", l:"Medium"}, {v:"hard", l:"Hard"}, {v:"very_hard", l:"Very Hard"}
 ];
+const DIFF_DOTS = {medium:1, hard:2, very_hard:3};
+function difficultyDots(v){
+  const filled = DIFF_DOTS[v]||0;
+  const color = v==="very_hard" ? "var(--red)" : "var(--gold)";
+  return `<span class="diff-dots" aria-hidden="true">${[1,2,3].map(n=>`<span style="color:${n<=filled?color:"var(--border)"};">●</span>`).join("")}</span>`;
+}
 const STATUSES = [
   {v:"draft", l:"Draft"}, {v:"in_review", l:"In Review"},
   {v:"finalized", l:"Finalized"}, {v:"uploaded", l:"Uploaded to Quilgo"}
@@ -651,6 +661,7 @@ function startDataSubscriptions(){
 
 function renderTab(){
   if(!isTeacherApproved) return;
+  document.getElementById("main").dataset.section = currentTab;
   if(currentTab==="bank") renderBank();
   else if(currentTab==="contests") renderContests();
   else if(currentTab==="quilgo") renderQuilgo();
@@ -714,7 +725,7 @@ function cardHtml(q){
       <div class="tags">
         ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
         <span class="pill type">${typeLbl}</span>
-        <span class="pill diff-${q.difficulty}">${diffLbl}</span>
+        <span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span>
         <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
         ${quilgo ? `<span class="pill status-uploaded" title="Uploaded by ${escapeHtml(quilgo.uploadedByName||"")} · ${fmtDate(quilgo.uploadedAt)}">Uploaded — ${escapeHtml(quilgo.contestName)}</span>` : ""}
         ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
@@ -1154,7 +1165,7 @@ function renderDrawerBody(){
         <div class="tags" style="margin-top:6px;">
           ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
-          <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}</span>
+          <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
           <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
           ${quilgo ? `<span class="pill status-uploaded">Uploaded to Quilgo — ${escapeHtml(quilgo.contestName)}</span>` : ""}
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
@@ -1312,7 +1323,7 @@ function openContestForm(){
         <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
         <span style="flex:1; min-width:0;">
           <b>${escapeHtml(q.titleEn||"Untitled")}</b>
-          <div class="tags" style="margin:3px 0;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}</span></div>
+          <div class="tags" style="margin:3px 0;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span></div>
           <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
         </span>
       </label>`;
