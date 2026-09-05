@@ -25,6 +25,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role == "admin";
     }
 
+    function isHeadTeacherOrAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["head_teacher", "admin"];
+    }
+
     // Each teacher can read their own allow-list entry (to check status);
     // admins can read the full list and create/update/delete entries —
     // this is what powers the Admin tab's "Manage Teachers" UI.
@@ -32,7 +37,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && (request.auth.token.email == email || isAdmin());
       allow create, update: if isAdmin() &&
         email == email.lower() &&
-        request.resource.data.role in ["teacher", "admin"];
+        request.resource.data.role in ["teacher", "head_teacher", "admin"];
       allow delete: if isAdmin();
     }
 
@@ -41,8 +46,20 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Admins design workload assignments; every teacher can read the
+    // collection to see their own quota/progress on the Workload tab.
+    match /assignments/{assignmentId} {
+      allow read: if isTeacher();
+      allow create, update, delete: if isAdmin();
+    }
+
     match /questions/{questionId} {
-      allow read, create, update: if isTeacher();
+      allow read: if isTeacher();
+      // Setting (or keeping) a question's status at "finalized" is
+      // restricted to head teachers/admins — once finalized, further
+      // edits by a plain teacher are rejected until it's unfinalized.
+      allow create, update: if isTeacher() &&
+        (request.resource.data.status != "finalized" || isHeadTeacherOrAdmin());
       allow delete: if isAdmin();
 
       match /comments/{commentId} {

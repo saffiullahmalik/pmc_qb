@@ -89,6 +89,18 @@
   :root:not([data-theme="light"]) .pill.status-uploaded{ background:#1a2e27; color:#7ee0c4; }
   .pill.role-admin{ background:var(--accent-soft); color:var(--accent); }
   .pill.role-teacher{ background:var(--surface-2); color:var(--ink-dim); }
+  .pill.role-head_teacher{ background:var(--blue-soft); color:var(--blue); }
+  .progress-bar{ height:8px; border-radius:5px; background:var(--surface-2); overflow:hidden; }
+  .progress-bar-fill{ height:100%; background:var(--accent); border-radius:5px 0 0 5px; }
+  .progress-card{ border:1px solid var(--border); border-radius:9px; padding:12px 14px; margin-bottom:10px; }
+  .progress-card .row{ display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:6px; }
+  .checklist{ display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
+  .checklist label{ display:flex; align-items:flex-start; gap:7px; font-weight:400; }
+  .drawer.wide{ width:min(980px, 100vw); }
+  .form-2col{ display:grid; grid-template-columns:1fr 1fr; gap:22px; align-items:start; }
+  #live-preview{ background:#fff; color:#161b19; border-radius:8px; padding:4px; border:1px solid var(--border); position:sticky; top:0; }
+  #live-preview .hint{ color:#6b7280; }
+  @media (max-width:900px){ .form-2col{ grid-template-columns:1fr; } }
   .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
   .card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 15px; box-shadow:var(--shadow); cursor:pointer; display:flex; flex-direction:column; gap:9px; }
   .card:hover{ border-color:var(--accent); }
@@ -211,6 +223,7 @@
     <div class="nav" id="nav">
       <button data-tab="bank" class="active"><span class="dot"></span>Question Bank</button>
       <button data-tab="contests"><span class="dot"></span>Contests</button>
+      <button data-tab="workload"><span class="dot"></span>Workload</button>
       <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
       <button data-tab="admin"><span class="dot"></span>Admin &amp; Analytics</button>
     </div>
@@ -309,12 +322,15 @@ const CURRICULUM = [
 let currentUser = null;   // Firebase Auth user
 let isTeacherApproved = null; // null = checking, true/false once resolved
 let isAdminUser = false;
+let canFinalize = false;
 
 let questions = [];
 let contests = [];
+let assignments = [];
+let allTeachers = [];
 let currentTab = "bank";
 let openQuestionId = null;
-let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null;
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", q:"" };
 
@@ -397,6 +413,7 @@ async function checkTeacherStatus(){
     if(snap.exists()){
       isTeacherApproved = true;
       isAdminUser = snap.data().role === "admin";
+      canFinalize = isAdminUser || snap.data().role === "head_teacher";
       document.getElementById("modal-root").innerHTML = "";
       renderSignedInChrome();
       startDataSubscriptions();
@@ -424,6 +441,7 @@ onAuthStateChanged(auth, user=>{
   if(unsubQuestions){ unsubQuestions(); unsubQuestions=null; }
   if(unsubTeachers){ unsubTeachers(); unsubTeachers=null; }
   if(unsubContests){ unsubContests(); unsubContests=null; }
+  if(unsubAssignments){ unsubAssignments(); unsubAssignments=null; }
   if(!user){
     isTeacherApproved = null;
     document.getElementById("who-box").innerHTML = "";
@@ -455,12 +473,18 @@ function startDataSubscriptions(){
     contests = snap.docs.map(d=>({id:d.id, ...d.data()}));
     if(currentTab==="contests") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contests ("+err.code+")"); });
+  const ay = query(collection(db,"assignments"), orderBy("createdAt","desc"), limit(200));
+  unsubAssignments = onSnapshot(ay, snap=>{
+    assignments = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(currentTab==="workload") renderTab();
+  }, err=>{ console.error(err); toast("Couldn't load assignments ("+err.code+")"); });
 }
 
 function renderTab(){
   if(!isTeacherApproved) return;
   if(currentTab==="bank") renderBank();
   else if(currentTab==="contests") renderContests();
+  else if(currentTab==="workload") renderWorkload();
   else if(currentTab==="curriculum") renderCurriculum();
   else if(currentTab==="admin") renderAdmin();
 }
@@ -529,14 +553,45 @@ function cardHtml(q){
     </div>`;
 }
 
+function renderLivePreview(formEl){
+  const pane = document.getElementById("live-preview");
+  if(!pane) return;
+  const fd = new FormData(formEl);
+  const promptEn = fd.get("promptEn")||"";
+  const promptUr = fd.get("promptUr")||"";
+  const graphicNote = fd.get("graphicNote")||"";
+  const optionsEn = Array.from(formEl.querySelectorAll("[data-opt]")).map(el=>el.value);
+  pane.innerHTML = `
+    <div class="question-container">
+      <div class="q-text-row">
+        <div class="q-lang-box english">
+          <span class="box-label">Question</span>
+          <p>${escapeHtml(promptEn)||`<span class="hint">English prompt will appear here…</span>`}</p>
+        </div>
+        <div class="q-lang-box urdu">
+          <span class="box-label">سوال</span>
+          <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
+        </div>
+      </div>
+      ${graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(graphicNote)}]</div>` : ""}
+      <div class="print-options-grid">
+        ${optionsEn.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}.</span> ${escapeHtml(o)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
+      </div>
+    </div>`;
+  if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([pane]).catch(console.error);
+}
+
 function openForm(existing){
   const isEdit = !!existing;
+  const locked = isEdit && existing.status==="finalized" && !canFinalize;
   const root = document.getElementById("modal-root");
   const levelSet = new Set(existing?.level||[]);
   root.innerHTML = `
-    <div class="overlay" id="ov"><div class="drawer">
+    <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>${isEdit? "Edit question" : "New question"}</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      <form id="q-form">
+      ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is finalized — only a Head Teacher or Admin can edit it.</div>` : ""}
+      <div class="form-2col">
+      <form id="q-form" ${locked?"inert":""}>
         <div class="field"><label>Title (internal, short)</label><input type="text" name="titleEn" required value="${escapeHtml(existing?.titleEn||"")}" placeholder="e.g. Grid path counting — 3x3" /></div>
         <div class="section-label">Tags</div>
         <div class="field"><label>Contest level(s)</label>
@@ -559,10 +614,23 @@ function openForm(existing){
         <div class="field"><label>Prompt (اردو)</label><textarea name="promptUr" rows="3" dir="rtl" style="text-align:right;" placeholder="Translate meaning, not word-for-word — see Teacher Guide §6.3.">${escapeHtml(existing?.promptUr||"")}</textarea></div>
         <div class="section-label">Notes</div>
         <div class="field"><label>Graphic needed? <span class="hint">(for math-puzzle items)</span></label><textarea name="graphicNote" rows="2">${escapeHtml(existing?.graphicNote||"")}</textarea></div>
-        <div class="field"><label>Status</label><select name="status">${STATUSES.map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select></div>
+        <div class="field"><label>Solution <span class="hint">(feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" rows="3" placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
+        <div class="field"><label>Status</label><select name="status">${STATUSES.map(t=>`<option value="${t.v}" ${t.v==="finalized" && !canFinalize && existing?.status!=="finalized" ? "disabled":""} ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}${t.v==="finalized"&&!canFinalize?" (Head Teacher/Admin only)":""}</option>`).join("")}</select></div>
         ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
-        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:8px;">${isEdit?"Save changes":"Post question"}</button>
+        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:8px;" ${locked?"disabled":""}>${isEdit?"Save changes":"Post question"}</button>
       </form>
+      <div>
+        <div class="section-label" style="margin-top:0;">Live preview</div>
+        <div id="live-preview"></div>
+        <div class="section-label">Quality &amp; age checklist <span class="hint">(reminder only, doesn't block posting)</span></div>
+        <div class="checklist">
+          <label><input type="checkbox" /> Wording is unambiguous — only one defensible correct answer</label>
+          <label><input type="checkbox" /> Difficulty and phrasing fit the target age group (see Curriculum Map)</label>
+          <label><input type="checkbox" /> Urdu translation conveys meaning, not a literal word-for-word rendering</label>
+          <label><input type="checkbox" /> Graphic note (if any) is clear enough for a designer to produce</label>
+        </div>
+      </div>
+      </div>
     </div></div>`;
   const optsWrap = document.getElementById("opts-en");
   const existingOpts = existing?.optionsEn && existing.optionsEn.length===4 ? existing.optionsEn : ["","","",""];
@@ -575,6 +643,12 @@ function openForm(existing){
     </div>`).join("");
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  const formEl = document.getElementById("q-form");
+  let previewTimer = null;
+  const scheduleLivePreview = ()=>{ clearTimeout(previewTimer); previewTimer = setTimeout(()=>renderLivePreview(formEl), 350); };
+  formEl.addEventListener("input", scheduleLivePreview);
+  formEl.addEventListener("change", scheduleLivePreview);
+  renderLivePreview(formEl);
   document.getElementById("q-form").addEventListener("submit", async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -588,7 +662,7 @@ function openForm(existing){
       titleEn: fd.get("titleEn").trim(), level, qType: fd.get("qType"), difficulty: fd.get("difficulty"),
       unit: fd.get("unit"), subtopic: fd.get("subtopic").trim(),
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
-      optionsEn, correctIndex, graphicNote: fd.get("graphicNote").trim(),
+      optionsEn, correctIndex, graphicNote: fd.get("graphicNote").trim(), solutionEn: fd.get("solutionEn").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
@@ -666,9 +740,13 @@ function renderDrawerBody(){
     <div class="opt-list">${(q.optionsEn||[]).map((o,i)=>`<div class="opt-item ${i===q.correctIndex?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${escapeHtml(o)} ${i===q.correctIndex?"✓":""}</div>`).join("")}</div>
     ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
     ${q.graphicNote ? `<div class="section-label">Graphic needed</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
+    ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
     <div class="section-label">Status</div>
     <div class="status-track">
-      ${STATUSES.map(s=>`<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}">${s.l}</button>`).join("")}
+      ${STATUSES.map(s=>{
+        const locked = s.v==="finalized" && !canFinalize;
+        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only Head Teachers or Admins can finalize a question"`:""}>${s.l}</button>`;
+      }).join("")}
       <button class="btn small ghost" id="edit-q" style="margin-left:auto;">Edit question</button>
     </div>
     ${(q.status==="finalized"||q.status==="uploaded"||(q.usedIn||[]).length) ? `
@@ -689,6 +767,7 @@ function renderDrawerBody(){
   document.getElementById("edit-q").addEventListener("click", ()=>openForm(q));
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
+      if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only Head Teachers or Admins can finalize a question"); return; }
       try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
       catch(err){ toast("Couldn't update status"); }
     });
@@ -856,6 +935,10 @@ function renderPrintView(contestId){
             ${qs.map((q,i)=>`<div><b>Q${i+1}.</b> ${String.fromCharCode(65+(q.correctIndex??0))}</div>`).join("")}
           </div>
         </div>
+        <div class="answer-key">
+          <h2>Solution Manual — ${escapeHtml(c.name)}</h2>
+          ${qs.map((q,i)=>`<div class="question-container"><b>Q${i+1}.</b> ${escapeHtml(q.solutionEn) || `<span class="hint">No solution provided yet.</span>`}</div>`).join("")}
+        </div>
       </div>
     </div>`;
   document.getElementById("close-print").addEventListener("click", closeModal);
@@ -864,6 +947,146 @@ function renderPrintView(contestId){
     document.querySelectorAll("#print-overlay .question-container").forEach(el=>el.classList.toggle("no-borders", !e.target.checked));
   });
   if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("print-overlay")]).catch(console.error);
+}
+
+/* ================= WORKLOAD TAB ================= */
+function splitQuota(target, n){
+  if(n<=0) return [];
+  const base = Math.floor(target/n), extra = target % n;
+  return Array.from({length:n}, (_,i)=> base + (i<extra?1:0));
+}
+
+function unitsForLevel(level){
+  const entry = CURRICULUM.find(c=>c.level===level || c.level.split(" / ").includes(level));
+  return entry ? entry.units.map(u=>u.u) : [];
+}
+
+function countByStatus(email, level, unit){
+  const mine = questions.filter(q=> q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit);
+  const finalized = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
+  const inReview = mine.filter(q=>q.status==="in_review").length;
+  const draft = mine.filter(q=>q.status==="draft").length;
+  return {finalized, inReview, draft, total:mine.length};
+}
+
+function progressCard(label, actual, target, sublabel){
+  const pct = target>0 ? Math.min(100, Math.round((actual/target)*100)) : 0;
+  return `
+    <div class="progress-card">
+      <div class="row"><b>${escapeHtml(label)}</b><span class="mono">${actual} / ${target}</span></div>
+      <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%;"></div></div>
+      ${sublabel ? `<div class="hint" style="margin-top:5px;">${sublabel}</div>` : ""}
+    </div>`;
+}
+
+function renderWorkload(){
+  const main = document.getElementById("main");
+  const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
+  let html = `<div class="pagehead"><h1>Workload</h1>${isAdminUser?`<button class="btn primary" id="new-assignment">+ New Assignment</button>`:""}</div>`;
+  html += `<div class="section-label">My workload</div>`;
+  if(mine.length===0){
+    html += `<div class="empty">No topics assigned to you yet.</div>`;
+  } else {
+    mine.forEach(a=>{
+      html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)}</p>`;
+      Object.entries(a.quotas[currentUser.email]).forEach(([unit,target])=>{
+        const c = countByStatus(currentUser.email, a.contestLevel, unit);
+        html += progressCard(`Unit ${unit}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} finalized/uploaded`);
+      });
+    });
+  }
+  if(isAdminUser){
+    html += `<div class="section-label" style="margin-top:26px;">Command view — all assignments</div>`;
+    if(assignments.length===0){
+      html += `<div class="empty">No assignments created yet.</div>`;
+    } else {
+      assignments.forEach(a=>{
+        html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)}</p>`;
+        const unitTargets = {};
+        Object.values(a.quotas||{}).forEach(perUnit=>{
+          Object.entries(perUnit).forEach(([unit,t])=>{ unitTargets[unit] = (unitTargets[unit]||0) + t; });
+        });
+        Object.entries(unitTargets).forEach(([unit,target])=>{
+          const finalized = questions.filter(q=>(q.level||[]).includes(a.contestLevel) && q.unit===unit && (q.status==="finalized"||q.status==="uploaded")).length;
+          html += progressCard(`Unit ${unit} (all teachers)`, finalized, target);
+        });
+      });
+    }
+  }
+  main.innerHTML = html;
+  if(isAdminUser){
+    subscribeTeachers();
+    document.getElementById("new-assignment").addEventListener("click", openAssignmentForm);
+  }
+}
+
+function openAssignmentForm(){
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+    <div class="overlay" id="ov"><div class="drawer">
+      <div class="drawer-head"><h2>New workload assignment</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC 4 Fall 2026 Prep" /></div>
+      <div class="field"><label>Contest level</label><select id="as-level">${LEVELS.map(l=>`<option>${l}</option>`).join("")}</select></div>
+      <div class="section-label">Target question count per unit</div>
+      <div id="as-units"></div>
+      <div class="section-label">Assign to teachers</div>
+      <div id="as-teachers" style="max-height:160px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
+        ${allTeachers.map(t=>`<label style="display:flex; align-items:center; gap:8px; padding:4px; font-weight:400; font-size:13px;"><input type="checkbox" value="${escapeHtml(t.email)}" /> ${escapeHtml(t.name||t.email)}</label>`).join("") || `<div class="hint">No teachers found.</div>`}
+      </div>
+      <button class="btn" id="as-split" style="margin-top:10px;">Split evenly &amp; preview quotas</button>
+      <div class="section-label">Quotas (editable before saving)</div>
+      <div id="as-grid"></div>
+      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:12px;" disabled>Create assignment</button>
+    </div></div>`;
+  const renderUnitInputs = ()=>{
+    const level = document.getElementById("as-level").value;
+    document.getElementById("as-units").innerHTML = `<div class="row2">${unitsForLevel(level).map(u=>`
+      <div class="field"><label>Unit ${u}</label><input type="number" min="0" class="as-unit-target" data-unit="${u}" value="0" /></div>`).join("")}</div>`;
+  };
+  renderUnitInputs();
+  document.getElementById("as-level").addEventListener("change", renderUnitInputs);
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  document.getElementById("as-split").addEventListener("click", ()=>{
+    const teacherEmails = Array.from(document.querySelectorAll("#as-teachers input:checked")).map(el=>el.value);
+    if(teacherEmails.length===0){ toast("Pick at least one teacher"); return; }
+    const unitTargets = Array.from(document.querySelectorAll(".as-unit-target"))
+      .map(el=>({unit:el.dataset.unit, target:parseInt(el.value,10)||0}))
+      .filter(u=>u.target>0);
+    if(unitTargets.length===0){ toast("Set a target for at least one unit"); return; }
+    const grid = document.getElementById("as-grid");
+    grid.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Teacher</th>${unitTargets.map(u=>`<th>${u.unit}</th>`).join("")}</tr></thead><tbody>
+      ${teacherEmails.map(email=>{
+        const t = allTeachers.find(x=>x.email===email);
+        return `<tr><td>${escapeHtml(t?.name||email)}<div class="hint">${escapeHtml(email)}</div></td>${unitTargets.map(u=>{
+          const split = splitQuota(u.target, teacherEmails.length);
+          const idx = teacherEmails.indexOf(email);
+          return `<td><input type="number" min="0" class="as-quota-cell" data-email="${escapeHtml(email)}" data-unit="${u.unit}" value="${split[idx]}" style="width:64px;" /></td>`;
+        }).join("")}</tr>`;
+      }).join("")}
+    </tbody></table></div>`;
+    document.getElementById("as-save").disabled = false;
+    document.getElementById("as-save").onclick = async ()=>{
+      const name = document.getElementById("as-name").value.trim() || `${document.getElementById("as-level").value} assignment`;
+      const level = document.getElementById("as-level").value;
+      const quotas = {};
+      document.querySelectorAll(".as-quota-cell").forEach(cell=>{
+        const email = cell.dataset.email, unit = cell.dataset.unit, val = parseInt(cell.value,10)||0;
+        if(val<=0) return;
+        quotas[email] = quotas[email] || {};
+        quotas[email][unit] = val;
+      });
+      try{
+        await addDoc(collection(db,"assignments"), {
+          name, contestLevel: level, units: unitTargets, teacherEmails,
+          quotas, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+          createdAt: new Date().toISOString()
+        });
+        toast("Assignment created");
+        closeModal();
+      }catch(err){ console.error(err); toast("Couldn't create assignment ("+err.code+")"); }
+    };
+  });
 }
 
 /* ================= CURRICULUM TAB ================= */
@@ -920,7 +1143,7 @@ function renderAdmin(){
       </div>
       <div class="field" style="margin:0; min-width:120px;">
         <label>Role</label>
-        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="admin">Admin</option></select>
+        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="head_teacher">Head Teacher</option><option value="admin">Admin</option></select>
       </div>
       <button class="btn primary" id="add-teacher-btn">Create account</button>
     </div>
@@ -967,7 +1190,10 @@ function subscribeTeachers(){
   }, err=>{ console.error(err); toast("Couldn't load teachers ("+err.code+")"); });
 }
 
+const ROLE_LABEL = {teacher:"Teacher", head_teacher:"Head Teacher", admin:"Admin"};
+
 function renderTeachersTable(list){
+  allTeachers = list;
   const tbody = document.getElementById("teachers-tbody");
   if(!tbody) return;
   if(list.length===0){ tbody.innerHTML = `<tr><td colspan="5" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
@@ -976,14 +1202,16 @@ function renderTeachersTable(list){
     <tr>
       <td>${escapeHtml(t.name||"—")}</td>
       <td>${escapeHtml(t.email)}</td>
-      <td><span class="pill role-${t.role==='admin'?'admin':'teacher'}">${t.role==='admin'?'Admin':'Teacher'}</span></td>
+      <td><span class="pill role-${t.role}">${ROLE_LABEL[t.role]||t.role}</span></td>
       <td class="mono">${t.addedAt? fmtDate(t.addedAt): "—"}</td>
-      <td style="white-space:nowrap;">
-        <button class="btn small" data-toggle-role="${escapeHtml(t.email)}" data-current-role="${t.role}">${t.role==='admin'?'Make teacher':'Make admin'}</button>
+      <td style="white-space:nowrap; display:flex; gap:6px; align-items:center;">
+        <select data-role-select="${escapeHtml(t.email)}" style="padding:4px 6px; font-size:12px;">
+          ${Object.keys(ROLE_LABEL).map(r=>`<option value="${r}" ${t.role===r?"selected":""}>${ROLE_LABEL[r]}</option>`).join("")}
+        </select>
         <button class="btn small" style="color:var(--red);" data-remove-teacher="${escapeHtml(t.email)}">Remove</button>
       </td>
     </tr>`).join("");
-  tbody.querySelectorAll("[data-toggle-role]").forEach(b=>b.addEventListener("click", ()=>toggleTeacherRole(b.dataset.toggleRole, b.dataset.currentRole)));
+  tbody.querySelectorAll("[data-role-select]").forEach(sel=>sel.addEventListener("change", ()=>setTeacherRole(sel.dataset.roleSelect, sel.value, sel)));
   tbody.querySelectorAll("[data-remove-teacher]").forEach(b=>b.addEventListener("click", ()=>removeTeacher(b.dataset.removeTeacher)));
 }
 
@@ -1022,13 +1250,16 @@ async function addTeacher(){
   }
 }
 
-async function toggleTeacherRole(email, currentRole){
-  const newRole = currentRole==="admin" ? "teacher" : "admin";
-  if(email===currentUser.email.toLowerCase() && newRole==="teacher" &&
-     !confirm("This is your own account — you'll lose admin access immediately. Continue?")) return;
+async function setTeacherRole(email, newRole, selectEl){
+  const isSelf = email===currentUser.email.toLowerCase();
+  if(isSelf && newRole!=="admin" &&
+     !confirm("This is your own account — you'll lose admin access immediately. Continue?")){
+    selectEl.value = "admin";
+    return;
+  }
   try{
     await setDoc(doc(db,"teachers",email), {role:newRole}, {merge:true});
-    toast(`Role updated to ${newRole}`);
+    toast(`Role updated to ${ROLE_LABEL[newRole]}`);
   }catch(err){ console.error(err); toast("Couldn't update role ("+err.code+")"); }
 }
 
