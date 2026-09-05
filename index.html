@@ -179,6 +179,9 @@
   .note{ font-size:11px; color:var(--ink-dim); margin-top:10px; line-height:1.5; }
   .toast{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 16px; border-radius:8px; font-size:12.5px; z-index:200; box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px); }
+  .toast.success{ border-left:3px solid var(--accent); }
+  .toast.warn{ border-left:3px solid var(--gold); }
+  .toast.error{ border-left:3px solid var(--red); }
   ::-webkit-scrollbar{ width:9px; height:9px; }
   ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:5px; }
   @media (max-width:760px){
@@ -416,6 +419,7 @@ let allTeachers = [];
 let currentTab = "bank";
 let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null;
+let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", q:"" };
 let quilgoContestId = "";
@@ -433,9 +437,22 @@ function fmtDateOnly(dateStr){
   if(!dateStr) return "";
   return new Date(dateStr+"T00:00:00").toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
 }
+// Classifies a toast's tone from its own message text so every call site
+// doesn't need a second argument — keep new toast() calls in these same
+// phrasings ("Couldn't …" for errors, "Enter/Pick/Maximum …" for warnings)
+// for this to keep working.
+function toastKind(msg){
+  const m = msg.toLowerCase();
+  if(m.includes("couldn't") || m.includes("failed") || m.includes("not found") || m.startsWith("only ")) return "error";
+  if(m.startsWith("enter ") || m.startsWith("pick ") || m.startsWith("fill in") || m.startsWith("set a target") || m.includes("must be at least") || m.startsWith("maximum")) return "warn";
+  return "success";
+}
 function toast(msg){
   const t = document.getElementById("toast");
-  t.textContent = msg; t.classList.add("show");
+  const kind = toastKind(msg);
+  const icon = kind==="error" ? "✕" : kind==="warn" ? "⚠" : "✓";
+  t.innerHTML = `<span aria-hidden="true">${icon}</span> ${escapeHtml(msg)}`;
+  t.className = "toast show "+kind;
   clearTimeout(toast._h);
   toast._h = setTimeout(()=>t.classList.remove("show"), 2400);
 }
@@ -591,6 +608,7 @@ onAuthStateChanged(auth, user=>{
   if(unsubTeachers){ unsubTeachers(); unsubTeachers=null; }
   if(unsubContests){ unsubContests(); unsubContests=null; }
   if(unsubAssignments){ unsubAssignments(); unsubAssignments=null; }
+  dataReady = { questions:false, contests:false, assignments:false };
   if(!user){
     isTeacherApproved = null;
     document.getElementById("who-box").innerHTML = "";
@@ -613,17 +631,20 @@ function startDataSubscriptions(){
   const qy = query(collection(db,"questions"), orderBy("createdAt","desc"), limit(5000));
   unsubQuestions = onSnapshot(qy, snap=>{
     questions = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    dataReady.questions = true;
     if(currentTab==="bank" || currentTab==="contests" || currentTab==="quilgo") renderTab();
     if(openQuestionId) renderDrawer();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
   const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
   unsubContests = onSnapshot(cy, snap=>{
     contests = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    dataReady.contests = true;
     if(currentTab==="contests" || currentTab==="quilgo") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contests ("+err.code+")"); });
   const ay = query(collection(db,"assignments"), orderBy("createdAt","desc"), limit(200));
   unsubAssignments = onSnapshot(ay, snap=>{
     assignments = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    dataReady.assignments = true;
     if(currentTab==="workload") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load assignments ("+err.code+")"); });
 }
@@ -670,7 +691,7 @@ function renderBank(){
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
     </div>
-    ${list.length===0 ? `<div class="empty">No questions match these filters yet.${questions.length===0?" Be the first to post one.":""}</div>` : `<div class="grid" id="q-grid"></div>`}
+    ${!dataReady.questions ? `<div class="empty">Loading questions…</div>` : list.length===0 ? `<div class="empty">No questions match these filters yet.${questions.length===0?" Be the first to post one.":""}</div>` : `<div class="grid" id="q-grid"></div>`}
   `;
   document.getElementById("new-q").addEventListener("click", ()=>openForm(null));
   ["level","type","diff","status","unit"].forEach(k=>{
@@ -812,8 +833,8 @@ function openForm(existing){
         <input type="radio" name="correctOpt" value="${o.id}" ${o.id===correctOptionId?"checked":""} title="Mark correct" />
         <span class="k">${String.fromCharCode(65+i)}</span>
         <input type="text" data-opt-text="${o.id}" value="${escapeHtml(o.text)}" placeholder="Option ${String.fromCharCode(65+i)}" style="flex:1; min-width:120px;" />
-        <label class="btn small" title="Add image" style="cursor:pointer;">📷<input type="file" accept="image/*" data-opt-img="${o.id}" hidden /></label>
-        ${o.image ? `<img src="${o.image}" class="opt-thumb" /><button type="button" class="btn small" data-opt-rmimg="${o.id}">✕ img</button>` : ""}
+        <label class="btn small" title="Add image" aria-label="Add an image to this option" style="cursor:pointer;">📷<input type="file" accept="image/*" data-opt-img="${o.id}" hidden /></label>
+        ${o.image ? `<img src="${o.image}" class="opt-thumb" alt="Option ${String.fromCharCode(65+i)} image" /><button type="button" class="btn small" data-opt-rmimg="${o.id}" aria-label="Remove option ${String.fromCharCode(65+i)} image">✕ img</button>` : ""}
         <button type="button" class="btn small" style="color:var(--red);" data-opt-remove="${o.id}" ${optionsState.length<=2?"disabled":""}>Remove</button>
       </div>`).join("");
     wrap.querySelectorAll("[name=correctOpt]").forEach(el=>el.addEventListener("change", ()=>{ correctOptionId = el.value; }));
@@ -852,7 +873,7 @@ function openForm(existing){
 
   function renderFigureWrap(){
     document.getElementById("figure-wrap").innerHTML = graphicImageState
-      ? `<img src="${graphicImageState}" id="figure-img-preview" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="figure-remove">Remove image</button>`
+      ? `<img src="${graphicImageState}" id="figure-img-preview" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="figure-remove">Remove image</button>`
       : `<span class="hint">No figure uploaded yet.</span>`;
     document.getElementById("figure-remove")?.addEventListener("click", ()=>{ graphicImageState=null; renderFigureWrap(); renderResizeWrap(); });
     renderResizeWrap();
@@ -933,9 +954,9 @@ function openForm(existing){
             <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
-        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" /></div>` : ""}
+        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" /></div>` : ""}
         <div class="print-options-grid">
-          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
+          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
         </div>
       </div>`;
     if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([pane]).catch(console.error);
@@ -1011,6 +1032,26 @@ function openForm(existing){
   });
 }
 
+function confirmDialog(message, {danger=false}={}){
+  return new Promise(resolve=>{
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = `
+      <div class="overlay" id="confirm-simple-ov" style="z-index:210;">
+        <div class="gate-card" style="width:min(420px,92vw); text-align:left;">
+          <p style="margin:0 0 18px; font-size:14px;">${escapeHtml(message)}</p>
+          <div style="display:flex; gap:8px;">
+            <button class="btn ghost" id="confirm-simple-cancel" style="flex:1; justify-content:center;">Cancel</button>
+            <button class="btn ${danger?"":"primary"}" id="confirm-simple-ok" style="flex:1; justify-content:center; ${danger?"background:var(--red); color:#fff; border-color:var(--red);":""}">${danger?"Delete":"Confirm"}</button>
+          </div>
+        </div>
+      </div>`;
+    const finish = result => { root.innerHTML = ""; resolve(result); };
+    document.getElementById("confirm-simple-cancel").addEventListener("click", ()=>finish(false));
+    document.getElementById("confirm-simple-ok").addEventListener("click", ()=>finish(true));
+    document.getElementById("confirm-simple-ov").addEventListener("click", e=>{ if(e.target.id==="confirm-simple-ov") finish(false); });
+  });
+}
+
 function openConfirmPopup({promptEn, correctOpt, difficultyLabel, levels, hasGraphic, onConfirm}){
   const root = document.getElementById("confirm-root");
   const items = [
@@ -1024,7 +1065,7 @@ function openConfirmPopup({promptEn, correctOpt, difficultyLabel, levels, hasGra
       <div class="gate-card" style="width:min(480px,92vw); text-align:left;">
         <h2 style="margin-top:0;">Before you save…</h2>
         <div class="prompt-box">${escapeHtml(promptEn)}</div>
-        <p style="font-size:13px;"><b>Marked correct:</b> ${correctOpt.image?`<img src="${correctOpt.image}" style="height:20px; vertical-align:middle; margin-right:5px;"/>`:""}${escapeHtml(correctOpt.text)||"(image option)"}</p>
+        <p style="font-size:13px;"><b>Marked correct:</b> ${correctOpt.image?`<img src="${correctOpt.image}" alt="Correct option image" style="height:20px; vertical-align:middle; margin-right:5px;"/>`:""}${escapeHtml(correctOpt.text)||"(image option)"}</p>
         <p class="mono" style="font-size:11.5px; color:var(--ink-dim);">${escapeHtml(difficultyLabel)} · ${levels.join(", ")}</p>
         <div class="checklist" style="margin-top:8px;">
           ${items.map(t=>`<label><input type="checkbox" data-confirm-box /> ${escapeHtml(t)}</label>`).join("")}
@@ -1072,9 +1113,9 @@ async function downloadQuestionImage(q){
         <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${escapeHtml(q.promptEn||"")}</p></div>
         <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${escapeHtml(q.promptUr||"")}</p></div>
       </div>
-      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : ""}
+      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : ""}
       <div class="print-options-grid">
-        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
       </div>
     </div>`;
   document.body.appendChild(node);
@@ -1125,8 +1166,8 @@ function renderDrawerBody(){
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
     <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
-    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" /></div>` : ""}
-    <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
+    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" /></div>` : ""}
+    <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
     ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
     ${q.graphicNote ? `<div class="section-label">Graphic note</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
@@ -1156,7 +1197,7 @@ function renderDrawerBody(){
   document.getElementById("edit-q").addEventListener("click", ()=>openForm(q));
   document.getElementById("download-img").addEventListener("click", ()=>downloadQuestionImage(q));
   document.getElementById("delete-q")?.addEventListener("click", async ()=>{
-    if(!confirm(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`)) return;
+    if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
     try{ await deleteDoc(doc(db,"questions",q.id)); toast("Question deleted"); closeModal(); }
     catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
   });
@@ -1199,7 +1240,7 @@ function renderContests(){
   main.innerHTML = `
     <div class="pagehead"><h1>Contests</h1><button class="btn primary" id="new-contest">+ Create New Contest</button></div>
     <p class="desc">Assemble a paper from finalized questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
-    ${contests.length===0 ? `<div class="empty">No contests created yet.</div>` : `
+    ${!dataReady.contests ? `<div class="empty">Loading contests…</div>` : contests.length===0 ? `<div class="empty">No contests created yet.</div>` : `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th></th></tr></thead>
       <tbody>
@@ -1221,7 +1262,7 @@ function renderContests(){
   document.getElementById("new-contest").addEventListener("click", openContestForm);
   main.querySelectorAll("[data-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.print)));
   main.querySelectorAll("[data-delete-contest]").forEach(b=>b.addEventListener("click", async ()=>{
-    if(!confirm("Delete this contest record? This won't remove the usage tags already applied to its questions.")) return;
+    if(!(await confirmDialog("Delete this contest record? This won't remove the usage tags already applied to its questions.", {danger:true}))) return;
     try{ await deleteDoc(doc(db,"contests",b.dataset.deleteContest)); }
     catch(err){ toast("Couldn't delete contest"); }
   }));
@@ -1289,10 +1330,10 @@ function openContestForm(){
     if(selectedOrder.length===0){ list.innerHTML = `<div class="hint" style="padding:6px;">Check questions on the left to add them here.</div>`; return; }
     list.innerHTML = selectedOrder.map((id,i)=>{
       const q = eligible.find(x=>x.id===id);
-      return `<div class="opt-row" draggable="true" data-id="${id}" style="cursor:grab; background:var(--surface-2); border-radius:6px; padding:6px 8px; margin-bottom:5px;">
+      return `<div class="opt-row" draggable="true" data-id="${id}" aria-label="${escapeHtml(q?.titleEn||"Untitled")}, position ${i+1}, draggable to reorder" style="cursor:grab; background:var(--surface-2); border-radius:6px; padding:6px 8px; margin-bottom:5px;">
         <span class="mono" style="width:20px;">${i+1}.</span>
         <span style="flex:1;">${escapeHtml(q?.titleEn||"Untitled")}</span>
-        <span class="hint">⠿</span>
+        <span class="hint" aria-hidden="true">⠿</span>
       </div>`;
     }).join("");
     let dragId = null;
@@ -1379,9 +1420,9 @@ function renderPrintView(contestId, opts){
               <p>${escapeHtml(q.promptUr||"")}</p>
             </div>
           </div>
-          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : (q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : "")}
+          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : (q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : "")}
           <div class="print-options-grid">
-            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
+            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
           </div>
         </div>`).join("")}
         <div class="answer-key">
@@ -1447,7 +1488,9 @@ function renderWorkload(){
   const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
   let html = `<div class="pagehead"><h1>Assignment</h1>${isAdminUser?`<button class="btn primary" id="new-assignment">+ New Assignment</button>`:""}</div>`;
   html += `<div class="section-label">My workload</div>`;
-  if(mine.length===0){
+  if(!dataReady.assignments){
+    html += `<div class="empty">Loading assignments…</div>`;
+  } else if(mine.length===0){
     html += `<div class="empty">No topics assigned to you yet.</div>`;
   } else {
     mine.forEach(a=>{
@@ -1502,7 +1545,7 @@ function renderWorkload(){
       if(a) openAssignmentForm(a);
     }));
     document.querySelectorAll("[data-delete-assignment]").forEach(b=>b.addEventListener("click", async ()=>{
-      if(!confirm("Delete this assignment? Teachers will no longer see this quota.")) return;
+      if(!(await confirmDialog("Delete this assignment? Teachers will no longer see this quota.", {danger:true}))) return;
       try{ await deleteDoc(doc(db,"assignments",b.dataset.deleteAssignment)); toast("Assignment deleted"); }
       catch(err){ toast("Couldn't delete assignment"); }
     }));
@@ -1866,7 +1909,7 @@ async function addTeacher(){
 async function setTeacherRole(email, newRole, selectEl){
   const isSelf = email===currentUser.email.toLowerCase();
   if(isSelf && newRole!=="admin" &&
-     !confirm("This is your own account — you'll lose admin access immediately. Continue?")){
+     !(await confirmDialog("This is your own account — you'll lose admin access immediately. Continue?", {danger:true}))){
     selectEl.value = "admin";
     return;
   }
@@ -1880,7 +1923,7 @@ async function resetTeacherPassword(email){
   // The client SDK has no way for an admin to directly set someone else's
   // password without a backend (Admin SDK) — this sends them the same
   // "Forgot password" reset email teachers can trigger for themselves.
-  if(!confirm(`Send a password reset email to ${email}?`)) return;
+  if(!(await confirmDialog(`Send a password reset email to ${email}?`))) return;
   try{
     await sendPasswordResetEmail(auth, email);
     toast("Password reset email sent to "+email);
@@ -1889,7 +1932,7 @@ async function resetTeacherPassword(email){
 
 async function removeTeacher(email){
   const self = email===currentUser.email.toLowerCase();
-  if(!confirm(self ? "This is your own account — removing it will revoke your own access immediately. Continue?" : `Remove access for ${email}?`)) return;
+  if(!(await confirmDialog(self ? "This is your own account — removing it will revoke your own access immediately. Continue?" : `Remove access for ${email}?`, {danger:true}))) return;
   try{
     await deleteDoc(doc(db,"teachers",email));
     toast("Access removed");
