@@ -845,6 +845,7 @@ function openForm(existing){
   let correctOptionId = isEdit ? getCorrectOptionId(existing) : optionsState[0].id;
   let graphicImageState = existing?.graphicImage || null;
   let graphicImageWidthState = existing?.graphicImageWidth || 400;
+  let graphicPositionState = existing?.graphicPosition || "center";
   let step = 1;
   const totalSteps = 4;
 
@@ -885,7 +886,15 @@ function openForm(existing){
           </div>
 
           <div class="step-panel" data-step="2" hidden>
-            <div class="field"><label>Prompt (English)</label><textarea name="promptEn" rows="3" required placeholder="Keep it short and unambiguous — see SOP §2.1.">${escapeHtml(existing?.promptEn||"")}</textarea></div>
+            <div class="field">
+              <label>Prompt (English)</label>
+              <textarea name="promptEn" id="promptEn-input" rows="3" required placeholder="Keep it short and unambiguous — see SOP §2.1.">${escapeHtml(existing?.promptEn||"")}</textarea>
+              <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+                <button type="button" class="btn small" id="eq-insert-btn" aria-label="Insert an equation">∑ Insert equation</button>
+                <span class="hint">inserts at your cursor in whichever text box you last clicked</span>
+              </div>
+              <div id="eq-popover" hidden class="callout" style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;"></div>
+            </div>
             <details style="margin:-4px 0 12px;">
               <summary style="cursor:pointer; font-size:12px; color:var(--accent); font-weight:600;">How to write math (LaTeX) in a prompt or option</summary>
               <div class="callout" style="margin-top:6px;">
@@ -897,6 +906,15 @@ function openForm(existing){
                 The Live Preview on the last step shows exactly how it will render.
               </div>
             </details>
+            <div class="field"><label>Figure / diagram <span class="hint">(optional — upload an image or draw a simple shape figure)</span></label>
+              <div id="figure-wrap"></div>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+                <input type="file" accept="image/*" id="figure-file" />
+                <button type="button" class="btn small" id="draw-figure-btn">✏️ Draw a figure</button>
+              </div>
+              <div id="figure-resize-wrap"></div>
+            </div>
+            <div class="field"><label>Figure caption <span class="hint">(optional, shown under the image)</span></label><input type="text" name="graphicCaption" value="${escapeHtml(existing?.graphicCaption||existing?.graphicNote||"")}" placeholder="e.g. Figure 1: triangle ABC" /></div>
             <div class="field">
               <label>Options <span class="hint">(mark the correct one)</span></label>
               <div class="callout">${escapeHtml(OPTIONS_CONSTRUCTION_NOTE)}</div>
@@ -907,12 +925,6 @@ function openForm(existing){
                 <span class="hint mono" id="image-size-indicator" style="margin-left:auto;"></span>
               </div>
             </div>
-            <div class="field"><label>Figure / diagram image <span class="hint">(optional)</span></label>
-              <div id="figure-wrap"></div>
-              <input type="file" accept="image/*" id="figure-file" style="margin-top:6px;" />
-              <div id="figure-resize-wrap"></div>
-            </div>
-            <div class="field"><label>Figure caption <span class="hint">(optional, shown under the image)</span></label><input type="text" name="graphicCaption" value="${escapeHtml(existing?.graphicCaption||existing?.graphicNote||"")}" placeholder="e.g. Figure 1: triangle ABC" /></div>
           </div>
 
           <div class="step-panel" data-step="3" hidden>
@@ -984,8 +996,8 @@ function openForm(existing){
 
   function renderFigureWrap(){
     document.getElementById("figure-wrap").innerHTML = graphicImageState
-      ? `<img src="${graphicImageState}" id="figure-img-preview" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="figure-remove">Remove image</button>`
-      : `<span class="hint">No figure uploaded yet.</span>`;
+      ? `<div style="text-align:${graphicPositionState};"><img src="${graphicImageState}" id="figure-img-preview" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px; display:inline-block; margin-bottom:6px;" /></div><button type="button" class="btn small" id="figure-remove">Remove image</button>`
+      : `<span class="hint">No figure yet — upload an image or draw one below.</span>`;
     document.getElementById("figure-remove")?.addEventListener("click", ()=>{ graphicImageState=null; renderFigureWrap(); renderResizeWrap(); });
     renderResizeWrap();
     updateImageSizeIndicator();
@@ -1011,22 +1023,66 @@ function openForm(existing){
   }
   function renderResizeWrap(){
     const wrap = document.getElementById("figure-resize-wrap");
-    wrap.innerHTML = graphicImageState ? `
-      <div class="field" style="margin-top:8px;"><label>Figure size <span class="hint mono" id="figure-width-label">${graphicImageWidthState}px wide</span></label>
-        <input type="range" min="150" max="900" step="25" id="figure-width" value="${graphicImageWidthState}" />
-      </div>` : "";
-    document.getElementById("figure-width")?.addEventListener("input", e=>{
-      graphicImageWidthState = parseInt(e.target.value,10);
-      document.getElementById("figure-width-label").textContent = graphicImageWidthState+"px wide";
+    if(!graphicImageState){ wrap.innerHTML = ""; return; }
+    wrap.innerHTML = `
+      <div class="field" style="margin-top:8px;">
+        <label>Figure size</label>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button type="button" class="btn small" id="figure-shrink" aria-label="Shrink figure">−</button>
+          <span class="mono" id="figure-width-label" style="min-width:60px; text-align:center;">${graphicImageWidthState}px</span>
+          <button type="button" class="btn small" id="figure-grow" aria-label="Enlarge figure">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Figure position</label>
+        <div style="display:flex; gap:6px;">
+          ${["left","center","right"].map(p=>`<button type="button" class="btn small ${graphicPositionState===p?"primary":""}" data-figure-pos="${p}">${p[0].toUpperCase()+p.slice(1)}</button>`).join("")}
+        </div>
+      </div>`;
+    const applyWidth = ()=>{
+      document.getElementById("figure-width-label").textContent = graphicImageWidthState+"px";
       const img = document.getElementById("figure-img-preview");
       if(img) img.style.width = graphicImageWidthState+"px";
-    });
+    };
+    document.getElementById("figure-shrink").addEventListener("click", ()=>{ graphicImageWidthState = Math.max(150, graphicImageWidthState-25); applyWidth(); });
+    document.getElementById("figure-grow").addEventListener("click", ()=>{ graphicImageWidthState = Math.min(900, graphicImageWidthState+25); applyWidth(); });
+    wrap.querySelectorAll("[data-figure-pos]").forEach(b=>b.addEventListener("click", ()=>{
+      graphicPositionState = b.dataset.figurePos;
+      renderFigureWrap();
+    }));
   }
   renderFigureWrap();
   document.getElementById("figure-file").addEventListener("change", async e=>{
     const file = e.target.files[0]; if(!file) return;
     graphicImageState = await fileToCompressedDataUrl(file);
     renderFigureWrap();
+  });
+
+  // Equation-insert helper: tracks whichever prompt/solution textarea was
+  // last focused and inserts a LaTeX snippet at that cursor position.
+  let lastFocusedTextarea = document.getElementById("promptEn-input");
+  formEl.addEventListener("focusin", e=>{ if(e.target.tagName==="TEXTAREA") lastFocusedTextarea = e.target; });
+  const EQUATION_SNIPPETS = [
+    {label:"a/b", insert:"$\\frac{a}{b}$"}, {label:"√x", insert:"$\\sqrt{x}$"},
+    {label:"xⁿ", insert:"$x^{n}$"}, {label:"x₁", insert:"$x_{1}$"},
+    {label:"π", insert:"$\\pi$"}, {label:"×", insert:"$\\times$"}, {label:"÷", insert:"$\\div$"},
+    {label:"≤", insert:"$\\leq$"}, {label:"≥", insert:"$\\geq$"}, {label:"°", insert:"°"},
+  ];
+  const eqPopover = document.getElementById("eq-popover");
+  eqPopover.innerHTML = EQUATION_SNIPPETS.map(s=>`<button type="button" class="btn small mono" data-eq="${escapeHtml(s.insert)}">${s.label}</button>`).join("");
+  eqPopover.querySelectorAll("[data-eq]").forEach(b=>b.addEventListener("click", ()=>{
+    const ta = lastFocusedTextarea;
+    const snippet = b.dataset.eq;
+    ta.focus();
+    ta.setRangeText(snippet, ta.selectionStart, ta.selectionEnd, "end");
+    ta.dispatchEvent(new Event("input", {bubbles:true}));
+  }));
+  document.getElementById("eq-insert-btn").addEventListener("click", ()=>{ eqPopover.hidden = !eqPopover.hidden; });
+  document.getElementById("draw-figure-btn").addEventListener("click", ()=>{
+    openFigureDrawTool(async dataUrl=>{
+      graphicImageState = dataUrl;
+      renderFigureWrap();
+    });
   });
 
   function updateDifficultyCallout(){
@@ -1072,7 +1128,7 @@ function openForm(existing){
             <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
-        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" />${graphicCaption?`<div class="hint" style="margin-top:4px;">${escapeHtml(graphicCaption)}</div>`:""}</div>` : ""}
+        ${graphicImageState ? `<div class="print-graphic" style="text-align:${graphicPositionState};"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" />${graphicCaption?`<div class="hint" style="margin-top:4px;">${escapeHtml(graphicCaption)}</div>`:""}</div>` : ""}
         <div class="print-options-grid">
           ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
         </div>
@@ -1111,6 +1167,7 @@ function openForm(existing){
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
       options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
       correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
+      graphicPosition: graphicImageState?graphicPositionState:null,
       graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
@@ -1169,6 +1226,125 @@ function confirmDialog(message, {danger=false}={}){
     document.getElementById("confirm-simple-cancel").addEventListener("click", ()=>finish(false));
     document.getElementById("confirm-simple-ok").addEventListener("click", ()=>finish(true));
     document.getElementById("confirm-simple-ov").addEventListener("click", e=>{ if(e.target.id==="confirm-simple-ov") finish(false); });
+  });
+}
+
+// Lightweight built-in shape-drawing tool -- lines, rectangles, circles,
+// arrows, and text labels, click-drag to place -- rasterized to a PNG data
+// URL on save so it's stored/rendered exactly like an uploaded image
+// (no TikZ/LaTeX figure compiler needed, which would require a multi-MB
+// library or a backend).
+function openFigureDrawTool(onSave){
+  const root = document.getElementById("confirm-root");
+  const W = 560, H = 360;
+  let shapes = [];
+  let tool = "line";
+  let color = "#1a221e";
+  let dragStart = null;
+  root.innerHTML = `
+    <div class="overlay" id="draw-ov" style="z-index:220;">
+      <div class="gate-card" style="width:min(640px,95vw); text-align:left;">
+        <h2 style="margin-top:0;">Draw a figure</h2>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+          ${["line","rect","circle","arrow","text"].map(t=>`<button type="button" class="btn small ${tool===t?"primary":""}" data-tool="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}
+          <input type="color" id="draw-color" value="${color}" style="width:36px; padding:2px;" />
+          <button type="button" class="btn small" id="draw-undo">Undo</button>
+          <button type="button" class="btn small" id="draw-clear">Clear</button>
+        </div>
+        <svg id="draw-canvas" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="background:#fff; border:1px solid var(--border); border-radius:6px; cursor:crosshair; touch-action:none;"></svg>
+        <p class="hint" style="margin:6px 0 0;">Click and drag to place a shape. Pick "Text" then click once to add a label.</p>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <button class="btn ghost" id="draw-cancel" style="flex:1; justify-content:center;">Cancel</button>
+          <button class="btn primary" id="draw-save" style="flex:1; justify-content:center;">Use this figure</button>
+        </div>
+      </div>
+    </div>`;
+  const svgNS = "http://www.w3.org/2000/svg";
+  const canvas = document.getElementById("draw-canvas");
+  function redraw(preview){
+    canvas.innerHTML = `<defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#333"/></marker></defs>`;
+    [...shapes, ...(preview?[preview]:[])].forEach(s=>{
+      let el;
+      if(s.type==="line" || s.type==="arrow"){
+        el = document.createElementNS(svgNS,"line");
+        el.setAttribute("x1",s.x1); el.setAttribute("y1",s.y1); el.setAttribute("x2",s.x2); el.setAttribute("y2",s.y2);
+        el.setAttribute("stroke",s.color); el.setAttribute("stroke-width","2");
+        if(s.type==="arrow") el.setAttribute("marker-end","url(#arrowhead)");
+      } else if(s.type==="rect"){
+        el = document.createElementNS(svgNS,"rect");
+        el.setAttribute("x",Math.min(s.x1,s.x2)); el.setAttribute("y",Math.min(s.y1,s.y2));
+        el.setAttribute("width",Math.abs(s.x2-s.x1)); el.setAttribute("height",Math.abs(s.y2-s.y1));
+        el.setAttribute("fill","none"); el.setAttribute("stroke",s.color); el.setAttribute("stroke-width","2");
+      } else if(s.type==="circle"){
+        el = document.createElementNS(svgNS,"circle");
+        const r = Math.hypot(s.x2-s.x1, s.y2-s.y1);
+        el.setAttribute("cx",s.x1); el.setAttribute("cy",s.y1); el.setAttribute("r",r);
+        el.setAttribute("fill","none"); el.setAttribute("stroke",s.color); el.setAttribute("stroke-width","2");
+      } else if(s.type==="text"){
+        el = document.createElementNS(svgNS,"text");
+        el.setAttribute("x",s.x1); el.setAttribute("y",s.y1); el.setAttribute("fill",s.color); el.setAttribute("font-size","16");
+        el.textContent = s.text||"";
+      }
+      if(el) canvas.appendChild(el);
+    });
+  }
+  redraw();
+  document.querySelectorAll("[data-tool]").forEach(b=>b.addEventListener("click", ()=>{
+    tool = b.dataset.tool;
+    document.querySelectorAll("[data-tool]").forEach(x=>x.classList.toggle("primary", x===b));
+  }));
+  document.getElementById("draw-color").addEventListener("input", e=>{ color = e.target.value; });
+  document.getElementById("draw-undo").addEventListener("click", ()=>{ shapes.pop(); redraw(); });
+  document.getElementById("draw-clear").addEventListener("click", ()=>{ shapes = []; redraw(); });
+  function pt(e){
+    const r = canvas.getBoundingClientRect();
+    const clientX = e.touches?e.touches[0].clientX:e.clientX, clientY = e.touches?e.touches[0].clientY:e.clientY;
+    return {x:(clientX-r.left)*(W/r.width), y:(clientY-r.top)*(H/r.height)};
+  }
+  canvas.addEventListener("pointerdown", e=>{
+    const p = pt(e);
+    if(tool==="text"){
+      const text = prompt("Label text:");
+      if(text) shapes.push({type:"text", x1:p.x, y1:p.y, color, text});
+      redraw();
+      return;
+    }
+    dragStart = p;
+  });
+  canvas.addEventListener("pointermove", e=>{
+    if(!dragStart) return;
+    const p = pt(e);
+    redraw({type:tool, x1:dragStart.x, y1:dragStart.y, x2:p.x, y2:p.y, color});
+  });
+  window.addEventListener("pointerup", e=>{
+    if(!dragStart) return;
+    const p = pt(e);
+    if(Math.hypot(p.x-dragStart.x, p.y-dragStart.y) > 3){
+      shapes.push({type:tool, x1:dragStart.x, y1:dragStart.y, x2:p.x, y2:p.y, color});
+    }
+    dragStart = null;
+    redraw();
+  }, {once:false});
+  document.getElementById("draw-cancel").addEventListener("click", ()=>{ root.innerHTML = ""; });
+  document.getElementById("draw-save").addEventListener("click", async ()=>{
+    try{
+      const svgStr = new XMLSerializer().serializeToString(canvas);
+      const svgBlob = new Blob([svgStr], {type:"image/svg+xml;charset=utf-8"});
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = async ()=>{
+        const c = document.createElement("canvas");
+        c.width = W; c.height = H;
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0,0,W,H);
+        ctx.drawImage(img,0,0,W,H);
+        URL.revokeObjectURL(url);
+        root.innerHTML = "";
+        await onSave(c.toDataURL("image/png"));
+      };
+      img.onerror = ()=>{ toast("Couldn't render the figure"); };
+      img.src = url;
+    }catch(err){ console.error(err); toast("Couldn't render the figure"); }
   });
 }
 
@@ -1233,7 +1409,7 @@ async function downloadQuestionImage(q){
         <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${escapeHtml(q.promptEn||"")}</p></div>
         <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${escapeHtml(q.promptUr||"")}</p></div>
       </div>
-      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
+      ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
       <div class="print-options-grid">
         ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
       </div>
@@ -1286,7 +1462,7 @@ function renderDrawerBody(){
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
     <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
-    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
+    ${q.graphicImage ? `<div style="text-align:${q.graphicPosition||"center"}; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
     <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
     ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
@@ -1539,7 +1715,7 @@ function renderPrintView(contestId, opts){
               <p>${escapeHtml(q.promptUr||"")}</p>
             </div>
           </div>
-          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
+          ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
           <div class="print-options-grid">
             ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
           </div>
