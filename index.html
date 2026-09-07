@@ -923,6 +923,15 @@ function openForm(existing){
   let previewEnSize = 15, previewUrSize = 17;
   let step = 1;
   const totalSteps = 4;
+  // Firestore hard-caps a document at 1MiB; a question can carry a figure
+  // plus up to 8 option images, so this budget check catches it before a
+  // save fails with an opaque error rather than after. Declared up front
+  // (not just before its first use further down) because renderOptionRows()
+  // -- called during initial render, before this point in the old layout --
+  // calls updateImageSizeIndicator(), which reads this constant: a `const`
+  // referenced before its own declaration line throws, and only surfaced
+  // when a question actually had at least one image already on it.
+  const IMAGE_SIZE_WARN_BYTES = 700_000, IMAGE_SIZE_BLOCK_BYTES = 900_000;
 
   try{
   root.innerHTML = `
@@ -1099,10 +1108,6 @@ function openForm(existing){
     updateImageSizeIndicator();
   }
 
-  // Firestore hard-caps a document at 1MiB; a question can carry a figure
-  // plus up to 8 option images, so this budget check catches it before a
-  // save fails with an opaque error rather than after.
-  const IMAGE_SIZE_WARN_BYTES = 700_000, IMAGE_SIZE_BLOCK_BYTES = 900_000;
   function totalImageBytes(){
     let total = (graphicImageState||"").length;
     optionsState.forEach(o=>{ total += (o.image||"").length; });
