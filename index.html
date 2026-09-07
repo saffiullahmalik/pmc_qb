@@ -154,7 +154,7 @@
   .state-block{ display:flex; flex-direction:column; align-items:center; gap:10px; }
   .state-icon{ color:var(--accent); opacity:.5; }
   .state-icon.spin{ animation:spin 1.1s linear infinite; }
-  .overlay{ position:fixed; inset:0; background:rgba(10,14,12,.45); display:flex; justify-content:flex-end; z-index:40; }
+  .overlay{ position:fixed; top:0; left:216px; right:0; bottom:0; background:rgba(10,14,12,.45); display:flex; justify-content:flex-end; z-index:40; }
   .drawer{ width:min(560px, 100vw); background:var(--surface); height:100vh; overflow-y:auto; padding:22px 24px 40px; box-shadow:-10px 0 30px rgba(0,0,0,.15); }
   .drawer-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:6px; }
   .drawer h2{ font-size:18px; margin:0 0 2px; }
@@ -229,7 +229,7 @@
     .main{ padding:18px 16px 50px; }
     .row2{ grid-template-columns:1fr; }
     .drawer{ width:100vw; }
-    .editor-page{ left:0; top:54px; }
+    .editor-page, .overlay{ left:0; top:54px; }
     .step-panel .opt-row{ padding:8px 0; border-bottom:1px solid var(--border); gap:10px; }
     .step-panel .opt-row .btn.small{ min-height:44px; min-width:44px; }
     .step-panel .opt-row input[type="text"]{ min-height:40px; flex-basis:100%; order:1; }
@@ -336,8 +336,8 @@ import {
   createUserWithEmailAndPassword, updateProfile, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
-  collection, query, orderBy, limit, onSnapshot, arrayUnion, arrayRemove, deleteField
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc,
+  collection, collectionGroup, query, orderBy, limit, onSnapshot, arrayUnion, arrayRemove, deleteField
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
@@ -729,6 +729,8 @@ onAuthStateChanged(auth, user=>{
   if(unsubContests){ unsubContests(); unsubContests=null; }
   if(unsubAssignments){ unsubAssignments(); unsubAssignments=null; }
   if(unsubCurriculumExtra){ unsubCurriculumExtra(); unsubCurriculumExtra=null; }
+  if(unsubComments){ unsubComments(); unsubComments=null; }
+  if(unsubRatings){ unsubRatings(); unsubRatings=null; }
   dataReady = { questions:false, contests:false, assignments:false };
   if(!user){
     isTeacherApproved = null;
@@ -742,7 +744,7 @@ onAuthStateChanged(auth, user=>{
 document.getElementById("signout-btn").addEventListener("click", ()=>signOut(auth));
 document.getElementById("mobile-signout-btn").addEventListener("click", ()=>signOut(auth));
 function switchTab(tab){
-  if(document.getElementById("editor-page")) closeModal();
+  if(document.getElementById("modal-root").hasChildNodes()) closeModal();
   currentTab = tab;
   document.querySelectorAll("[data-tab]").forEach(x=>x.classList.toggle("active", x.dataset.tab===tab));
   renderTab();
@@ -2190,20 +2192,32 @@ function renderSOP(){
 }
 
 /* ================= ADMIN TAB ================= */
-function exportAllData(){
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    exportedBy: currentUser.email,
-    questions, contests, assignments, teachers: allTeachers,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `pmc-qb-backup-${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast("Backup downloaded");
+async function exportAllData(){
+  // Fetches a fresh teacher list at export time rather than trusting the
+  // cached `allTeachers` global -- that global is only populated once the
+  // teachers onSnapshot listener's first (async) callback has fired, so a
+  // backup taken in the instant right after opening the Admin tab could
+  // otherwise ship with an empty teachers array.
+  const btn = document.getElementById("export-data");
+  if(btn) btn.disabled = true;
+  try{
+    const teachersSnap = await getDocs(collection(db,"teachers"));
+    const teachers = teachersSnap.docs.map(d=>({email:d.id, ...d.data()}));
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: currentUser.email,
+      questions, contests, assignments, teachers,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pmc-qb-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Backup downloaded");
+  }catch(err){ console.error(err); toast("Couldn't export data ("+err.code+")"); }
+  finally{ if(btn) btn.disabled = false; }
 }
 
 function renderAdmin(){
@@ -2422,6 +2436,10 @@ async function setTeacherRole(email, newRole, selectEl){
   try{
     await setDoc(doc(db,"teachers",email), {role:newRole}, {merge:true});
     toast(`Role updated to ${ROLE_LABEL[newRole]}`);
+    // Own role/session state is only set once at sign-in -- refresh it
+    // immediately on self-change so admin-only UI doesn't keep showing
+    // after you've just removed your own access to it.
+    if(isSelf) checkTeacherStatus();
   }catch(err){ console.error(err); toast("Couldn't update role ("+err.code+")"); }
 }
 
@@ -2442,10 +2460,11 @@ async function removeTeacher(email){
   try{
     await deleteDoc(doc(db,"teachers",email));
     toast("Access removed");
+    if(self) checkTeacherStatus();
   }catch(err){ console.error(err); toast("Couldn't remove teacher ("+err.code+")"); }
 }
 
-function qualityLabel2(p,d){
+function qualityLabel(p,d){
   if(d===null||isNaN(d)) return {v:"fair", l:"—"};
   if(d>=0.40) return {v:"excellent", l:"Excellent"};
   if(d>=0.30) return {v:"good", l:"Good"};
@@ -2478,7 +2497,7 @@ function renderStatForm(qid){
     if([total,correct,topN,topC,botN,botC].some(v=>isNaN(v)||v<0) || total<=0 || topN<=0 || botN<=0){ toast("Fill in all fields with valid numbers"); return; }
     const p = correct/total;
     const d = (topC/topN) - (botC/botN);
-    const ql = qualityLabel2(p,d);
+    const ql = qualityLabel(p,d);
     document.getElementById("stat-preview").textContent = `p = ${p.toFixed(2)} · D = ${d.toFixed(2)} · ${ql.l}`;
     try{
       await setDoc(doc(db,"questions",qid,"stats","post_test"), {
@@ -2495,13 +2514,18 @@ async function loadAllStats(){
   const tbody = document.getElementById("stats-tbody");
   if(!tbody) return;
   const rows = [];
-  const candidates = questions.filter(q=>q.status==="finalized"||q.status==="uploaded");
-  await Promise.all(candidates.map(async q=>{
-    try{
-      const snap = await getDoc(doc(db,"questions",q.id,"stats","post_test"));
-      if(snap.exists()) rows.push({q, d:snap.data()});
-    }catch(e){}
-  }));
+  // One collection-group read across every question's stats subcollection,
+  // instead of one getDoc per locked question -- same rule already covers
+  // it (allow read: if isTeacher() on questions/{id}/stats/{id}), no index
+  // needed since this query has no filter/orderBy.
+  try{
+    const snap = await getDocs(collectionGroup(db,"stats"));
+    snap.forEach(d=>{
+      if(d.id!=="post_test") return;
+      const q = questions.find(x=>x.id===d.ref.parent.parent.id);
+      if(q && (q.status==="finalized"||q.status==="uploaded")) rows.push({q, d:d.data()});
+    });
+  }catch(e){ console.error(e); }
   if(!document.getElementById("stats-tbody")) return;
   if(rows.length===0){ tbody.innerHTML = `<tr><td colspan="6" class="hint" style="padding:14px;">No post-test statistics entered yet.</td></tr>`; return; }
   rows.sort((a,b)=> (a.d.discrimination??0) - (b.d.discrimination??0));

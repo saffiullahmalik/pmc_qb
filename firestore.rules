@@ -66,14 +66,23 @@ service cloud.firestore {
       // restricted to QB Leads/admins.
       allow create: if isTeacher() &&
         (request.resource.data.status != "finalized" || isQBLeadOrAdmin());
+      // Tagging a question with contest usage (usedIn) is usage tracking,
+      // not content editing — any teacher may do this even on a locked
+      // question, since building a contest from locked questions is an
+      // everyday, non-admin workflow (see Contests tab).
+      function isUsedInOnlyChange() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["usedIn", "updatedAt"]);
+      }
       // Once a question IS locked, only an admin may touch it further,
       // except a QB Lead may still unlock it (move it back off "finalized")
       // — matches the app's lock model: a QB Lead can lock/unlock, but
       // can't edit content while it stays locked; admin can always edit.
       allow update: if isTeacher() && (
-        resource.data.status != "finalized"
+        isUsedInOnlyChange() ||
+        (resource.data.status != "finalized"
           ? (request.resource.data.status != "finalized" || isQBLeadOrAdmin())
-          : (isAdmin() || (isQBLeadOrAdmin() && request.resource.data.status != "finalized"))
+          : (isAdmin() || (isQBLeadOrAdmin() && request.resource.data.status != "finalized")))
       );
       allow delete: if isAdmin();
 
