@@ -251,6 +251,7 @@
   .q-lang-box .box-label{ display:block; font-size:11px; font-weight:700; color:#0f6b5c; margin-bottom:4px; }
   .print-graphic{ text-align:center; margin:10px 0; }
   .print-options-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-top:8px; }
+  .print-options-grid.cols-1{ grid-template-columns:1fr; }
   .print-opt-item{ display:flex; align-items:center; gap:7px; font-size:13.5px; padding:3px 0; }
   .print-opt-item .k{ font-weight:700; width:20px; height:20px; border-radius:50%; background:#eef1ee; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; font-size:11px; }
   .answer-key{ page-break-before:always; }
@@ -525,6 +526,20 @@ let quilgoSearch = "";
 
 function escapeHtml(s){
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+// Converts our own safe formatting tokens into styling tags. Always called
+// on text that has ALREADY been through escapeHtml() -- these tokens use
+// characters escapeHtml doesn't touch, and this function never introduces
+// raw HTML from user input, only these specific recognized patterns, so
+// formatting can't become an XSS vector the way raw contenteditable HTML
+// would be.
+function renderRichText(escaped){
+  return String(escaped ?? "")
+    .replace(/\{\{color:(#[0-9a-fA-F]{3,6})\}\}([\s\S]*?)\{\{\/color\}\}/g, '<span style="color:$1">$2</span>')
+    .replace(/\{\{size:(\d{1,3})\}\}([\s\S]*?)\{\{\/size\}\}/g, '<span style="font-size:$1px">$2</span>')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>')
+    .replace(/__([\s\S]+?)__/g, '<u>$1</u>')
+    .replace(/\*([\s\S]+?)\*/g, '<i>$1</i>');
 }
 const ICON_EMPTY = `<svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h13l6 6v26a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M24 4v6h6"/><path d="M14 22h12M14 27h8"/></svg>`;
 const ICON_LOADING = `<svg width="30" height="30" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="16" cy="16" r="12" opacity="0.25"/><path d="M28 16a12 12 0 0 0-12-12"/></svg>`;
@@ -873,6 +888,8 @@ function openForm(existing){
   let graphicImageState = existing?.graphicImage || null;
   let graphicImageWidthState = existing?.graphicImageWidth || 400;
   let graphicPositionState = existing?.graphicPosition || "center";
+  let optionsLayoutState = existing?.optionsLayout || 2;
+  let previewEnSize = 15, previewUrSize = 17;
   let step = 1;
   const totalSteps = 4;
 
@@ -918,8 +935,13 @@ function openForm(existing){
               <textarea name="promptEn" id="promptEn-input" rows="3" required placeholder="Keep it short and unambiguous — see SOP §2.1.">${escapeHtml(existing?.promptEn||"")}</textarea>
               <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
                 <button type="button" class="btn small" id="eq-insert-btn" aria-label="Insert an equation">∑ Insert equation</button>
-                <span class="hint">inserts at your cursor in whichever text box you last clicked</span>
+                <button type="button" class="btn small" id="fmt-bold" aria-label="Bold"><b>B</b></button>
+                <button type="button" class="btn small" id="fmt-italic" aria-label="Italic"><i>I</i></button>
+                <button type="button" class="btn small" id="fmt-underline" aria-label="Underline"><u>U</u></button>
+                <input type="color" id="fmt-color" value="#a4372b" title="Text color" style="width:30px; padding:2px;" />
+                <select id="fmt-size" title="Text size"><option value="">Size</option><option value="14">Small</option><option value="18">Medium</option><option value="24">Large</option></select>
               </div>
+              <p class="hint" style="margin:4px 0 0;">Select some text first, then click a formatting button — applies to whichever box you last selected text in.</p>
               <div id="eq-popover" hidden class="callout" style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;"></div>
             </div>
             <details style="margin:-4px 0 12px;">
@@ -949,6 +971,9 @@ function openForm(existing){
               <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
                 <button type="button" class="btn small" id="opt-add" aria-label="Add another option">+ Add option</button>
                 <button type="button" class="btn small" id="opt-shuffle" aria-label="Shuffle option order">🔀 Shuffle order</button>
+                <span class="hint">Layout:</span>
+                <button type="button" class="btn small ${optionsLayoutState===1?"primary":""}" data-opt-layout="1">1 column</button>
+                <button type="button" class="btn small ${optionsLayoutState===2?"primary":""}" data-opt-layout="2">2 columns</button>
                 <span class="hint mono" id="image-size-indicator" style="margin-left:auto;"></span>
               </div>
             </div>
@@ -963,6 +988,14 @@ function openForm(existing){
             <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select></div>
             ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
             <div class="section-label">Live preview</div>
+            <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+              <span class="hint">English size:</span>
+              <button type="button" class="btn small" id="preview-en-shrink" aria-label="Shrink English preview text">−</button>
+              <button type="button" class="btn small" id="preview-en-grow" aria-label="Enlarge English preview text">+</button>
+              <span class="hint">Urdu size:</span>
+              <button type="button" class="btn small" id="preview-ur-shrink" aria-label="Shrink Urdu preview text">−</button>
+              <button type="button" class="btn small" id="preview-ur-grow" aria-label="Enlarge Urdu preview text">+</button>
+            </div>
             <div id="live-preview"></div>
           </div>
         </form>
@@ -1020,6 +1053,10 @@ function openForm(existing){
     optionsState = shuffleArray(optionsState);
     renderOptionRows();
   });
+  document.querySelectorAll("[data-opt-layout]").forEach(b=>b.addEventListener("click", ()=>{
+    optionsLayoutState = parseInt(b.dataset.optLayout,10);
+    document.querySelectorAll("[data-opt-layout]").forEach(x=>x.classList.toggle("primary", parseInt(x.dataset.optLayout,10)===optionsLayoutState));
+  }));
 
   function renderFigureWrap(){
     document.getElementById("figure-wrap").innerHTML = graphicImageState
@@ -1105,6 +1142,23 @@ function openForm(existing){
     ta.dispatchEvent(new Event("input", {bubbles:true}));
   }));
   document.getElementById("eq-insert-btn").addEventListener("click", ()=>{ eqPopover.hidden = !eqPopover.hidden; });
+  function wrapSelection(prefix, suffix){
+    const ta = lastFocusedTextarea;
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    const selected = ta.value.slice(start,end) || "text";
+    ta.focus();
+    ta.setRangeText(prefix+selected+suffix, start, end, "end");
+    ta.dispatchEvent(new Event("input", {bubbles:true}));
+  }
+  document.getElementById("fmt-bold").addEventListener("click", ()=>wrapSelection("**","**"));
+  document.getElementById("fmt-italic").addEventListener("click", ()=>wrapSelection("*","*"));
+  document.getElementById("fmt-underline").addEventListener("click", ()=>wrapSelection("__","__"));
+  document.getElementById("fmt-color").addEventListener("input", e=>wrapSelection(`{{color:${e.target.value}}}`,"{{/color}}"));
+  document.getElementById("fmt-size").addEventListener("change", e=>{
+    if(!e.target.value) return;
+    wrapSelection(`{{size:${e.target.value}}}`,"{{/size}}");
+    e.target.value = "";
+  });
   document.getElementById("draw-figure-btn").addEventListener("click", ()=>{
     openFigureDrawTool(async dataUrl=>{
       graphicImageState = dataUrl;
@@ -1146,18 +1200,21 @@ function openForm(existing){
     pane.innerHTML = `
       <div class="question-container">
         <div class="q-text-row">
-          <div class="q-lang-box english">
+          <div class="q-lang-box english" style="font-size:${previewEnSize}px;">
             <span class="box-label">Question</span>
-            <p>${escapeHtml(promptEn)||`<span class="hint">English prompt will appear here…</span>`}</p>
+            <p>${renderRichText(escapeHtml(promptEn))||`<span class="hint">English prompt will appear here…</span>`}</p>
           </div>
-          <div class="q-lang-box urdu">
+          <div class="q-lang-box urdu" style="font-size:${previewUrSize}px;">
             <span class="box-label">سوال</span>
-            <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
+            <p>${renderRichText(escapeHtml(promptUr))||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
         ${graphicImageState ? `<div class="print-graphic" style="text-align:${graphicPositionState};"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" />${graphicCaption?`<div class="hint" style="margin-top:4px;">${escapeHtml(graphicCaption)}</div>`:""}</div>` : ""}
-        <div class="print-options-grid">
-          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
+      </div>
+      <div class="question-container">
+        <div class="section-label" style="margin-top:0;">Options</div>
+        <div class="print-options-grid ${optionsLayoutState===1?"cols-1":""}">
+          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${renderRichText(escapeHtml(o.text))||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
         </div>
       </div>`;
     if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([pane]).catch(console.error);
@@ -1174,6 +1231,10 @@ function openForm(existing){
     document.getElementById("editor-progress-fill").style.width = (n/totalSteps*100)+"%";
     if(n===totalSteps) renderLivePreview();
   }
+  document.getElementById("preview-en-shrink").addEventListener("click", ()=>{ previewEnSize = Math.max(11, previewEnSize-1); renderLivePreview(); });
+  document.getElementById("preview-en-grow").addEventListener("click", ()=>{ previewEnSize = Math.min(28, previewEnSize+1); renderLivePreview(); });
+  document.getElementById("preview-ur-shrink").addEventListener("click", ()=>{ previewUrSize = Math.max(12, previewUrSize-1); renderLivePreview(); });
+  document.getElementById("preview-ur-grow").addEventListener("click", ()=>{ previewUrSize = Math.min(32, previewUrSize+1); renderLivePreview(); });
   document.getElementById("editor-steps").addEventListener("click", e=>{
     const b = e.target.closest("[data-step]"); if(!b) return;
     showStep(parseInt(b.dataset.step,10));
@@ -1194,7 +1255,7 @@ function openForm(existing){
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
       options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
       correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
-      graphicPosition: graphicImageState?graphicPositionState:null,
+      graphicPosition: graphicImageState?graphicPositionState:null, optionsLayout: optionsLayoutState,
       graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
@@ -1387,7 +1448,7 @@ function openConfirmPopup({promptEn, correctOpt, difficultyLabel, levels, hasGra
     <div class="overlay" id="confirm-ov" style="z-index:210;">
       <div class="gate-card" style="width:min(480px,92vw); text-align:left;">
         <h2 style="margin-top:0;">Before you save…</h2>
-        <div class="prompt-box">${escapeHtml(promptEn)}</div>
+        <div class="prompt-box">${renderRichText(escapeHtml(promptEn))}</div>
         <p style="font-size:13px;"><b>Marked correct:</b> ${correctOpt.image?`<img src="${correctOpt.image}" alt="Correct option image" style="height:20px; vertical-align:middle; margin-right:5px;"/>`:""}${escapeHtml(correctOpt.text)||"(image option)"}</p>
         <p class="mono" style="font-size:11.5px; color:var(--ink-dim);">${escapeHtml(difficultyLabel)} · ${levels.join(", ")}</p>
         <div class="checklist" style="margin-top:8px;">
@@ -1433,12 +1494,12 @@ async function downloadQuestionImage(q){
   node.innerHTML = `
     <div class="question-container">
       <div class="q-text-row">
-        <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${escapeHtml(q.promptEn||"")}</p></div>
-        <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${escapeHtml(q.promptUr||"")}</p></div>
+        <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
+        <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
       </div>
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
-      <div class="print-options-grid">
-        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
+      <div class="print-options-grid ${q.optionsLayout===1?"cols-1":""}">
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
       </div>
     </div>`;
   document.body.appendChild(node);
@@ -1487,10 +1548,10 @@ function renderDrawerBody(){
     </div>
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
-    <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
+    <div class="prompt-box">${renderRichText(escapeHtml(q.promptEn||""))}</div>
     ${q.graphicImage ? `<div style="text-align:${q.graphicPosition||"center"}; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
-    <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
-    ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
+    <div class="opt-list" style="${q.optionsLayout===2?"display:grid; grid-template-columns:1fr 1fr; gap:6px;":""}">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
+    ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${renderRichText(escapeHtml(q.promptUr))}</div>` : ""}
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
     <div class="section-label">Status</div>
     <div class="status-track">
@@ -1749,16 +1810,16 @@ function renderPrintView(contestId, opts){
           <div class="q-text-row">
             <div class="q-lang-box english">
               <span class="box-label">Question ${i+1}</span>
-              <p>${escapeHtml(q.promptEn||"")}</p>
+              <p>${renderRichText(escapeHtml(q.promptEn||""))}</p>
             </div>
             <div class="q-lang-box urdu">
               <span class="box-label">سوال ${i+1}</span>
-              <p>${escapeHtml(q.promptUr||"")}</p>
+              <p>${renderRichText(escapeHtml(q.promptUr||""))}</p>
             </div>
           </div>
           ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
-          <div class="print-options-grid">
-            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
+          <div class="print-options-grid ${q.optionsLayout===1?"cols-1":""}">
+            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
           </div>
         </div>`).join("")}
         <div class="answer-key">
