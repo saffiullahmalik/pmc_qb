@@ -1329,7 +1329,7 @@ function openForm(existing){
   });
   }catch(err){
     console.error("openForm failed to render", err);
-    toast("Couldn't open the editor — please try again");
+    toast("Couldn't open the editor: "+(err.message||err));
     closeModal();
   }
 }
