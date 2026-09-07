@@ -53,6 +53,13 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Admin-added books/chapters, merged with the hardcoded curriculum at
+    // read time in the app — additive only, never edits the built-in data.
+    match /curriculumExtra/{entryId} {
+      allow read: if isTeacher();
+      allow create, update, delete: if isAdmin();
+    }
+
     match /questions/{questionId} {
       allow read: if isTeacher();
       // Setting (or keeping) a question's status at "finalized" is
