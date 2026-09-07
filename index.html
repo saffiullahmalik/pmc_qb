@@ -116,7 +116,7 @@
   #live-preview .hint{ color:#6b7280; }
   .callout{ background:var(--accent-soft); color:var(--ink); border-left:3px solid var(--accent); padding:8px 11px; border-radius:6px; font-size:12px; line-height:1.5; margin-top:6px; }
   .opt-thumb{ height:34px; border-radius:5px; }
-  .editor-page{ position:fixed; inset:0; background:var(--bg); z-index:150; overflow-y:auto; }
+  .editor-page{ position:fixed; top:0; left:216px; right:0; bottom:0; background:var(--bg); z-index:150; overflow-y:auto; }
   .editor-topbar{ position:sticky; top:0; background:var(--surface); border-bottom:1px solid var(--border); padding:12px 20px; display:flex; align-items:center; gap:14px; z-index:5; }
   .editor-progress{ height:3px; background:var(--surface-2); position:sticky; top:53px; z-index:5; }
   .editor-progress-fill{ height:100%; background:var(--accent); transition:width .3s ease; }
@@ -229,6 +229,7 @@
     .main{ padding:18px 16px 50px; }
     .row2{ grid-template-columns:1fr; }
     .drawer{ width:100vw; }
+    .editor-page{ left:0; top:54px; }
     .step-panel .opt-row{ padding:8px 0; border-bottom:1px solid var(--border); gap:10px; }
     .step-panel .opt-row .btn.small{ min-height:44px; min-width:44px; }
     .step-panel .opt-row input[type="text"]{ min-height:40px; flex-basis:100%; order:1; }
@@ -741,6 +742,7 @@ onAuthStateChanged(auth, user=>{
 document.getElementById("signout-btn").addEventListener("click", ()=>signOut(auth));
 document.getElementById("mobile-signout-btn").addEventListener("click", ()=>signOut(auth));
 function switchTab(tab){
+  if(document.getElementById("editor-page")) closeModal();
   currentTab = tab;
   document.querySelectorAll("[data-tab]").forEach(x=>x.classList.toggle("active", x.dataset.tab===tab));
   renderTab();
@@ -920,6 +922,7 @@ function openForm(existing){
   let step = 1;
   const totalSteps = 4;
 
+  try{
   root.innerHTML = `
     <div class="editor-page" id="editor-page">
       <div class="editor-topbar">
@@ -1322,6 +1325,11 @@ function openForm(existing){
       onConfirm: ()=>doSave(fd),
     });
   });
+  }catch(err){
+    console.error("openForm failed to render", err);
+    toast("Couldn't open the editor — please try again");
+    closeModal();
+  }
 }
 
 function confirmDialog(message, {danger=false}={}){
@@ -1558,6 +1566,7 @@ function renderDrawerBody(){
   const flags = _ratings.filter(r=>r.ambiguous).length;
   const myRating = _ratings.find(r=>r.id===slugEmail(currentUser.email));
   const quilgo = getQuilgoUploadInfo(q.id);
+  const isLocked = q.status==="finalized" && !isAdminUser;
   body.innerHTML = `
     <div class="drawer-head">
       <div>
@@ -1587,7 +1596,9 @@ function renderDrawerBody(){
         return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only QB Leads or Admins can lock a question"`:""}>${s.l}</button>`;
       }).join("")}
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image</button>
-      <button class="btn small ghost" id="edit-q">Edit question</button>
+      ${isLocked
+        ? `<span class="btn small ghost" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it by setting status back to In Review">🔒 Locked</span>`
+        : `<button class="btn small ghost" id="edit-q">Edit question</button>`}
       ${isAdminUser ? `<button class="btn small" style="color:var(--red);" id="delete-q">Delete question</button>` : ""}
     </div>
     <div class="section-label">Rate this question</div>
@@ -1603,7 +1614,7 @@ function renderDrawerBody(){
     <ul class="edit-log">${(q.editHistory||[]).slice().reverse().map(h=>`<li>${fmtDate(h.ts)} — <b>${escapeHtml(h.by)}</b>: ${escapeHtml(h.note)}</li>`).join("")}</ul>
   `;
   document.getElementById("close-form").addEventListener("click", closeModal);
-  document.getElementById("edit-q").addEventListener("click", ()=>openForm(q));
+  document.getElementById("edit-q")?.addEventListener("click", ()=>openForm(q));
   document.getElementById("download-img").addEventListener("click", ()=>downloadQuestionImage(q));
   document.getElementById("delete-q")?.addEventListener("click", async ()=>{
     if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
