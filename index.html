@@ -461,7 +461,8 @@ function bookSelectOptions(selectedBookId){
 }
 function chapterSelectOptions(bookId, selectedCode, allowAll){
   const books = bookId ? allCurriculum().filter(b=>b.bookId===bookId) : allCurriculum();
-  const opt = c=>`<option value="${c.code}" ${selectedCode===c.code?"selected":""}>${c.code} — ${escapeHtml(c.title)}</option>`;
+  const myUnits = new Set((typeof currentUser!=="undefined" && currentUser) ? myAssignedChapters().map(m=>m.unit) : []);
+  const opt = c=>`<option value="${c.code}" ${selectedCode===c.code?"selected":""}>${myUnits.has(c.code)?"★ ":""}${c.code} — ${escapeHtml(c.title)}</option>`;
   const body = books.map(b=> b.book ? `<optgroup label="${escapeHtml(b.book)}">${b.chapters.map(opt).join("")}</optgroup>` : b.chapters.map(opt).join("")).join("");
   return (allowAll?`<option value="">All chapters</option>`:"") + body;
 }
@@ -814,6 +815,7 @@ function renderBank(){
   main.innerHTML = `
     <div class="pagehead"><h1>Question Bank</h1><button class="btn primary" id="new-q">+ New Question</button></div>
     <p class="desc">Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.</p>
+    ${myAssignedChaptersHtml()}
     <div class="filters">
       <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
@@ -846,6 +848,31 @@ function renderBank(){
     }));
     grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
   }
+  animateProgressBars();
+}
+
+function myAssignedChapters(){
+  const mine = [];
+  assignments.forEach(a=>{
+    const q = a.quotas?.[currentUser.email];
+    if(!q) return;
+    Object.entries(q).forEach(([unit,target])=>mine.push({unit, target, contestLevel:a.contestLevel, assignmentName:a.name}));
+  });
+  return mine;
+}
+function myAssignedChaptersHtml(){
+  const mine = myAssignedChapters();
+  if(mine.length===0) return "";
+  return `
+    <div class="progress-card" style="border-color:var(--accent); background:var(--accent-soft);">
+      <b>Assigned to you</b>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:8px;">
+        ${mine.map(m=>{
+          const c = countByStatus(currentUser.email, m.contestLevel, m.unit);
+          return progressCard(`${m.unit} — ${chapterByCode(m.unit)?.title||""}`, c.finalized, m.target, `${m.assignmentName} · ${c.draft} draft, ${c.inReview} in review`);
+        }).join("")}
+      </div>
+    </div>`;
 }
 
 function cardHtml(q){
@@ -1846,12 +1873,6 @@ function renderPrintView(contestId, opts){
 }
 
 /* ================= WORKLOAD TAB ================= */
-function splitQuota(target, n){
-  if(n<=0) return [];
-  const base = Math.floor(target/n), extra = target % n;
-  return Array.from({length:n}, (_,i)=> base + (i<extra?1:0));
-}
-
 function unitsForLevel(level){
   return chaptersForLevel(level).map(c=>c.code);
 }
@@ -1963,91 +1984,93 @@ function renderWorkload(){
 function openAssignmentForm(existing){
   const isEdit = !!existing;
   const root = document.getElementById("modal-root");
+  // quotas: { teacherEmail: { chapterCode: targetCount } } -- built up
+  // interactively, one teacher at a time, rather than typing a total per
+  // chapter and auto-splitting it (the old flow, found confusing).
+  let quotas = existing?.quotas ? JSON.parse(JSON.stringify(existing.quotas)) : {};
+  let currentTeacherEmail = existing?.teacherEmails?.[0] || allTeachers[0]?.email || "";
   root.innerHTML = `
-    <div class="overlay" id="ov"><div class="drawer">
+    <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>${isEdit?"Edit":"New"} workload assignment</h2><button class="btn ghost small" id="close-form">Close</button></div>
       <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC 4 Fall 2026 Prep" value="${escapeHtml(existing?.name||"")}" /></div>
       <div class="row2">
         <div class="field"><label>Contest level</label><select id="as-level">${LEVELS.map(l=>`<option ${existing?.contestLevel===l?"selected":""}>${l}</option>`).join("")}</select></div>
         <div class="field"><label>Due date <span class="hint">(optional)</span></label><input type="date" id="as-due" value="${existing?.dueDate||""}" /></div>
       </div>
-      <div class="section-label">Target question count per unit</div>
-      <div id="as-units"></div>
-      <div class="section-label">Assign to teachers</div>
-      <div id="as-teachers" style="max-height:160px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;">
-        ${allTeachers.map(t=>`<label style="display:flex; align-items:center; gap:8px; padding:4px; font-weight:400; font-size:13px;"><input type="checkbox" value="${escapeHtml(t.email)}" ${(existing?.teacherEmails||[]).includes(t.email)?"checked":""} /> ${escapeHtml(t.name||t.email)}</label>`).join("") || `<div class="hint">No teachers found.</div>`}
-      </div>
-      <button class="btn" id="as-split" style="margin-top:10px;">Split evenly &amp; preview quotas</button>
-      <div class="section-label">Quotas (editable before saving)</div>
-      <div id="as-grid"></div>
-      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:12px;" ${isEdit?"":"disabled"}>${isEdit?"Save changes":"Create assignment"}</button>
+      <div class="section-label">Pick a teacher, then click a chapter to assign it to them</div>
+      <select id="as-teacher-select">${allTeachers.map(t=>`<option value="${t.email}" ${currentTeacherEmail===t.email?"selected":""}>${escapeHtml(t.name||t.email)}</option>`).join("") || `<option value="">No teachers found</option>`}</select>
+      <div id="as-chapters" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;"></div>
+      <div class="section-label">Summary — who's assigned what</div>
+      <div id="as-summary"></div>
+      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:14px;">${isEdit?"Save changes":"Create assignment"}</button>
     </div></div>`;
-  const renderUnitInputs = ()=>{
-    const level = document.getElementById("as-level").value;
-    const existingTargets = isEdit && existing.contestLevel===level ? Object.fromEntries((existing.units||[]).map(u=>[u.unit,u.target])) : {};
-    document.getElementById("as-units").innerHTML = `<div class="row2">${chaptersForLevel(level).map(c=>`
-      <div class="field"><label>${c.code} — ${escapeHtml(c.title)}</label><input type="number" min="0" class="as-unit-target" data-unit="${c.code}" value="${existingTargets[c.code]||0}" /></div>`).join("")}</div>`;
-  };
-  renderUnitInputs();
-  document.getElementById("as-level").addEventListener("change", renderUnitInputs);
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
 
-  function buildGrid(teacherEmails, unitTargets, prefillQuotas){
-    const grid = document.getElementById("as-grid");
-    grid.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Teacher</th>${unitTargets.map(u=>`<th>${u.unit}</th>`).join("")}</tr></thead><tbody>
-      ${teacherEmails.map((email,idx)=>{
-        const t = allTeachers.find(x=>x.email===email);
-        return `<tr><td>${escapeHtml(t?.name||email)}<div class="hint">${escapeHtml(email)}</div></td>${unitTargets.map(u=>{
-          const val = prefillQuotas?.[email]?.[u.unit] ?? splitQuota(u.target, teacherEmails.length)[idx];
-          return `<td><input type="number" min="0" class="as-quota-cell" data-email="${escapeHtml(email)}" data-unit="${u.unit}" value="${val}" style="width:64px;" /></td>`;
-        }).join("")}</tr>`;
-      }).join("")}
-    </tbody></table></div>`;
-    document.getElementById("as-save").disabled = false;
-    document.getElementById("as-save").onclick = async ()=>{
-      const name = document.getElementById("as-name").value.trim() || `${document.getElementById("as-level").value} assignment`;
-      const level = document.getElementById("as-level").value;
-      const dueDate = document.getElementById("as-due").value || null;
-      const quotas = {};
-      document.querySelectorAll(".as-quota-cell").forEach(cell=>{
-        const email = cell.dataset.email, unit = cell.dataset.unit, val = parseInt(cell.value,10)||0;
-        if(val<=0) return;
-        quotas[email] = quotas[email] || {};
-        quotas[email][unit] = val;
-      });
-      const body = {
-        name, contestLevel: level, units: unitTargets, teacherEmails, quotas, dueDate,
-      };
-      try{
-        if(isEdit){
-          await updateDoc(doc(db,"assignments",existing.id), body);
-          toast("Assignment updated");
-        } else {
-          await addDoc(collection(db,"assignments"), {
-            ...body, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
-            createdAt: new Date().toISOString()
-          });
-          toast("Assignment created");
-        }
-        closeModal();
-      }catch(err){ console.error(err); toast("Couldn't save assignment ("+err.code+")"); }
-    };
+  function renderChapters(){
+    const level = document.getElementById("as-level").value;
+    const chapters = chaptersForLevel(level);
+    const mine = quotas[currentTeacherEmail] || {};
+    document.getElementById("as-chapters").innerHTML = chapters.length===0 ? `<div class="hint">No chapters for this level.</div>` : chapters.map(c=>{
+      const val = mine[c.code] || 0;
+      return `<div class="pill ${val>0?"role-admin":"role-teacher"}" style="display:inline-flex; align-items:center; gap:6px; padding:5px 5px 5px 10px; cursor:default;">
+        <span data-toggle-chapter="${c.code}" style="cursor:pointer;" title="Click to ${val>0?"unassign":"assign"}">${c.code} — ${escapeHtml(c.title)}</span>
+        ${val>0 ? `<input type="number" min="1" class="as-chapter-count" data-chapter="${c.code}" value="${val}" style="width:50px; padding:2px 4px;" />` : ""}
+      </div>`;
+    }).join("");
+    document.querySelectorAll("[data-toggle-chapter]").forEach(el=>el.addEventListener("click", ()=>{
+      const code = el.dataset.toggleChapter;
+      quotas[currentTeacherEmail] = quotas[currentTeacherEmail] || {};
+      if(quotas[currentTeacherEmail][code]) delete quotas[currentTeacherEmail][code];
+      else quotas[currentTeacherEmail][code] = 5;
+      renderChapters(); renderSummary();
+    }));
+    document.querySelectorAll(".as-chapter-count").forEach(el=>el.addEventListener("input", e=>{
+      quotas[currentTeacherEmail][el.dataset.chapter] = parseInt(e.target.value,10)||0;
+      renderSummary();
+    }));
   }
+  function renderSummary(){
+    const rows = Object.entries(quotas).filter(([,m])=>Object.keys(m).length>0);
+    document.getElementById("as-summary").innerHTML = rows.length===0 ? `<div class="hint">Nothing assigned yet.</div>` : rows.map(([email,m])=>{
+      const t = allTeachers.find(x=>x.email===email);
+      return `<div class="progress-card"><b>${escapeHtml(t?.name||email)}</b><div class="hint" style="margin-top:3px;">${Object.entries(m).map(([c,n])=>`${escapeHtml(c)} (${n})`).join(", ")}</div></div>`;
+    }).join("");
+  }
+  renderChapters();
+  renderSummary();
+  document.getElementById("as-level").addEventListener("change", renderChapters);
+  document.getElementById("as-teacher-select").addEventListener("change", e=>{ currentTeacherEmail = e.target.value; renderChapters(); });
 
-  document.getElementById("as-split").addEventListener("click", ()=>{
-    const teacherEmails = Array.from(document.querySelectorAll("#as-teachers input:checked")).map(el=>el.value);
-    if(teacherEmails.length===0){ toast("Pick at least one teacher"); return; }
-    const unitTargets = Array.from(document.querySelectorAll(".as-unit-target"))
-      .map(el=>({unit:el.dataset.unit, target:parseInt(el.value,10)||0}))
-      .filter(u=>u.target>0);
-    if(unitTargets.length===0){ toast("Set a target for at least one unit"); return; }
-    buildGrid(teacherEmails, unitTargets, null);
+  document.getElementById("as-save").addEventListener("click", async ()=>{
+    const name = document.getElementById("as-name").value.trim();
+    const level = document.getElementById("as-level").value;
+    const dueDate = document.getElementById("as-due").value || null;
+    const cleanQuotas = {};
+    Object.entries(quotas).forEach(([email,m])=>{
+      const filtered = Object.fromEntries(Object.entries(m).filter(([,n])=>n>0));
+      if(Object.keys(filtered).length) cleanQuotas[email] = filtered;
+    });
+    const teacherEmails = Object.keys(cleanQuotas);
+    if(teacherEmails.length===0){ toast("Assign at least one chapter to a teacher"); return; }
+    const unitTotals = {};
+    Object.values(cleanQuotas).forEach(m=>Object.entries(m).forEach(([c,n])=>{ unitTotals[c]=(unitTotals[c]||0)+n; }));
+    const units = Object.entries(unitTotals).map(([unit,target])=>({unit,target}));
+    const body = { name: name || `${level} assignment`, contestLevel: level, units, teacherEmails, quotas: cleanQuotas, dueDate };
+    try{
+      if(isEdit){
+        await updateDoc(doc(db,"assignments",existing.id), body);
+        toast("Assignment updated");
+      } else {
+        await addDoc(collection(db,"assignments"), {
+          ...body, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+          createdAt: new Date().toISOString()
+        });
+        toast("Assignment created");
+      }
+      closeModal();
+    }catch(err){ console.error(err); toast("Couldn't save assignment ("+err.code+")"); }
   });
-
-  if(isEdit){
-    buildGrid(existing.teacherEmails||[], existing.units||[], existing.quotas||{});
-  }
 }
 
 /* ================= QUILGO TAB ================= */
