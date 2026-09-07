@@ -127,6 +127,15 @@
   .editor-nav{ display:flex; gap:8px; margin-top:18px; max-width:760px; margin-left:auto; margin-right:auto; padding:0 16px; }
   .step-panel .opt-row{ flex-wrap:wrap; }
   .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
+  .q-list{ display:flex; flex-direction:column; gap:10px; }
+  .q-row{ display:flex; gap:14px; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:12px 14px; box-shadow:var(--shadow); cursor:pointer; transition:transform .15s ease, box-shadow .15s ease; }
+  .q-row:hover{ transform:translateY(-1px); box-shadow:0 4px 5px rgba(20,25,18,0.08), 0 14px 30px -12px rgba(20,25,18,0.28); }
+  .q-row-thumb{ flex:0 0 auto; width:56px; height:56px; border-radius:8px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; overflow:hidden; color:var(--ink-dim); opacity:.6; }
+  .q-row-thumb img{ width:100%; height:100%; object-fit:cover; opacity:1; }
+  .q-row-body{ flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+  .q-row-actions{ flex:0 0 auto; display:flex; flex-direction:column; gap:5px; align-items:stretch; justify-content:center; }
+  .q-row-actions .btn{ white-space:nowrap; }
+  @media (max-width:640px){ .q-row{ flex-wrap:wrap; } .q-row-actions{ flex-direction:row; flex-basis:100%; } }
   .card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 15px; box-shadow:var(--shadow); cursor:pointer; display:flex; flex-direction:column; gap:9px; transition:transform .15s ease, box-shadow .15s ease; }
   .card:hover{ transform:translateY(-2px); box-shadow:0 4px 5px rgba(20,25,18,0.08), 0 14px 30px -12px rgba(20,25,18,0.28); }
   .card:active{ transform:scale(.98); }
@@ -326,7 +335,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
-  collection, query, orderBy, limit, onSnapshot, arrayUnion, deleteField
+  collection, query, orderBy, limit, onSnapshot, arrayUnion, arrayRemove, deleteField
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
@@ -800,7 +809,7 @@ function renderBank(){
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
     </div>
-    ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="grid" id="q-grid"></div>`}
+    ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div>`}
   `;
   document.getElementById("new-q").addEventListener("click", ()=>openForm(null));
   ["level","type","diff","status","unit"].forEach(k=>{
@@ -811,33 +820,51 @@ function renderBank(){
   if(list.length){
     const grid = document.getElementById("q-grid");
     grid.innerHTML = list.map(cardHtml).join("");
-    grid.addEventListener("click", e=>{ const c = e.target.closest(".card"); if(c) openQuestion(c.dataset.id); });
+    grid.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); openQuestion(b.dataset.view); }));
+    grid.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); const q = questions.find(x=>x.id===b.dataset.edit); if(q) openForm(q); }));
+    grid.querySelectorAll("[data-delete]").forEach(b=>b.addEventListener("click", async e=>{
+      e.stopPropagation();
+      const q = questions.find(x=>x.id===b.dataset.delete); if(!q) return;
+      if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
+      try{ await deleteDoc(doc(db,"questions",q.id)); toast("Question deleted"); }
+      catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
+    }));
+    grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
   }
 }
 
 function cardHtml(q){
   const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
   const typeLbl = QTYPES.find(t=>t.v===q.qType)?.l || q.qType;
-  const quilgo = getQuilgoUploadInfo(q.id);
+  const isLocked = q.status==="finalized" && !isAdminUser;
   return `
-    <div class="card" data-id="${q.id}">
-      <div class="tags">
-        ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
-        <span class="pill type">${typeLbl}</span>
-        <span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span>
-        <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
-        ${quilgo ? `<span class="pill status-uploaded" title="Uploaded by ${escapeHtml(quilgo.uploadedByName||"")} · ${fmtDate(quilgo.uploadedAt)}">Uploaded — ${escapeHtml(quilgo.contestName)}</span>` : ""}
-        ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
+    <div class="q-row" data-id="${q.id}">
+      <div class="q-row-thumb">${q.graphicImage ? `<img src="${q.graphicImage}" alt="" />` : ICON_EMPTY}</div>
+      <div class="q-row-body">
+        <div class="tags">
+          ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
+          <span class="pill type">${typeLbl}</span>
+          <span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span>
+          <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+          ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
+        </div>
+        <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
+        <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
+        <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${escapeHtml(chapterLabel(q.unit))}</span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
       </div>
-      <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
-      <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
-      <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${escapeHtml(chapterLabel(q.unit))}</span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
+      <div class="q-row-actions">
+        <button class="btn small" data-view="${q.id}" title="View" aria-label="View question">👁 View</button>
+        ${isLocked
+          ? `<span class="btn small" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it from the detail view">🔒 Locked</span>`
+          : `<button class="btn small" data-edit="${q.id}" title="Edit" aria-label="Edit question">✏️ Edit</button>`}
+        ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete="${q.id}" title="Delete" aria-label="Delete question">🗑 Delete</button>` : ""}
+      </div>
     </div>`;
 }
 
 function openForm(existing){
   const isEdit = !!existing;
-  const locked = isEdit && existing.status==="finalized" && !canFinalize;
+  const locked = isEdit && existing.status==="finalized" && !isAdminUser;
   const root = document.getElementById("modal-root");
   const levelSet = new Set(existing?.level||[]);
   let optionsState = getQuestionOptions(existing||{}).map(o=>({...o}));
@@ -863,7 +890,7 @@ function openForm(existing){
         <button type="button" data-step="4">4. Notes &amp; Review</button>
       </div>
       <div class="editor-body">
-        ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is locked — only a QB Lead or Admin can edit it.</div>` : ""}
+        ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is locked — only an Admin can edit it here. A QB Lead can unlock it by setting its status back to "In Review" from the question's detail view.</div>` : ""}
         <form id="q-form" ${locked?"inert":""}>
           <div class="step-panel" data-step="1">
             <div class="field"><label>Contest level(s)</label>
@@ -1452,8 +1479,7 @@ function renderDrawerBody(){
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
           <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
-          ${quilgo ? `<span class="pill status-uploaded">Uploaded to Quilgo — ${escapeHtml(quilgo.contestName)}</span>` : ""}
-          ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
+          ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
         </div>
         ${quilgo ? `<div class="hint" style="margin-top:4px;">Uploaded by <b>${escapeHtml(quilgo.uploadedByName||"—")}</b> on ${fmtDate(quilgo.uploadedAt)} — manage this from the Quilgo tab.</div>` : ""}
       </div>
@@ -1496,6 +1522,11 @@ function renderDrawerBody(){
     try{ await deleteDoc(doc(db,"questions",q.id)); toast("Question deleted"); closeModal(); }
     catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
   });
+  body.querySelectorAll("[data-remove-usedin]").forEach(el=>el.addEventListener("click", async ()=>{
+    if(!(await confirmDialog(`Remove the "${el.dataset.removeUsedin}" tag from this question?`, {danger:true}))) return;
+    try{ await updateDoc(doc(db,"questions",q.id), {usedIn: arrayRemove(el.dataset.removeUsedin)}); toast("Tag removed"); }
+    catch(err){ console.error(err); toast("Couldn't remove tag"); }
+  }));
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can lock a question"); return; }
@@ -1537,7 +1568,7 @@ function renderContests(){
     <p class="desc">Assemble a paper from locked questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
     ${!dataReady.contests ? loadingState("Loading contests…") : contests.length===0 ? emptyState("No contests created yet.") : `
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Quilgo</th><th></th></tr></thead>
       <tbody>
         ${contests.map(c=>`
         <tr>
@@ -1546,6 +1577,7 @@ function renderContests(){
           <td class="mono">${(c.questionIds||[]).length}</td>
           <td class="mono">${c.durationMinutes?c.durationMinutes+" min":"—"}</td>
           <td class="mono">${c.totalMarks??"—"}</td>
+          <td>${c.quilgoComplete ? `<span class="pill status-uploaded">Complete</span>` : (isAdminUser?`<button class="btn small" data-mark-complete="${c.id}">Mark complete</button>`:`<span class="hint">Pending</span>`)}</td>
           <td style="white-space:nowrap;">
             <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
             ${isAdminUser?`<button class="btn small" style="color:var(--red);" data-delete-contest="${c.id}">Delete</button>`:""}
@@ -1556,9 +1588,18 @@ function renderContests(){
   `;
   document.getElementById("new-contest").addEventListener("click", openContestForm);
   main.querySelectorAll("[data-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.print)));
+  main.querySelectorAll("[data-mark-complete]").forEach(b=>b.addEventListener("click", async ()=>{
+    try{ await updateDoc(doc(db,"contests",b.dataset.markComplete), {quilgoComplete:true}); toast("Marked complete"); }
+    catch(err){ toast("Couldn't update contest"); }
+  }));
   main.querySelectorAll("[data-delete-contest]").forEach(b=>b.addEventListener("click", async ()=>{
-    if(!(await confirmDialog("Delete this contest record? This won't remove the usage tags already applied to its questions.", {danger:true}))) return;
-    try{ await deleteDoc(doc(db,"contests",b.dataset.deleteContest)); }
+    if(!(await confirmDialog("Delete this contest record? This also removes its usage tag from every question that was tagged with it.", {danger:true}))) return;
+    const c = contests.find(x=>x.id===b.dataset.deleteContest);
+    try{
+      await deleteDoc(doc(db,"contests",b.dataset.deleteContest));
+      if(c) await Promise.all((c.questionIds||[]).map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayRemove(c.name)}).catch(()=>{})));
+      toast("Contest deleted");
+    }
     catch(err){ toast("Couldn't delete contest"); }
   }));
 }
@@ -1990,11 +2031,18 @@ function renderQuilgoBody(){
   const pending = qs.filter(q=>!uploadStatus[q.id]);
   const done = qs.filter(q=>uploadStatus[q.id]);
   body.innerHTML = `
+    ${c.quilgoComplete
+      ? `<div class="progress-card" style="border-color:var(--accent);"><span class="pill status-uploaded">Complete</span> <span class="hint">This contest's Quilgo upload work is marked done.</span></div>`
+      : isAdminUser ? `<button class="btn small" id="quilgo-mark-complete" style="margin-bottom:14px;">Mark this contest's Quilgo task complete</button>` : ""}
     <div class="section-label">Pending upload (${pending.length})</div>
     ${pending.length===0 ? `<div class="empty">${qs.length===0?"This contest has no questions.":"All questions in this contest are uploaded."}</div>` : pending.map(row).join("")}
     <div class="section-label" style="margin-top:22px;">Already uploaded (${done.length})</div>
     ${done.length===0 ? `<div class="hint">None yet.</div>` : done.map(row).join("")}
   `;
+  document.getElementById("quilgo-mark-complete")?.addEventListener("click", async ()=>{
+    try{ await updateDoc(doc(db,"contests",c.id), {quilgoComplete:true}); toast("Marked complete"); }
+    catch(err){ toast("Couldn't update contest"); }
+  });
   body.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{
     const q = questions.find(x=>x.id===b.dataset.dl); if(q) downloadQuestionImage(q);
   }));

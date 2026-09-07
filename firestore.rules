@@ -62,11 +62,19 @@ service cloud.firestore {
 
     match /questions/{questionId} {
       allow read: if isTeacher();
-      // Setting (or keeping) a question's status at "finalized" is
-      // restricted to QB Leads/admins — once finalized, further
-      // edits by a plain teacher are rejected until it's unfinalized.
-      allow create, update: if isTeacher() &&
+      // Setting a question's status to "finalized" (locking it) is
+      // restricted to QB Leads/admins.
+      allow create: if isTeacher() &&
         (request.resource.data.status != "finalized" || isQBLeadOrAdmin());
+      // Once a question IS locked, only an admin may touch it further,
+      // except a QB Lead may still unlock it (move it back off "finalized")
+      // — matches the app's lock model: a QB Lead can lock/unlock, but
+      // can't edit content while it stays locked; admin can always edit.
+      allow update: if isTeacher() && (
+        resource.data.status != "finalized"
+          ? (request.resource.data.status != "finalized" || isQBLeadOrAdmin())
+          : (isAdmin() || (isQBLeadOrAdmin() && request.resource.data.status != "finalized"))
+      );
       allow delete: if isAdmin();
 
       match /comments/{commentId} {
