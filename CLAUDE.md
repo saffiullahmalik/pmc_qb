@@ -105,6 +105,7 @@ Images (question figure + per-option images) are stored **inline on the Firestor
 - `.github/workflows/deploy-firestore-rules.yml` — GitHub Action that deploys `firestore.rules` to Firebase automatically on push, **if** two repo secrets are set (`FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT`). As of this writing it's unconfirmed whether those secrets were ever actually added — check before assuming this is live; if not, rules changes still need manual console paste.
 - `PMC_Examination_SOP_v2.pdf` — the real official SOP; transcribed into the app's own "SOP" tab and into the difficulty/options-construction callouts in the question editor (`DIFFICULTY_SOP`/`OPTIONS_CONSTRUCTION_NOTE` in `index.html`). If this PDF is ever revised, those transcriptions need updating too — they're not generated from the PDF at runtime.
 - `design-reference/` — prototype/source-art files (`pmc_4_v1.html`, a bubble-answer-sheet prototype, the logo's Illustrator source) kept for design reference, not runtime assets. `sundarstem_logo.png` stays at the repo root since `index.html` references it directly.
+- `backup-viewer.html` — a standalone, offline, read-only viewer for a backup JSON file (the kind the Admin tab's "Export all data" button produces). No Firebase imports, no network calls at all — open it directly as a local file in any browser if the live site is ever unreachable. Deliberately separate from `index.html`.
 
 ## Status as of this writing (Sept 2026)
 

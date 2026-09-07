@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Question Bank — Offline Backup Viewer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap');
+  :root{
+    --bg:#f7f4ec; --surface:#fffdf8; --surface-2:#eee8da; --border:#e0d8c4; --ink:#221e17; --ink-dim:#6b6355;
+    --accent:#0f6b5c; --accent-ink:#ffffff; --accent-soft:#e2efe9; --red:#a4372b; --red-soft:#f7e3df;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#161c15; --surface:#1c231b; --surface-2:#232d24; --border:#333f34; --ink:#e9efe9; --ink-dim:#9db0a5;
+      --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --red:#e07463; --red-soft:#3a1f1a;
+    }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:'Public Sans', system-ui, sans-serif; font-size:14px; line-height:1.5; }
+  h1,h2,h3{ font-family:'Lexend', system-ui, sans-serif; margin:0; }
+  .mono{ font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  .wrap{ max-width:960px; margin:0 auto; padding:28px 20px 60px; }
+  .masthead{ display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .masthead .mark{ width:36px; height:36px; border-radius:9px; background:var(--accent); color:var(--accent-ink); display:flex; align-items:center; justify-content:center; font-family:'Lexend'; font-weight:700; }
+  .masthead h1{ font-size:1.3rem; }
+  .note{ color:var(--ink-dim); font-size:13px; margin:6px 0 20px; }
+  .loader{ background:var(--surface); border:1px dashed var(--border); border-radius:11px; padding:24px; text-align:center; }
+  input[type=file]{ font-family:inherit; }
+  .meta-bar{ display:flex; gap:16px; flex-wrap:wrap; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:10px 14px; margin:16px 0; font-size:12.5px; color:var(--ink-dim); }
+  .stat-tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; margin:16px 0 20px; }
+  .stat-tile{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:12px; text-align:center; }
+  .stat-tile .num{ font-family:'IBM Plex Mono'; font-size:22px; font-weight:600; }
+  .stat-tile .lbl{ font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em; margin-top:2px; }
+  .tabs{ display:flex; gap:6px; border-bottom:1px solid var(--border); margin-bottom:14px; overflow-x:auto; }
+  .tabs button{ font-family:inherit; font-size:13px; font-weight:600; padding:9px 14px; border:none; background:none; color:var(--ink-dim); cursor:pointer; border-bottom:2px solid transparent; white-space:nowrap; }
+  .tabs button.active{ color:var(--accent); border-bottom-color:var(--accent); }
+  .search{ width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); font-family:inherit; font-size:13px; margin-bottom:12px; }
+  .row{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:11px 14px; margin-bottom:8px; }
+  .row .top{ display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--ink-dim); margin-bottom:4px; }
+  .row .title{ font-weight:600; font-size:13.5px; }
+  .row .body{ font-size:13px; color:var(--ink-dim); margin-top:3px; white-space:pre-wrap; }
+  .pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; font-weight:600; background:var(--accent-soft); color:var(--accent); margin-right:4px; }
+  .empty{ padding:30px; text-align:center; color:var(--ink-dim); border:1px dashed var(--border); border-radius:9px; }
+  [hidden]{ display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="masthead"><div class="mark">QB</div><h1>Offline Backup Viewer</h1></div>
+  <p class="note">Read-only. Nothing here ever leaves your computer — no network requests, no login. Load a backup JSON file (from the app's Admin tab → "Export all data as JSON") to browse it if the live site is ever unreachable. Just double-click this file to open it in a browser — no server or install needed.</p>
+
+  <div class="loader" id="loader">
+    <p style="margin:0 0 10px;">Choose a backup JSON file to browse</p>
+    <input type="file" id="file-input" accept="application/json" />
+    <p id="load-error" class="note" style="color:var(--red);"></p>
+  </div>
+
+  <div id="content" hidden>
+    <div class="meta-bar" id="meta-bar"></div>
+    <div class="stat-tiles" id="stat-tiles"></div>
+    <div class="tabs" id="tabs">
+      <button data-tab="questions" class="active">Questions</button>
+      <button data-tab="contests">Contests</button>
+      <button data-tab="assignments">Assignments</button>
+      <button data-tab="teachers">Teachers</button>
+    </div>
+    <input type="search" class="search" id="search" placeholder="Search…" />
+    <div id="list"></div>
+    <p class="note" style="margin-top:20px;"><button id="load-another" style="font:inherit; background:none; border:1px solid var(--border); border-radius:7px; padding:6px 12px; cursor:pointer; color:var(--ink);">Load a different file</button></p>
+  </div>
+</div>
+
+<script>
+let data = null;
+let currentTab = "questions";
+
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function fmtDate(iso){ if(!iso) return "—"; const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}); }
+
+document.getElementById("file-input").addEventListener("change", e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      data = JSON.parse(reader.result);
+      document.getElementById("load-error").textContent = "";
+      showContent();
+    }catch(err){
+      document.getElementById("load-error").textContent = "Couldn't read that file — is it a valid backup JSON?";
+    }
+  };
+  reader.onerror = ()=>{ document.getElementById("load-error").textContent = "Couldn't read that file."; };
+  reader.readAsText(file);
+});
+
+document.getElementById("load-another").addEventListener("click", ()=>{
+  document.getElementById("content").hidden = true;
+  document.getElementById("loader").hidden = false;
+  document.getElementById("file-input").value = "";
+});
+
+document.getElementById("tabs").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-tab]"); if(!b) return;
+  currentTab = b.dataset.tab;
+  document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("active", x===b));
+  document.getElementById("search").value = "";
+  renderList();
+});
+document.getElementById("search").addEventListener("input", renderList);
+
+function showContent(){
+  document.getElementById("loader").hidden = true;
+  document.getElementById("content").hidden = false;
+  document.getElementById("meta-bar").innerHTML = `
+    <span>Exported: <b class="mono">${esc(fmtDate(data.exportedAt))}</b></span>
+    <span>By: <b class="mono">${esc(data.exportedBy||"—")}</b></span>`;
+  document.getElementById("stat-tiles").innerHTML = `
+    <div class="stat-tile"><div class="num">${(data.questions||[]).length}</div><div class="lbl">Questions</div></div>
+    <div class="stat-tile"><div class="num">${(data.contests||[]).length}</div><div class="lbl">Contests</div></div>
+    <div class="stat-tile"><div class="num">${(data.assignments||[]).length}</div><div class="lbl">Assignments</div></div>
+    <div class="stat-tile"><div class="num">${(data.teachers||[]).length}</div><div class="lbl">Teachers</div></div>`;
+  renderList();
+}
+
+function renderList(){
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const list = document.getElementById("list");
+  if(currentTab==="questions"){
+    let items = data.questions||[];
+    if(q) items = items.filter(x => (x.titleEn||"").toLowerCase().includes(q) || (x.promptEn||"").toLowerCase().includes(q) || (x.subtopic||"").toLowerCase().includes(q));
+    list.innerHTML = items.length===0 ? `<div class="empty">No questions match.</div>` : items.map(x=>`
+      <div class="row">
+        <div class="top"><span>${(x.level||[]).map(l=>`<span class="pill">${esc(l)}</span>`).join("")}${esc(x.status||"")}</span><span>${esc(x.unit||"—")} · ${fmtDate(x.updatedAt||x.createdAt)}</span></div>
+        <div class="title">${esc(x.titleEn||"Untitled")}</div>
+        <div class="body">${esc(x.promptEn||"")}</div>
+      </div>`).join("");
+  } else if(currentTab==="contests"){
+    let items = data.contests||[];
+    if(q) items = items.filter(x => (x.name||"").toLowerCase().includes(q));
+    list.innerHTML = items.length===0 ? `<div class="empty">No contests match.</div>` : items.map(x=>`
+      <div class="row">
+        <div class="top"><span>${(x.questionIds||[]).length} questions</span><span>${fmtDate(x.createdAt)}</span></div>
+        <div class="title">${esc(x.name)}</div>
+        <div class="body">${esc(x.headerText||"")} ${x.durationMinutes?"· "+x.durationMinutes+" min":""} ${x.totalMarks?"· "+x.totalMarks+" marks":""}</div>
+      </div>`).join("");
+  } else if(currentTab==="assignments"){
+    let items = data.assignments||[];
+    if(q) items = items.filter(x => (x.name||"").toLowerCase().includes(q));
+    list.innerHTML = items.length===0 ? `<div class="empty">No assignments match.</div>` : items.map(x=>`
+      <div class="row">
+        <div class="top"><span>${esc(x.contestLevel||"")}</span><span>${x.dueDate?"Due "+esc(x.dueDate):""}</span></div>
+        <div class="title">${esc(x.name)}</div>
+        <div class="body">${Object.keys(x.quotas||{}).length} teacher(s) assigned</div>
+      </div>`).join("");
+  } else if(currentTab==="teachers"){
+    let items = data.teachers||[];
+    if(q) items = items.filter(x => (x.email||"").toLowerCase().includes(q) || (x.name||"").toLowerCase().includes(q));
+    list.innerHTML = items.length===0 ? `<div class="empty">No teachers match.</div>` : items.map(x=>`
+      <div class="row">
+        <div class="top"><span class="pill">${esc(x.role||"teacher")}</span><span>${fmtDate(x.addedAt)}</span></div>
+        <div class="title">${esc(x.name||"—")}</div>
+        <div class="body">${esc(x.email||"")}</div>
+      </div>`).join("");
+  }
+}
+</script>
+</body>
+</html>
