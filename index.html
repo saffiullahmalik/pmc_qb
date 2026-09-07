@@ -4,6 +4,16 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Question Bank by SundarSTEM</title>
+<script>
+  // MathJax v3 does NOT recognize single-$ inline math by default (only
+  // \(...\) ) -- every prompt/option/LaTeX-guide in this app tells teachers
+  // to write $x^2$, which was silently never rendering. This config must
+  // load before the MathJax library script below.
+  window.MathJax = {
+    tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$'], ['\\[','\\]']] },
+    options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] }
+  };
+</script>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -350,8 +360,20 @@ function difficultyDots(v){
 }
 const STATUSES = [
   {v:"draft", l:"Draft"}, {v:"in_review", l:"In Review"},
-  {v:"finalized", l:"Finalized"}, {v:"uploaded", l:"Uploaded to Quilgo"}
+  {v:"finalized", l:"Locked"}, {v:"uploaded", l:"Uploaded to Quilgo"}
 ];
+// Which status values a role may pick in the editor. The question's current
+// value is always included even if not normally pickable by this role, so
+// re-saving never silently downgrades a status someone else set.
+function allowedStatusOptions(currentStatus){
+  let allowed = isAdminUser ? STATUSES
+    : canFinalize ? STATUSES.filter(s=>s.v!=="uploaded")
+    : STATUSES.filter(s=>s.v==="draft"||s.v==="in_review");
+  if(currentStatus && !allowed.some(s=>s.v===currentStatus)){
+    allowed = [...allowed, STATUSES.find(s=>s.v===currentStatus)];
+  }
+  return allowed;
+}
 // Full Beast Academy table-of-contents, chapter by chapter, transcribed from
 // the official Books 3/4/5 guides. Teachers pick a chapter + subtopic from
 // these lists in the question editor — no free-typed subtopic text anymore,
@@ -624,6 +646,7 @@ async function checkTeacherStatus(){
       isTeacherApproved = true;
       isAdminUser = snap.data().role === "admin";
       canFinalize = isAdminUser || snap.data().role === "qb_lead";
+      document.querySelectorAll('[data-tab="admin"]').forEach(b=>b.hidden = !isAdminUser);
       document.getElementById("modal-root").innerHTML = "";
       renderSignedInChrome();
       startDataSubscriptions();
@@ -805,10 +828,9 @@ function openForm(existing){
         <button type="button" data-step="4">4. Notes &amp; Review</button>
       </div>
       <div class="editor-body">
-        ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is finalized — only a QB Lead or Admin can edit it.</div>` : ""}
+        ${locked ? `<div class="prompt-box" style="border:1px solid var(--red); color:var(--red); margin-bottom:12px;">This question is locked — only a QB Lead or Admin can edit it.</div>` : ""}
         <form id="q-form" ${locked?"inert":""}>
           <div class="step-panel" data-step="1">
-            <div class="field"><label>Title (internal, short)</label><input type="text" name="titleEn" required value="${escapeHtml(existing?.titleEn||"")}" placeholder="e.g. Grid path counting — 3x3" /></div>
             <div class="field"><label>Contest level(s)</label>
               <div style="display:flex; gap:12px; flex-wrap:wrap;">
                 ${LEVELS.map(l=>`<label style="display:flex; align-items:center; gap:5px; font-weight:400; font-size:13px;"><input type="checkbox" name="level" value="${l}" ${levelSet.has(l)?"checked":""}/> ${l}</label>`).join("")}
@@ -855,7 +877,7 @@ function openForm(existing){
               <input type="file" accept="image/*" id="figure-file" style="margin-top:6px;" />
               <div id="figure-resize-wrap"></div>
             </div>
-            <div class="field"><label>Graphic note <span class="hint">(text description, in case a figure needs to be produced)</span></label><textarea name="graphicNote" rows="2">${escapeHtml(existing?.graphicNote||"")}</textarea></div>
+            <div class="field"><label>Figure caption <span class="hint">(optional, shown under the image)</span></label><input type="text" name="graphicCaption" value="${escapeHtml(existing?.graphicCaption||existing?.graphicNote||"")}" placeholder="e.g. Figure 1: triangle ABC" /></div>
           </div>
 
           <div class="step-panel" data-step="3" hidden>
@@ -864,7 +886,7 @@ function openForm(existing){
 
           <div class="step-panel" data-step="4" hidden>
             <div class="field"><label>Solution <span class="hint">(feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" rows="3" placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
-            <div class="field"><label>Status</label><select name="status">${STATUSES.map(t=>`<option value="${t.v}" ${t.v==="finalized" && !canFinalize && existing?.status!=="finalized" ? "disabled":""} ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}${t.v==="finalized"&&!canFinalize?" (QB Lead/Admin only)":""}</option>`).join("")}</select></div>
+            <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select></div>
             ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
             <div class="section-label">Live preview</div>
             <div id="live-preview"></div>
@@ -873,7 +895,7 @@ function openForm(existing){
         <div class="editor-nav">
           <button type="button" class="btn ghost" id="step-back" hidden>Back</button>
           <button type="button" class="btn primary" id="step-next" style="margin-left:auto;">Next</button>
-          <button type="button" class="btn primary" id="step-submit" style="margin-left:auto;" hidden ${locked?"disabled":""}>Review &amp; Save</button>
+          <button type="button" class="btn primary" id="step-submit" style="margin-left:auto;" hidden ${locked?"disabled":""}>Save question</button>
         </div>
       </div>
     </div>`;
@@ -996,6 +1018,7 @@ function openForm(existing){
     const fd = new FormData(formEl);
     const promptEn = fd.get("promptEn")||"";
     const promptUr = fd.get("promptUr")||"";
+    const graphicCaption = fd.get("graphicCaption")||"";
     pane.innerHTML = `
       <div class="question-container">
         <div class="q-text-row">
@@ -1008,7 +1031,7 @@ function openForm(existing){
             <p>${escapeHtml(promptUr)||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
-        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" /></div>` : ""}
+        ${graphicImageState ? `<div class="print-graphic"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" />${graphicCaption?`<div class="hint" style="margin-top:4px;">${escapeHtml(graphicCaption)}</div>`:""}</div>` : ""}
         <div class="print-options-grid">
           ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${escapeHtml(o.text)||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
         </div>
@@ -1039,13 +1062,15 @@ function openForm(existing){
   async function doSave(fd){
     const level = fd.getAll("level");
     const authorName = currentUser.displayName || currentUser.email;
+    const promptEnTrimmed = fd.get("promptEn").trim();
+    const autoTitle = promptEnTrimmed.length>60 ? promptEnTrimmed.slice(0,60).trim()+"…" : promptEnTrimmed;
     const body = {
-      titleEn: fd.get("titleEn").trim(), level, qType: fd.get("qType"), difficulty: fd.get("difficulty"),
+      titleEn: autoTitle || "Untitled question", level, qType: fd.get("qType"), difficulty: fd.get("difficulty"),
       unit: fd.get("unit"), subtopic: fd.get("subtopic").trim(),
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
       options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
       correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
-      graphicNote: fd.get("graphicNote").trim(), solutionEn: fd.get("solutionEn").trim(),
+      graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
@@ -1071,7 +1096,6 @@ function openForm(existing){
 
   document.getElementById("step-submit").addEventListener("click", ()=>{
     const fd = new FormData(formEl);
-    if(!fd.get("titleEn").trim()){ toast("Enter a title"); showStep(1); return; }
     if(fd.getAll("level").length===0){ toast("Pick at least one contest level"); showStep(1); return; }
     if(!fd.get("promptEn").trim()){ toast("English prompt is required"); showStep(2); return; }
     if(optionsState.some(o=>!o.text.trim() && !o.image)){ toast("Every option needs text or an image"); showStep(2); return; }
@@ -1081,7 +1105,7 @@ function openForm(existing){
       promptEn: fd.get("promptEn").trim(), correctOpt,
       difficultyLabel: DIFFS.find(d=>d.v===fd.get("difficulty"))?.l || fd.get("difficulty"),
       levels: fd.getAll("level"),
-      hasGraphic: !!(graphicImageState || fd.get("graphicNote").trim()),
+      hasGraphic: !!(graphicImageState || fd.get("graphicCaption").trim()),
       onConfirm: ()=>doSave(fd),
     });
   });
@@ -1168,7 +1192,7 @@ async function downloadQuestionImage(q){
         <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${escapeHtml(q.promptEn||"")}</p></div>
         <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${escapeHtml(q.promptUr||"")}</p></div>
       </div>
-      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : ""}
+      ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
       <div class="print-options-grid">
         ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
       </div>
@@ -1221,16 +1245,15 @@ function renderDrawerBody(){
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
     <div class="section-label">Prompt (English)</div>
     <div class="prompt-box">${escapeHtml(q.promptEn||"")}</div>
-    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" /></div>` : ""}
+    ${q.graphicImage ? `<div style="text-align:center; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
     <div class="opt-list">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
     ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${escapeHtml(q.promptUr)}</div>` : ""}
-    ${q.graphicNote ? `<div class="section-label">Graphic note</div><div class="prompt-box">${escapeHtml(q.graphicNote)}</div>` : ""}
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
     <div class="section-label">Status</div>
     <div class="status-track">
       ${STATUSES.map(s=>{
         const locked = s.v==="finalized" && !canFinalize;
-        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only QB Leads or Admins can finalize a question"`:""}>${s.l}</button>`;
+        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only QB Leads or Admins can lock a question"`:""}>${s.l}</button>`;
       }).join("")}
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image</button>
       <button class="btn small ghost" id="edit-q">Edit question</button>
@@ -1258,7 +1281,7 @@ function renderDrawerBody(){
   });
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
-      if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can finalize a question"); return; }
+      if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can lock a question"); return; }
       try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
       catch(err){ toast("Couldn't update status"); }
     });
@@ -1294,7 +1317,7 @@ function renderContests(){
   const main = document.getElementById("main");
   main.innerHTML = `
     <div class="pagehead"><h1>Contests</h1><button class="btn primary" id="new-contest">+ Create New Contest</button></div>
-    <p class="desc">Assemble a paper from finalized questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
+    <p class="desc">Assemble a paper from locked questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
     ${!dataReady.contests ? loadingState("Loading contests…") : contests.length===0 ? emptyState("No contests created yet.") : `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th></th></tr></thead>
@@ -1340,7 +1363,7 @@ function openContestForm(){
         <div class="row2" style="align-items:start;">
           <div>
             <div class="section-label" style="margin-top:0;">Select questions</div>
-            <select id="picker-level" style="margin-bottom:8px;"><option value="">All levels (${eligible.length} finalized/uploaded)</option>${LEVELS.map(l=>`<option value="${l}">${l} (${eligible.filter(q=>(q.level||[]).includes(l)).length})</option>`).join("")}</select>
+            <select id="picker-level" style="margin-bottom:8px;"><option value="">All levels (${eligible.length} locked/uploaded)</option>${LEVELS.map(l=>`<option value="${l}">${l} (${eligible.filter(q=>(q.level||[]).includes(l)).length})</option>`).join("")}</select>
             <div id="q-picker" style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;"></div>
           </div>
           <div>
@@ -1360,7 +1383,7 @@ function openContestForm(){
     const level = document.getElementById("picker-level").value;
     const list = eligible.filter(q=>!level || (q.level||[]).includes(level));
     const picker = document.getElementById("q-picker");
-    picker.innerHTML = list.length===0 ? `<div class="empty">No finalized or uploaded questions match.</div>` : list.map(q=>{
+    picker.innerHTML = list.length===0 ? `<div class="empty">No locked or uploaded questions match.</div>` : list.map(q=>{
       const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
       return `
       <label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
@@ -1475,7 +1498,7 @@ function renderPrintView(contestId, opts){
               <p>${escapeHtml(q.promptUr||"")}</p>
             </div>
           </div>
-          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" /></div>` : (q.graphicNote ? `<div class="print-graphic hint">[Graphic: ${escapeHtml(q.graphicNote)}]</div>` : "")}
+          ${q.graphicImage ? `<div class="print-graphic"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
           <div class="print-options-grid">
             ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${escapeHtml(o.text)}</div>`).join("")}
           </div>
@@ -1562,7 +1585,7 @@ function renderWorkload(){
       html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)} ${a.dueDate?" · "+dueDateLabel(a.dueDate):""}</p>`;
       Object.entries(a.quotas[currentUser.email]).forEach(([unit,target])=>{
         const c = countByStatus(currentUser.email, a.contestLevel, unit);
-        html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} finalized/uploaded`);
+        html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} locked/uploaded`);
       });
     });
   }
@@ -1874,7 +1897,7 @@ function renderAdmin(){
     <div class="filters" style="align-items:flex-end;">
       <div class="field" style="margin:0; min-width:220px; flex:1;">
         <label>Question</label>
-        <select id="stat-q"><option value="">Select a finalized/uploaded question…</option>
+        <select id="stat-q"><option value="">Select a locked/uploaded question…</option>
           ${questions.filter(q=>q.status==="finalized"||q.status==="uploaded").map(q=>`<option value="${q.id}">${escapeHtml(q.titleEn)} (${(q.level||[]).join(", ")})</option>`).join("")}
         </select>
       </div>
