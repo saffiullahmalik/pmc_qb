@@ -65,6 +65,8 @@
   .nav button:hover{ background:var(--surface-2); color:var(--ink); }
   .nav button.active{ background:var(--accent-soft); color:var(--accent); font-weight:600; }
   .nav .dot{ width:6px;height:6px;border-radius:50%; background:currentColor; opacity:.55; flex:0 0 auto; }
+  .nav-badge{ width:8px; height:8px; border-radius:50%; background:var(--red); display:inline-block; margin-left:auto; flex:0 0 auto; }
+  .mobile-tabbar button .nav-badge{ margin-left:5px; }
   .side-foot{ margin-top:auto; padding:10px; border-top:1px solid var(--border); font-size:11.5px; color:var(--ink-dim); }
   .who{ display:flex; align-items:center; gap:8px; }
   .who img{ width:24px;height:24px;border-radius:50%; }
@@ -123,12 +125,10 @@
   .like-btn.on{ background:var(--red-soft); color:var(--red); border-color:var(--red); }
 
   /* ---- "Recently posted" feed (Bank tab) ---- */
-  .recent-activity{ border-color:var(--accent); }
-  .recent-activity-list{ display:flex; flex-direction:column; gap:2px; margin-top:8px; }
-  .recent-activity-item{ all:unset; display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:7px 8px; border-radius:7px; cursor:pointer; font-size:13px; }
-  .recent-activity-item:hover{ background:var(--surface-2); }
-  .recent-activity-item .qtitle{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .recent-activity-item .hint{ flex:0 0 auto; }
+  .recent-activity-list{ display:flex; flex-direction:column; gap:3px; margin-top:8px; }
+  .recent-activity-item{ all:unset; display:flex; justify-content:space-between; align-items:center; gap:14px; padding:11px 12px; border-radius:9px; border:1px solid var(--border); background:var(--surface); cursor:pointer; font-size:13px; }
+  .recent-activity-item:hover{ background:var(--surface-2); border-color:var(--accent); }
+  .recent-activity-item .qtitle{ font-weight:600; }
 
   /* ---- admin activity log ---- */
   .activity-log{ display:flex; flex-direction:column; }
@@ -152,6 +152,39 @@
   .kanban-card-title{ font-size:12.5px; font-weight:600; line-height:1.35; }
   .kanban-card-count{ width:56px; padding:3px 5px; font-size:12px; align-self:flex-end; }
   .kanban-empty{ font-size:11.5px; color:var(--ink-dim); text-align:center; padding:14px 4px; border:1px dashed var(--border); border-radius:7px; }
+
+  /* ---- workload dashboard: charts + drill-down ---- */
+  .dash-charts{ display:grid; grid-template-columns:2fr 1fr; gap:14px; margin-bottom:8px; }
+  .dash-chart-card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 16px; box-shadow:var(--shadow); }
+  .dash-chart-card-donut{ display:flex; flex-direction:column; align-items:center; text-align:center; }
+  .chart-svg{ width:100%; height:auto; display:block; margin-top:6px; }
+  .chart-svg.donut{ width:148px; margin:10px auto 0; }
+  .bar-done{ fill:var(--accent); stroke:var(--accent); background:var(--accent); }
+  .bar-inreview{ fill:var(--gold); stroke:var(--gold); background:var(--gold); }
+  .bar-draft{ fill:var(--blue); stroke:var(--blue); background:var(--blue); }
+  .bar-remaining{ fill:var(--border); stroke:var(--border); background:var(--border); }
+  .chart-value-label{ font-size:10.5px; fill:var(--ink-dim); font-variant-numeric:tabular-nums; }
+  .chart-axis-label{ font-size:12px; font-weight:600; fill:var(--ink-dim); }
+  .donut-center-value{ font-size:20px; font-weight:600; fill:var(--ink); }
+  .donut-center-label{ font-size:10px; fill:var(--ink-dim); text-transform:uppercase; letter-spacing:.05em; }
+  .chart-legend{ display:flex; flex-wrap:wrap; gap:10px 14px; margin-top:10px; font-size:11.5px; color:var(--ink-dim); }
+  .chart-legend span{ display:inline-flex; align-items:center; gap:5px; }
+  .swatch{ width:9px; height:9px; border-radius:2px; display:inline-block; }
+  .level-cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-top:10px; }
+  .level-card{ all:unset; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; cursor:pointer; box-shadow:var(--shadow); }
+  .level-card:hover{ border-color:var(--accent); }
+  .level-card.active{ border-color:var(--accent); background:var(--accent-soft); }
+  .level-card-head{ font-family:'Lexend'; font-weight:700; font-size:15px; }
+  .teacher-roster{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .teacher-roster-row{ all:unset; display:flex; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:9px 12px; cursor:pointer; font-size:13px; }
+  .teacher-roster-row:hover{ border-color:var(--accent); background:var(--surface-2); }
+  .teacher-roster-name{ font-weight:600; flex:0 0 auto; min-width:120px; }
+  .records-details summary::-webkit-details-marker{ display:none; }
+  .records-details summary::before{ content:"▸ "; color:var(--ink-dim); }
+  .records-details[open] summary::before{ content:"▾ "; }
+  @media (max-width:760px){
+    .dash-charts{ grid-template-columns:1fr; }
+  }
   .opt-thumb{ height:34px; border-radius:5px; }
   .editor-page{ position:fixed; top:0; left:216px; right:0; bottom:0; background:var(--bg); z-index:150; overflow-y:auto; }
   .editor-topbar{ position:sticky; top:0; background:var(--surface); border-bottom:1px solid var(--border); padding:12px 20px; display:flex; align-items:center; gap:14px; z-index:5; }
@@ -308,6 +341,7 @@
 
 <div class="mobile-tabbar" id="mobile-tabbar">
   <button data-tab="bank" class="active">Question Bank</button>
+  <button data-tab="activity">Activity <span class="nav-badge" id="nav-badge-activity-m" hidden></span></button>
   <button data-tab="contests">Contests</button>
   <button data-tab="quilgo">Quilgo</button>
   <button data-tab="workload">Assignment</button>
@@ -327,6 +361,7 @@
     </div>
     <div class="nav" id="nav">
       <button data-tab="bank" class="active"><span class="dot"></span>Question Bank</button>
+      <button data-tab="activity"><span class="dot"></span>Activity <span class="nav-badge" id="nav-badge-activity" hidden></span></button>
       <button data-tab="contests"><span class="dot"></span>Contests</button>
       <button data-tab="quilgo"><span class="dot"></span>Quilgo</button>
       <button data-tab="workload"><span class="dot"></span>Assignment</button>
@@ -562,6 +597,7 @@ let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"" };
 let quilgoContestId = "";
+let workloadExpandedLevel = null;
 let quilgoSearch = "";
 
 function escapeHtml(s){
@@ -798,6 +834,7 @@ function switchTab(tab){
   if(document.getElementById("modal-root").hasChildNodes()) closeModal();
   currentTab = tab;
   document.querySelectorAll("[data-tab]").forEach(x=>x.classList.toggle("active", x.dataset.tab===tab));
+  if(tab==="activity"){ try{ localStorage.setItem("pmcqb-last-seen-activity", new Date().toISOString()); }catch(e){} updateActivityBadge(); }
   renderTab();
 }
 document.getElementById("nav").addEventListener("click", e=>{
@@ -817,8 +854,9 @@ function startDataSubscriptions(){
     dataReady.questions = true;
     // renderWorkload()'s progress cards also read `questions` (countByStatus)
     // to show live draft/in-review/locked counts per assigned chapter.
-    if(currentTab==="bank" || currentTab==="contests" || currentTab==="quilgo" || currentTab==="workload") renderTab();
+    if(currentTab==="bank" || currentTab==="activity" || currentTab==="contests" || currentTab==="quilgo" || currentTab==="workload") renderTab();
     if(openQuestionId) renderDrawer();
+    updateActivityBadge();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
   const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
   unsubContests = onSnapshot(cy, snap=>{
@@ -846,6 +884,7 @@ function renderTab(){
   if(!isTeacherApproved) return;
   document.getElementById("main").dataset.section = currentTab;
   if(currentTab==="bank") renderBank();
+  else if(currentTab==="activity") renderActivityFeed();
   else if(currentTab==="contests") renderContests();
   else if(currentTab==="quilgo") renderQuilgo();
   else if(currentTab==="workload") renderWorkload();
@@ -877,7 +916,6 @@ function renderBank(){
     <div class="pagehead"><h1>Question Bank</h1><button class="btn primary" id="new-q">+ New Question</button></div>
     <p class="desc">Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.</p>
     ${myAssignedChaptersHtml()}
-    ${recentActivityHtml()}
     <div class="filters">
       <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
@@ -910,26 +948,41 @@ function renderBank(){
     }));
     grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
   }
-  document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.goto)));
   animateProgressBars();
 }
 
+/* ================= ACTIVITY TAB ================= */
 // "Notify everyone" without an email/push backend: the questions collection
-// is already subscribed and ordered createdAt desc, so the 5 most recent
-// entries ARE the feed -- no separate collection needed.
-function recentActivityHtml(){
-  if(questions.length===0) return "";
-  return `
-    <div class="progress-card recent-activity">
-      <b>Recently posted — go comment</b>
-      <div class="recent-activity-list">
-        ${questions.slice(0,5).map(q=>`
+// is already subscribed and ordered createdAt desc, so the N most recent
+// entries ARE the feed -- no separate collection needed. The nav badge
+// (updateActivityBadge()) compares the newest entry's createdAt against a
+// per-device "last seen" timestamp in localStorage.
+function renderActivityFeed(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>Activity</h1></div>
+    <p class="desc">The most recently posted questions across every teacher — open one to comment or rate it.</p>
+    ${!dataReady.questions ? loadingState("Loading activity…")
+      : questions.length===0 ? emptyState("No questions posted yet.")
+      : `<div class="recent-activity-list">${questions.slice(0,30).map(q=>`
           <button type="button" class="recent-activity-item" data-goto="${q.id}">
-            <span class="qtitle">${escapeHtml(q.titleEn||"Untitled question")}</span>
-            <span class="hint">${escapeHtml(q.authorName||"—")} &middot; ${escapeHtml(chapterLabel(q.unit))} &middot; ${fmtDate(q.createdAt)}</span>
-          </button>`).join("")}
-      </div>
-    </div>`;
+            <span>
+              <span class="qtitle">${escapeHtml(q.titleEn||"Untitled question")}</span>
+              <span class="hint" style="display:block; margin-top:2px;">${escapeHtml(q.authorName||"—")} &middot; ${escapeHtml(chapterLabel(q.unit))} &middot; ${(q.level||[]).join(", ")}</span>
+            </span>
+            <span class="hint mono">${fmtDate(q.createdAt)}</span>
+          </button>`).join("")}</div>`}
+  `;
+  document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.goto)));
+}
+function updateActivityBadge(){
+  let lastSeen = "";
+  try{ lastSeen = localStorage.getItem("pmcqb-last-seen-activity") || ""; }catch(e){}
+  const hasNew = questions.length>0 && (!lastSeen || questions[0].createdAt > lastSeen);
+  ["nav-badge-activity","nav-badge-activity-m"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.hidden = !hasNew;
+  });
 }
 
 function myAssignedChapters(){
@@ -2069,6 +2122,61 @@ function dueDateLabel(dueDate){
   return `<span class="mono" style="${overdue?"color:var(--red); font-weight:600;":""}">${overdue?"Overdue — ":"Due "}${fmtDateOnly(dueDate)}</span>`;
 }
 
+/* ---------------- hand-rolled charts (no library -- see dataviz notes) ----
+   Status colors are fixed and reused app-wide (draft=blue, in review=gold,
+   locked/uploaded=accent, not-started=border-gray), never reassigned by
+   filter, and every segment carries a direct value label rather than
+   relying on color alone. ---------------------------------------------- */
+function barChartSvg(levels, byLevel){
+  const W = 520, H = 190, padL = 6, padR = 6, padT = 22, padB = 24;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const maxVal = Math.max(1, ...levels.map(l=>Math.max(byLevel[l].target, byLevel[l].draft+byLevel[l].inReview+byLevel[l].done)));
+  const groupW = chartW / levels.length;
+  const barW = Math.min(64, groupW*0.5);
+  let bars = "";
+  levels.forEach((l,i)=>{
+    const s = byLevel[l];
+    const x = padL + i*groupW + (groupW-barW)/2;
+    const total = s.draft + s.inReview + s.done;
+    const remaining = Math.max(0, s.target - total);
+    const segs = [
+      {v:s.done, cls:"bar-done"}, {v:s.inReview, cls:"bar-inreview"},
+      {v:s.draft, cls:"bar-draft"}, {v:remaining, cls:"bar-remaining"},
+    ];
+    let y = padT + chartH;
+    segs.forEach(seg=>{
+      if(seg.v<=0) return;
+      const h = (seg.v/maxVal)*chartH;
+      y -= h;
+      bars += `<rect x="${x}" y="${y.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" class="${seg.cls}" rx="3"/>`;
+    });
+    bars += `<text x="${x+barW/2}" y="${(y-8).toFixed(1)}" text-anchor="middle" class="mono chart-value-label">${total}/${s.target}</text>`;
+    bars += `<text x="${x+barW/2}" y="${H-6}" text-anchor="middle" class="chart-axis-label">${escapeHtml(l)}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by contest level">${bars}</svg>`;
+}
+function donutChartSvg(segments, total){
+  const R = 52, STROKE = 20, cx = 74, cy = 74, C = 2*Math.PI*R;
+  const denom = total>0 ? total : 1;
+  let offset = 0, arcs = "";
+  segments.forEach(seg=>{
+    if(seg.value<=0) return;
+    const frac = seg.value/denom;
+    const slot = frac*C;
+    const dash = Math.max(0, slot-3);
+    arcs += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke-width="${STROKE}" class="${seg.cls}" stroke-dasharray="${dash.toFixed(1)} ${(C-dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    offset += slot;
+  });
+  const done = segments.find(s=>s.cls==="bar-done")?.value||0;
+  const pct = total>0 ? Math.round(done/total*100) : 0;
+  return `<svg viewBox="0 0 148 148" class="chart-svg donut" role="img" aria-label="Overall status breakdown">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke-width="${STROKE}" class="bar-remaining"/>
+    ${arcs}
+    <text x="${cx}" y="${cy-2}" text-anchor="middle" class="mono donut-center-value">${pct}%</text>
+    <text x="${cx}" y="${cy+14}" text-anchor="middle" class="donut-center-label">done</text>
+  </svg>`;
+}
+
 function renderWorkload(){
   const main = document.getElementById("main");
   const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
@@ -2088,39 +2196,89 @@ function renderWorkload(){
     });
   }
   if(isAdminUser){
-    html += `<div class="section-label" style="margin-top:26px;">Manage assignments</div>`;
-    if(assignments.length===0){
-      html += `<div class="empty">No assignments created yet.</div>`;
-    } else {
-      html += `<div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Level</th><th>Teachers</th><th>Due</th><th></th></tr></thead><tbody>
-        ${assignments.map(a=>`<tr>
-          <td>${escapeHtml(a.name)}</td>
-          <td class="mono">${escapeHtml(a.contestLevel)}</td>
-          <td class="mono">${(a.teacherEmails||[]).length}</td>
-          <td>${a.dueDate?dueDateLabel(a.dueDate):"—"}</td>
-          <td style="white-space:nowrap;">
-            <button class="btn small" data-edit-assignment="${a.id}">Edit</button>
-            <button class="btn small" style="color:var(--red);" data-delete-assignment="${a.id}">Delete</button>
-          </td>
-        </tr>`).join("")}
-      </tbody></table></div>`;
-    }
-    html += `<div class="section-label" style="margin-top:22px;">Command view — all assignments</div>`;
-    if(assignments.length===0){
-      html += `<div class="empty">No assignments created yet.</div>`;
-    } else {
-      assignments.forEach(a=>{
-        html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)}</p>`;
-        const unitTargets = {};
-        Object.values(a.quotas||{}).forEach(perUnit=>{
-          Object.entries(perUnit).forEach(([unit,t])=>{ unitTargets[unit] = (unitTargets[unit]||0) + t; });
-        });
-        Object.entries(unitTargets).forEach(([unit,target])=>{
-          const finalized = questions.filter(q=>(q.level||[]).includes(a.contestLevel) && q.unit===unit && (q.status==="finalized"||q.status==="uploaded")).length;
-          html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""} (all teachers)`, finalized, target);
+    const byLevel = {};
+    LEVELS.forEach(l=>{ byLevel[l] = { teacherSet:new Set(), chapterSet:new Set(), target:0, draft:0, inReview:0, done:0 }; });
+    assignments.forEach(a=>{
+      const lvl = byLevel[a.contestLevel]; if(!lvl) return;
+      Object.entries(a.quotas||{}).forEach(([email,units])=>{
+        Object.entries(units).forEach(([unit,target])=>{
+          lvl.teacherSet.add(email);
+          lvl.chapterSet.add(unit);
+          lvl.target += target;
+          const c = countByStatus(email, a.contestLevel, unit);
+          lvl.draft += c.draft; lvl.inReview += c.inReview; lvl.done += c.finalized;
         });
       });
+    });
+    const totalTeachers = new Set();
+    let totalTarget=0, totalDraft=0, totalInReview=0, totalDone=0, totalChapters=0;
+    LEVELS.forEach(l=>{
+      byLevel[l].teacherSet.forEach(t=>totalTeachers.add(t));
+      totalChapters += byLevel[l].chapterSet.size;
+      totalTarget += byLevel[l].target; totalDraft += byLevel[l].draft;
+      totalInReview += byLevel[l].inReview; totalDone += byLevel[l].done;
+    });
+    const overallPct = totalTarget>0 ? Math.round(totalDone/totalTarget*100) : 0;
+
+    html += `<div class="section-label" style="margin-top:28px;">Workload dashboard</div>`;
+    if(assignments.length===0){
+      html += emptyState("No assignments created yet — click + New Assignment to build the board.");
+    } else {
+      html += `
+        <div class="admin-grid">
+          <div class="stat-tile"><div class="num">${totalTeachers.size}</div><div class="lbl">Teachers active</div></div>
+          <div class="stat-tile"><div class="num">${totalChapters}</div><div class="lbl">Chapters assigned</div></div>
+          <div class="stat-tile"><div class="num">${overallPct}%</div><div class="lbl">Overall complete</div></div>
+        </div>
+        <div class="dash-charts">
+          <div class="dash-chart-card">
+            <b>Progress by level</b>
+            ${barChartSvg(LEVELS, byLevel)}
+            <div class="chart-legend">
+              <span><span class="swatch bar-done"></span>Locked/uploaded</span>
+              <span><span class="swatch bar-inreview"></span>In review</span>
+              <span><span class="swatch bar-draft"></span>Draft</span>
+              <span><span class="swatch bar-remaining"></span>Not started</span>
+            </div>
+          </div>
+          <div class="dash-chart-card dash-chart-card-donut">
+            <b>Overall status</b>
+            ${donutChartSvg([
+              {value:totalDone, cls:"bar-done"}, {value:totalInReview, cls:"bar-inreview"}, {value:totalDraft, cls:"bar-draft"},
+            ], totalTarget)}
+          </div>
+        </div>
+        <div class="section-label" style="margin-top:22px;">By contest level <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">— click a level to see who's working on it</span></div>
+        <div class="level-cards">
+          ${LEVELS.map(l=>{
+            const s = byLevel[l];
+            const pct = s.target>0 ? Math.round(s.done/s.target*100) : 0;
+            return `<button type="button" class="level-card ${workloadExpandedLevel===l?"active":""}" data-level-card="${l}">
+              <div class="level-card-head">${l}</div>
+              <div class="progress-bar" style="margin:8px 0 6px;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
+              <div class="hint">${s.teacherSet.size} teacher${s.teacherSet.size===1?"":"s"} &middot; ${pct}% done</div>
+            </button>`;
+          }).join("")}
+        </div>
+        <div id="level-roster"></div>
+      `;
     }
+    html += `<details class="records-details" style="margin-top:24px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">All assignment records</summary>
+      ${assignments.length===0 ? `<div class="empty">No assignments created yet.</div>` : `
+        <div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Level</th><th>Teachers</th><th>Due</th><th></th></tr></thead><tbody>
+          ${assignments.map(a=>`<tr>
+            <td>${escapeHtml(a.name)}</td>
+            <td class="mono">${escapeHtml(a.contestLevel)}</td>
+            <td class="mono">${(a.teacherEmails||[]).length}</td>
+            <td>${a.dueDate?dueDateLabel(a.dueDate):"—"}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn small" data-edit-assignment="${a.id}">Edit</button>
+              <button class="btn small" style="color:var(--red);" data-delete-assignment="${a.id}">Delete</button>
+            </td>
+          </tr>`).join("")}
+        </tbody></table></div>`}
+    </details>`;
   }
   main.innerHTML = html;
   animateProgressBars();
@@ -2141,7 +2299,67 @@ function renderWorkload(){
       }
       catch(err){ toast("Couldn't delete assignment"); }
     }));
+    document.querySelectorAll("[data-level-card]").forEach(b=>b.addEventListener("click", ()=>{
+      workloadExpandedLevel = workloadExpandedLevel===b.dataset.levelCard ? null : b.dataset.levelCard;
+      document.querySelectorAll("[data-level-card]").forEach(x=>x.classList.toggle("active", x.dataset.levelCard===workloadExpandedLevel));
+      renderLevelRoster();
+    }));
+    renderLevelRoster();
   }
+}
+
+function renderLevelRoster(){
+  const wrap = document.getElementById("level-roster");
+  if(!wrap) return;
+  if(!workloadExpandedLevel){ wrap.innerHTML = ""; return; }
+  const level = workloadExpandedLevel;
+  const merged = {};
+  assignments.filter(a=>a.contestLevel===level).forEach(a=>{
+    Object.entries(a.quotas||{}).forEach(([email,units])=>{
+      merged[email] = merged[email] || {email, target:0, done:0};
+      Object.entries(units).forEach(([unit,target])=>{
+        merged[email].target += target;
+        merged[email].done += countByStatus(email, level, unit).finalized;
+      });
+    });
+  });
+  const rows = Object.values(merged);
+  wrap.innerHTML = rows.length===0 ? emptyState(`No teachers assigned to ${level} yet.`) : `
+    <div class="section-label" style="margin-top:16px;">${level} — who's working on it</div>
+    <div class="teacher-roster">
+      ${rows.map(r=>{
+        const t = allTeachers.find(x=>x.email===r.email);
+        const pct = r.target>0 ? Math.round(r.done/r.target*100) : 0;
+        return `<button type="button" class="teacher-roster-row" data-teacher-detail="${r.email}" data-teacher-level="${level}">
+          <span class="teacher-roster-name">${escapeHtml(t?.name||r.email)}</span>
+          <div class="progress-bar" style="flex:1; margin:0 12px;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
+          <span class="hint mono">${r.done}/${r.target}</span>
+        </button>`;
+      }).join("")}
+    </div>`;
+  animateProgressBars();
+  wrap.querySelectorAll("[data-teacher-detail]").forEach(b=>b.addEventListener("click", ()=>openTeacherWorkloadDetail(b.dataset.teacherDetail, b.dataset.teacherLevel)));
+}
+
+function openTeacherWorkloadDetail(email, level){
+  const root = document.getElementById("modal-root");
+  const t = allTeachers.find(x=>x.email===email);
+  const rows = [];
+  assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
+    Object.entries(a.quotas[email]).forEach(([unit,target])=>{
+      rows.push({unit, target, c: countByStatus(email, level, unit)});
+    });
+  });
+  root.innerHTML = `<div class="overlay" id="ov"><div class="drawer">
+    <div class="drawer-head"><h2>${escapeHtml(t?.name||email)} — ${escapeHtml(level)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
+    <p class="hint" style="margin:0 0 14px;">${escapeHtml(email)}</p>
+    ${rows.length===0 ? emptyState("No chapters assigned for this level.") : rows.map(r=>
+      progressCard(`${r.unit} — ${chapterByCode(r.unit)?.title||""}`, r.c.finalized, r.target, `${r.c.draft} draft &middot; ${r.c.inReview} in review &middot; ${r.c.finalized} locked/uploaded`)
+    ).join("")}
+  </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  animateProgressBars();
 }
 
 function openAssignmentForm(existing){
