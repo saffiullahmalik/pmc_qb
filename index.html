@@ -764,7 +764,9 @@ function startDataSubscriptions(){
   unsubQuestions = onSnapshot(qy, snap=>{
     questions = snap.docs.map(d=>({id:d.id, ...d.data()}));
     dataReady.questions = true;
-    if(currentTab==="bank" || currentTab==="contests" || currentTab==="quilgo") renderTab();
+    // renderWorkload()'s progress cards also read `questions` (countByStatus)
+    // to show live draft/in-review/locked counts per assigned chapter.
+    if(currentTab==="bank" || currentTab==="contests" || currentTab==="quilgo" || currentTab==="workload") renderTab();
     if(openQuestionId) renderDrawer();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
   const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
@@ -777,7 +779,11 @@ function startDataSubscriptions(){
   unsubAssignments = onSnapshot(ay, snap=>{
     assignments = snap.docs.map(d=>({id:d.id, ...d.data()}));
     dataReady.assignments = true;
-    if(currentTab==="workload") renderTab();
+    // renderBank() also reads `assignments` (the "Assigned to you" banner),
+    // so a newly created assignment needs to refresh the Bank tab too, not
+    // just Workload -- otherwise it only appears after the teacher switches
+    // tabs or reloads, since Bank is the default landing tab.
+    if(currentTab==="workload" || currentTab==="bank") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load assignments ("+err.code+")"); });
   unsubCurriculumExtra = onSnapshot(collection(db,"curriculumExtra"), snap=>{
     curriculumExtra = snap.docs.map(d=>({id:d.id, ...d.data()}));
