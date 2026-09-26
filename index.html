@@ -145,6 +145,7 @@
   .kanban-board{ display:flex; gap:12px; overflow-x:auto; padding-bottom:6px; }
   .kanban-col{ flex:0 0 220px; background:var(--surface-2); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; min-height:120px; }
   .kanban-col-head{ font-weight:700; font-size:12.5px; padding:0 2px 6px; border-bottom:1px solid var(--border); }
+  .kanban-add-select{ width:100%; font-size:11.5px; padding:5px 6px; }
   .kanban-cards{ display:flex; flex-direction:column; gap:7px; min-height:60px; border-radius:8px; transition:background .15s; }
   .kanban-cards.drag-over{ background:var(--accent-soft); outline:2px dashed var(--accent); }
   .kanban-card{ background:var(--surface); border:1px solid var(--border); border-radius:7px; padding:8px 9px; cursor:grab; display:flex; flex-direction:column; gap:5px; box-shadow:var(--shadow); }
@@ -2409,7 +2410,10 @@ function openAssignmentForm(existing){
   function chapterCard(c, count){
     return `<div class="kanban-card" draggable="true" data-chapter="${c.code}">
       <span class="kanban-card-title">${c.code} — ${escapeHtml(c.title)}</span>
-      ${count!=null ? `<input type="number" min="1" class="kanban-card-count" data-chapter-count="${c.code}" value="${count}" />` : ""}
+      ${count!=null ? `<div style="display:flex; align-items:center; gap:6px;">
+        <input type="number" min="1" class="kanban-card-count" data-chapter-count="${c.code}" value="${count}" />
+        <button type="button" class="btn small" data-remove-chapter="${c.code}" title="Unassign" aria-label="Unassign ${escapeHtml(c.title)}" style="margin-left:auto; padding:2px 7px;">✕</button>
+      </div>` : ""}
     </div>`;
   }
   function renderBoard(){
@@ -2428,13 +2432,33 @@ function openAssignmentForm(existing){
         const cards = Object.keys(m).map(code=>{ const c = chapterByCode(code); return c ? chapterCard(c, m[code]) : ""; }).join("");
         return `<div class="kanban-col" data-teacher="${t.email}">
           <div class="kanban-col-head">${escapeHtml(t.name||t.email)} <span class="mono">(${Object.keys(m).length})</span></div>
-          <div class="kanban-cards" data-dropzone="${t.email}">${cards || `<div class="kanban-empty">Drop a chapter here</div>`}</div>
+          <select class="kanban-add-select" data-add-teacher="${t.email}" ${pool.length===0?"disabled":""}>
+            <option value="">${pool.length===0?"No chapters left to add":"+ Add a chapter…"}</option>
+            ${pool.map(c=>`<option value="${c.code}">${c.code} — ${escapeHtml(c.title)}</option>`).join("")}
+          </select>
+          <div class="kanban-cards" data-dropzone="${t.email}">${cards || `<div class="kanban-empty">Drop a chapter here, or use the dropdown above</div>`}</div>
         </div>`;
       }).join("")}
     `;
+    // Assigning a chapter can also be done by picking it from each column's
+    // dropdown -- native HTML5 drag-and-drop is unreliable across some
+    // browsers/trackpads, so dragging alone shouldn't be the only way to
+    // add more than one chapter to a teacher.
+    board.querySelectorAll("[data-add-teacher]").forEach(sel=>sel.addEventListener("change", ()=>{
+      const code = sel.value; if(!code) return;
+      const teacherEmail = sel.dataset.addTeacher;
+      mine[teacherEmail] = mine[teacherEmail] || {};
+      mine[teacherEmail][code] = 5;
+      renderBoard();
+    }));
     let draggedCode = null;
     board.querySelectorAll("[data-chapter]").forEach(card=>{
-      card.addEventListener("dragstart", ()=>{ draggedCode = card.dataset.chapter; card.classList.add("dragging"); });
+      card.addEventListener("dragstart", e=>{
+        draggedCode = card.dataset.chapter;
+        card.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", draggedCode);
+      });
       card.addEventListener("dragend", ()=>card.classList.remove("dragging"));
     });
     board.querySelectorAll("[data-dropzone]").forEach(zone=>{
@@ -2464,6 +2488,11 @@ function openAssignmentForm(existing){
     board.querySelectorAll("[data-chapter-count]").forEach(el=>el.addEventListener("input", e=>{
       const teacherEmail = el.closest("[data-teacher]").dataset.teacher;
       mine[teacherEmail][el.dataset.chapterCount] = parseInt(e.target.value,10)||0;
+    }));
+    board.querySelectorAll("[data-remove-chapter]").forEach(btn=>btn.addEventListener("click", ()=>{
+      const teacherEmail = btn.closest("[data-teacher]").dataset.teacher;
+      delete mine[teacherEmail][btn.dataset.removeChapter];
+      renderBoard();
     }));
   }
   renderBoard();
