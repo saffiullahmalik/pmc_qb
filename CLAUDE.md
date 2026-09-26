@@ -47,13 +47,17 @@ questions/{questionId}
   options: [{id, text, image}]   -- image is a compressed data-URL string or null
   correctOptionId,                -- id of the option in `options` that's correct
   graphicImage (data-URL or null), graphicImageWidth (px, teacher-adjustable), graphicNote (free text),
-  solutionEn (free text, feeds the print engine's Solution Manual),
+  solutionEn (free text, feeds the print engine's Solution Manual -- REQUIRED,
+  -- enforced client-side in openForm()'s save validation as of Sept 2026),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
   difficulty (medium|hard|very_hard), unit (chapter code, e.g. "B3-C1"), subtopic,
   usedIn: [contest name, ...],   -- NOTE: `uploadedToQuilgo` (bool) is deprecated/removed
   -- from the UI — Quilgo upload status now lives on contests/{id}.uploadStatus
   -- instead (see below), since "uploaded" only makes sense per contest paper.
   -- Old docs may still carry a stray uploadedToQuilgo field; it's just ignored.
+  likes: [teacherEmail, ...],   -- a lightweight ♥ toggle, separate from the
+  -- 5-star rating below; arrayUnion/arrayRemove, allowed even on a locked
+  -- question (see isMetadataOnlyChange() in firestore.rules).
   status (draft|in_review|finalized|uploaded),
   authorName, authorEmail, createdAt, updatedAt,
   editHistory: [{ts, by, note}, ...]
@@ -87,10 +91,25 @@ assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   quotas: { [teacherEmail]: { [unit]: number } }, dueDate (YYYY-MM-DD or null),
   createdBy, createdByName, createdAt
   -- admins can edit/delete assignments from the Assignment tab's "Manage
-  -- assignments" table, not just create new ones.
+  -- assignments" table, not just create new ones. As of Sept 2026,
+  -- openAssignmentForm() presents these as a single drag-and-drop Kanban
+  -- board spanning all four contest levels at once (one column per teacher
+  -- plus an "Unassigned" pool per level, tab-switchable) -- the STORED shape
+  -- is unchanged (still one doc per level), only how the admin builds it
+  -- changed. A chapter card lives in exactly one column at a time, so
+  -- assigning the same chapter to two teachers is structurally impossible.
 
 teachers/{email, lowercase}
   role: "teacher" | "qb_lead" | "admin"
+
+activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
+  type, summary, targetId, actorEmail, actorName, createdAt
+  -- append-only (rules block update/delete entirely); any signed-in teacher
+  -- can write an entry describing an action they just took (via the
+  -- fire-and-forget logActivity() helper in index.html), but only admins
+  -- can read the collection back. Separate from the Bank tab's "Recently
+  -- posted" panel, which is the teacher-facing equivalent and just reads
+  -- the existing `questions` list rather than a dedicated collection.
 ```
 
 Filtering in the UI (level, type, difficulty, status, unit, search) is done **client-side** over the full `questions` collection (subscribed via `onSnapshot`, ordered by `createdAt desc`, capped at 500) — deliberately not server-side compound queries, since the dataset is small (a school's worth of exam questions, not a large-scale product).

@@ -115,6 +115,43 @@
   #live-preview{ background:#fff; color:#161b19; border-radius:8px; padding:4px; border:1px solid var(--border); }
   #live-preview .hint{ color:#6b7280; }
   .callout{ background:var(--accent-soft); color:var(--ink); border-left:3px solid var(--accent); padding:8px 11px; border-radius:6px; font-size:12px; line-height:1.5; margin-top:6px; }
+  .callout.warn{ background:var(--gold-soft); border-left-color:var(--gold); }
+
+  /* ---- engagement: likes, comment/like/rate summary ---- */
+  .engagement-summary{ font-size:12px; color:var(--ink-dim); margin-top:6px; letter-spacing:.01em; }
+  .like-btn{ background:var(--surface-2); border-color:var(--border); color:var(--ink-dim); font-weight:600; }
+  .like-btn.on{ background:var(--red-soft); color:var(--red); border-color:var(--red); }
+
+  /* ---- "Recently posted" feed (Bank tab) ---- */
+  .recent-activity{ border-color:var(--accent); }
+  .recent-activity-list{ display:flex; flex-direction:column; gap:2px; margin-top:8px; }
+  .recent-activity-item{ all:unset; display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:7px 8px; border-radius:7px; cursor:pointer; font-size:13px; }
+  .recent-activity-item:hover{ background:var(--surface-2); }
+  .recent-activity-item .qtitle{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .recent-activity-item .hint{ flex:0 0 auto; }
+
+  /* ---- admin activity log ---- */
+  .activity-log{ display:flex; flex-direction:column; }
+  .activity-row{ display:flex; align-items:baseline; gap:10px; padding:9px 4px; border-bottom:1px solid var(--border); font-size:13px; }
+  .activity-row:last-child{ border-bottom:none; }
+  .activity-icon{ flex:0 0 auto; }
+  .activity-summary{ flex:1; min-width:0; }
+  .activity-meta{ flex:0 0 auto; font-size:11.5px; color:var(--ink-dim); white-space:nowrap; }
+
+  /* ---- assignment board: level tabs + Kanban drag-and-drop ---- */
+  .level-tabs{ display:flex; gap:4px; border-bottom:1px solid var(--border); margin:14px 0 12px; }
+  .level-tabs button{ padding:8px 14px; font-size:13px; font-weight:600; color:var(--ink-dim); border-radius:8px 8px 0 0; border:1px solid transparent; background:transparent; }
+  .level-tabs button.active{ color:var(--accent); border-color:var(--border); border-bottom-color:var(--surface); background:var(--surface); }
+  .kanban-board{ display:flex; gap:12px; overflow-x:auto; padding-bottom:6px; }
+  .kanban-col{ flex:0 0 220px; background:var(--surface-2); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; min-height:120px; }
+  .kanban-col-head{ font-weight:700; font-size:12.5px; padding:0 2px 6px; border-bottom:1px solid var(--border); }
+  .kanban-cards{ display:flex; flex-direction:column; gap:7px; min-height:60px; border-radius:8px; transition:background .15s; }
+  .kanban-cards.drag-over{ background:var(--accent-soft); outline:2px dashed var(--accent); }
+  .kanban-card{ background:var(--surface); border:1px solid var(--border); border-radius:7px; padding:8px 9px; cursor:grab; display:flex; flex-direction:column; gap:5px; box-shadow:var(--shadow); }
+  .kanban-card.dragging{ opacity:.4; }
+  .kanban-card-title{ font-size:12.5px; font-weight:600; line-height:1.35; }
+  .kanban-card-count{ width:56px; padding:3px 5px; font-size:12px; align-self:flex-end; }
+  .kanban-empty{ font-size:11.5px; color:var(--ink-dim); text-align:center; padding:14px 4px; border:1px dashed var(--border); border-radius:7px; }
   .opt-thumb{ height:34px; border-radius:5px; }
   .editor-page{ position:fixed; top:0; left:216px; right:0; bottom:0; background:var(--bg); z-index:150; overflow-y:auto; }
   .editor-topbar{ position:sticky; top:0; background:var(--surface); border-bottom:1px solid var(--border); padding:12px 20px; display:flex; align-items:center; gap:14px; z-index:5; }
@@ -517,9 +554,10 @@ let questions = [];
 let contests = [];
 let assignments = [];
 let allTeachers = [];
+let activityLogEntries = [];
 let currentTab = "bank";
 let openQuestionId = null;
-let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"" };
@@ -576,6 +614,18 @@ function toast(msg){
   toast._h = setTimeout(()=>t.classList.remove("show"), 2400);
 }
 function slugEmail(e){ return String(e||"").toLowerCase().replace(/[^a-z0-9@.]/g,"_"); }
+
+// Append-only audit trail for the Admin tab's Activity Log. Fire-and-forget
+// by design -- a logging failure must never block or fail the real action
+// it's describing, so errors just go to console.
+function logActivity(type, summary, targetId){
+  if(!currentUser) return;
+  addDoc(collection(db,"activityLog"), {
+    type, summary, targetId: targetId||null,
+    actorEmail: currentUser.email, actorName: currentUser.displayName||currentUser.email,
+    createdAt: new Date().toISOString(),
+  }).catch(err=>console.error("logActivity failed", err));
+}
 
 /* ---------------- options model (with legacy fallback) ---------------- */
 function getQuestionOptions(q){
@@ -729,6 +779,7 @@ onAuthStateChanged(auth, user=>{
   if(unsubContests){ unsubContests(); unsubContests=null; }
   if(unsubAssignments){ unsubAssignments(); unsubAssignments=null; }
   if(unsubCurriculumExtra){ unsubCurriculumExtra(); unsubCurriculumExtra=null; }
+  if(unsubActivityLog){ unsubActivityLog(); unsubActivityLog=null; }
   if(unsubComments){ unsubComments(); unsubComments=null; }
   if(unsubRatings){ unsubRatings(); unsubRatings=null; }
   dataReady = { questions:false, contests:false, assignments:false };
@@ -826,6 +877,7 @@ function renderBank(){
     <div class="pagehead"><h1>Question Bank</h1><button class="btn primary" id="new-q">+ New Question</button></div>
     <p class="desc">Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.</p>
     ${myAssignedChaptersHtml()}
+    ${recentActivityHtml()}
     <div class="filters">
       <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
@@ -853,12 +905,31 @@ function renderBank(){
       e.stopPropagation();
       const q = questions.find(x=>x.id===b.dataset.delete); if(!q) return;
       if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
-      try{ await deleteDoc(doc(db,"questions",q.id)); toast("Question deleted"); }
+      try{ await deleteDoc(doc(db,"questions",q.id)); logActivity("question_deleted", `Deleted "${q.titleEn||"Untitled"}"`, q.id); toast("Question deleted"); }
       catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
     }));
     grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
   }
+  document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.goto)));
   animateProgressBars();
+}
+
+// "Notify everyone" without an email/push backend: the questions collection
+// is already subscribed and ordered createdAt desc, so the 5 most recent
+// entries ARE the feed -- no separate collection needed.
+function recentActivityHtml(){
+  if(questions.length===0) return "";
+  return `
+    <div class="progress-card recent-activity">
+      <b>Recently posted — go comment</b>
+      <div class="recent-activity-list">
+        ${questions.slice(0,5).map(q=>`
+          <button type="button" class="recent-activity-item" data-goto="${q.id}">
+            <span class="qtitle">${escapeHtml(q.titleEn||"Untitled question")}</span>
+            <span class="hint">${escapeHtml(q.authorName||"—")} &middot; ${escapeHtml(chapterLabel(q.unit))} &middot; ${fmtDate(q.createdAt)}</span>
+          </button>`).join("")}
+      </div>
+    </div>`;
 }
 
 function myAssignedChapters(){
@@ -869,6 +940,12 @@ function myAssignedChapters(){
     Object.entries(q).forEach(([unit,target])=>mine.push({unit, target, contestLevel:a.contestLevel, assignmentName:a.name}));
   });
   return mine;
+}
+// The first assigned chapter this teacher hasn't finished yet, in
+// assignment order -- powers "continue where you left off" on New Question.
+function firstIncompleteAssignedUnit(){
+  const pending = myAssignedChapters().find(m=>countByStatus(currentUser.email, m.contestLevel, m.unit).finalized < m.target);
+  return pending?.unit || null;
 }
 function myAssignedChaptersHtml(){
   const mine = myAssignedChapters();
@@ -902,7 +979,7 @@ function cardHtml(q){
         </div>
         <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
         <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
-        <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${escapeHtml(chapterLabel(q.unit))}</span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
+        <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${escapeHtml(chapterLabel(q.unit))} · <span class="mono">♥ ${(q.likes||[]).length}</span></span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
       </div>
       <div class="q-row-actions">
         <button class="btn small" data-view="${q.id}" title="View" aria-label="View question">👁 View</button>
@@ -938,6 +1015,10 @@ function openForm(existing){
   // referenced before its own declaration line throws, and only surfaced
   // when a question actually had at least one image already on it.
   const IMAGE_SIZE_WARN_BYTES = 700_000, IMAGE_SIZE_BLOCK_BYTES = 900_000;
+  // "Continue where you left off": a brand-new question defaults its
+  // chapter to the teacher's first assigned chapter that isn't done yet,
+  // instead of whatever the Book select's first option happens to be.
+  const suggestedUnit = !isEdit ? firstIncompleteAssignedUnit() : null;
 
   try{
   root.innerHTML = `
@@ -970,10 +1051,11 @@ function openForm(existing){
               </div>
             </div>
             <div class="row2">
-              <div class="field"><label>Book</label><select id="f-book">${bookSelectOptions(existing?.unit ? bookIdForChapterCode(existing.unit) : "")}</select></div>
+              <div class="field"><label>Book</label><select id="f-book">${bookSelectOptions((existing?.unit||suggestedUnit) ? bookIdForChapterCode(existing?.unit||suggestedUnit) : "")}</select></div>
               <div class="field"><label>Chapter</label><select name="unit" id="f-chapter"></select></div>
             </div>
             <div class="field"><label>Subtopic</label><select name="subtopic" id="f-subtopic"></select></div>
+            <div id="off-task-warning"></div>
           </div>
 
           <div class="step-panel" data-step="2" hidden>
@@ -1031,7 +1113,7 @@ function openForm(existing){
           </div>
 
           <div class="step-panel" data-step="4" hidden>
-            <div class="field"><label>Solution <span class="hint">(feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" rows="3" placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
+            <div class="field"><label>Solution <span class="hint">(required — feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" id="solutionEn-input" rows="3" required placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
             <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select></div>
             ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
             <div class="section-label">Live preview</div>
@@ -1226,12 +1308,28 @@ function openForm(existing){
   };
   const populateChapters = (keepCurrent)=>{
     const bookId = document.getElementById("f-book").value;
-    document.getElementById("f-chapter").innerHTML = chapterSelectOptions(bookId, keepCurrent?existing?.unit:"", false);
+    document.getElementById("f-chapter").innerHTML = chapterSelectOptions(bookId, keepCurrent?(existing?.unit||suggestedUnit):"", false);
     populateSubtopics();
+    updateOffTaskWarning();
   };
+  function updateOffTaskWarning(){
+    const warn = document.getElementById("off-task-warning");
+    if(!warn) return;
+    const chapterCode = document.getElementById("f-chapter").value;
+    const mine = myAssignedChapters();
+    const isAssignedToMe = mine.some(m=>m.unit===chapterCode);
+    const pending = mine.find(m=>{
+      if(m.unit===chapterCode) return false;
+      const c = countByStatus(currentUser.email, m.contestLevel, m.unit);
+      return c.finalized < m.target;
+    });
+    warn.innerHTML = (!isAssignedToMe && pending)
+      ? `<div class="callout warn">This topic isn't assigned to you — you still have pending work on <b>${escapeHtml(pending.unit)} — ${escapeHtml(chapterByCode(pending.unit)?.title||"")}</b> (${pending.target - countByStatus(currentUser.email, pending.contestLevel, pending.unit).finalized} more needed).</div>`
+      : "";
+  }
   populateChapters(true);
   document.getElementById("f-book").addEventListener("change", ()=>populateChapters(false));
-  document.getElementById("f-chapter").addEventListener("change", populateSubtopics);
+  document.getElementById("f-chapter").addEventListener("change", ()=>{ populateSubtopics(); updateOffTaskWarning(); });
 
   function renderLivePreview(){
     const pane = document.getElementById("live-preview");
@@ -1310,11 +1408,19 @@ function openForm(existing){
         hist.push({ts:new Date().toISOString(), by:authorName, note});
         body.editHistory = hist;
         await updateDoc(doc(db,"questions",existing.id), body);
+        logActivity(
+          existing.status!==body.status ? "question_status_changed" : "question_updated",
+          existing.status!==body.status
+            ? `Set "${body.titleEn}" to ${STATUSES.find(s=>s.v===body.status)?.l||body.status}`
+            : `Edited "${body.titleEn}"`,
+          existing.id
+        );
         toast("Question updated");
       } else {
         body.createdAt = body.updatedAt;
         body.editHistory = [{ts:body.createdAt, by:authorName, note:"Created"}];
-        await addDoc(collection(db,"questions"), body);
+        const ref = await addDoc(collection(db,"questions"), body);
+        logActivity("question_created", `Posted "${body.titleEn}" (${body.unit})`, ref.id);
         toast("Question posted");
       }
       document.getElementById("confirm-root").innerHTML = "";
@@ -1329,6 +1435,7 @@ function openForm(existing){
     if(!fd.get("promptEn").trim()){ toast("English prompt is required"); showStep(2); return; }
     if(optionsState.some(o=>!o.text.trim() && !o.image)){ toast("Every option needs text or an image"); showStep(2); return; }
     if(totalImageBytes() > IMAGE_SIZE_BLOCK_BYTES){ toast("Couldn't save — images are too large together; remove one or shrink a figure before saving"); showStep(2); return; }
+    if(!fd.get("solutionEn").trim()){ toast("A solution is required before saving"); showStep(4); return; }
     const correctOpt = optionsState.find(o=>o.id===correctOptionId);
     openConfirmPopup({
       promptEn: fd.get("promptEn").trim(), correctOpt,
@@ -1578,6 +1685,7 @@ function renderDrawerBody(){
   const avg = _ratings.length ? (_ratings.reduce((s,r)=>s+(r.stars||0),0)/_ratings.length) : null;
   const flags = _ratings.filter(r=>r.ambiguous).length;
   const myRating = _ratings.find(r=>r.id===slugEmail(currentUser.email));
+  const likedByMe = (q.likes||[]).includes(currentUser.email);
   const quilgo = getQuilgoUploadInfo(q.id);
   const isLocked = q.status==="finalized" && !isAdminUser;
   body.innerHTML = `
@@ -1585,13 +1693,14 @@ function renderDrawerBody(){
       <div>
         <h2>${escapeHtml(q.titleEn||"Untitled")}</h2>
         <div class="tags" style="margin-top:6px;">
-          ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
+          ${(q.level||[]).map(l=>`<span class="pill level">${l}${isAdminUser?` <span data-remove-level="${l}" style="cursor:pointer; font-weight:700;" title="Remove this level tag">×</span>`:""}</span>`).join("")}
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
           <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
         </div>
         ${quilgo ? `<div class="hint" style="margin-top:4px;">Uploaded by <b>${escapeHtml(quilgo.uploadedByName||"—")}</b> on ${fmtDate(quilgo.uploadedAt)} — manage this from the Quilgo tab.</div>` : ""}
+        <div class="engagement-summary mono">💬 ${_comments.length} &middot; ♥ ${(q.likes||[]).length} &middot; ${avg?"★ "+avg.toFixed(1):"★ —"}</div>
       </div>
       <button class="btn ghost small" id="close-form">Close</button>
     </div>
@@ -1616,6 +1725,7 @@ function renderDrawerBody(){
     </div>
     <div class="section-label">Rate this question</div>
     <div class="rate-row">
+      <button class="btn small like-btn ${likedByMe?"on":""}" id="like-btn" aria-label="${likedByMe?"Unlike":"Like"} this question">${likedByMe?"♥":"♡"} ${(q.likes||[]).length||""}</button>
       <div class="star-btns" id="star-btns">${[1,2,3,4,5].map(n=>`<button data-star="${n}" class="${myRating && n<=myRating.stars ? "on":""}">★</button>`).join("")}</div>
       <span class="mono" style="font-size:12px; color:var(--ink-dim);">${avg? avg.toFixed(1)+" avg · "+_ratings.length+" rating"+(_ratings.length===1?"":"s") : "No ratings yet"} ${flags? " · "+flags+" flagged ambiguous":""}</span>
       <label style="display:flex; align-items:center; gap:5px; font-size:12px; margin-left:auto;"><input type="checkbox" id="flag-amb" ${myRating?.ambiguous?"checked":""}/> Flag ambiguous</label>
@@ -1631,18 +1741,34 @@ function renderDrawerBody(){
   document.getElementById("download-img").addEventListener("click", ()=>downloadQuestionImage(q));
   document.getElementById("delete-q")?.addEventListener("click", async ()=>{
     if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
-    try{ await deleteDoc(doc(db,"questions",q.id)); toast("Question deleted"); closeModal(); }
+    try{ await deleteDoc(doc(db,"questions",q.id)); logActivity("question_deleted", `Deleted "${q.titleEn||"Untitled"}"`, q.id); toast("Question deleted"); closeModal(); }
     catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
   });
   body.querySelectorAll("[data-remove-usedin]").forEach(el=>el.addEventListener("click", async ()=>{
     if(!(await confirmDialog(`Remove the "${el.dataset.removeUsedin}" tag from this question?`, {danger:true}))) return;
-    try{ await updateDoc(doc(db,"questions",q.id), {usedIn: arrayRemove(el.dataset.removeUsedin)}); toast("Tag removed"); }
-    catch(err){ console.error(err); toast("Couldn't remove tag"); }
+    try{
+      await updateDoc(doc(db,"questions",q.id), {usedIn: arrayRemove(el.dataset.removeUsedin)});
+      logActivity("tag_removed", `Removed usage tag "${el.dataset.removeUsedin}" from "${q.titleEn||"Untitled"}"`, q.id);
+      toast("Tag removed");
+    }catch(err){ console.error(err); toast("Couldn't remove tag"); }
+  }));
+  body.querySelectorAll("[data-remove-level]").forEach(el=>el.addEventListener("click", async ()=>{
+    if((q.level||[]).length<=1){ toast("A question needs at least one contest level"); return; }
+    if(!(await confirmDialog(`Remove the "${el.dataset.removeLevel}" level tag from this question?`, {danger:true}))) return;
+    try{
+      await updateDoc(doc(db,"questions",q.id), {level: arrayRemove(el.dataset.removeLevel)});
+      logActivity("tag_removed", `Removed level tag "${el.dataset.removeLevel}" from "${q.titleEn||"Untitled"}"`, q.id);
+      toast("Level tag removed");
+    }catch(err){ console.error(err); toast("Couldn't remove tag"); }
   }));
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can lock a question"); return; }
-      try{ await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()}); toast("Status updated"); }
+      try{
+        await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()});
+        logActivity("question_status_changed", `Set "${q.titleEn||"Untitled"}" to ${STATUSES.find(s=>s.v===btn.dataset.status)?.l||btn.dataset.status}`, q.id);
+        toast("Status updated");
+      }
       catch(err){ toast("Couldn't update status"); }
     });
   });
@@ -1653,6 +1779,14 @@ function renderDrawerBody(){
       await addDoc(collection(db,"questions",q.id,"comments"), {authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email, text:txt, createdAt:new Date().toISOString()});
       document.getElementById("new-comment").value = "";
     }catch(err){ toast("Couldn't post comment"); }
+  });
+  document.getElementById("like-btn").addEventListener("click", async ()=>{
+    try{
+      await updateDoc(doc(db,"questions",q.id), {
+        likes: likedByMe ? arrayRemove(currentUser.email) : arrayUnion(currentUser.email),
+        updatedAt: new Date().toISOString(),
+      });
+    }catch(err){ console.error(err); toast("Couldn't update like"); }
   });
   document.getElementById("star-btns").addEventListener("click", async e=>{
     const b = e.target.closest("[data-star]"); if(!b) return;
@@ -1999,101 +2133,163 @@ function renderWorkload(){
     }));
     document.querySelectorAll("[data-delete-assignment]").forEach(b=>b.addEventListener("click", async ()=>{
       if(!(await confirmDialog("Delete this assignment? Teachers will no longer see this quota.", {danger:true}))) return;
-      try{ await deleteDoc(doc(db,"assignments",b.dataset.deleteAssignment)); toast("Assignment deleted"); }
+      const a = assignments.find(x=>x.id===b.dataset.deleteAssignment);
+      try{
+        await deleteDoc(doc(db,"assignments",b.dataset.deleteAssignment));
+        logActivity("assignment_deleted", `Deleted assignment "${a?.name||"—"}"`, b.dataset.deleteAssignment);
+        toast("Assignment deleted");
+      }
       catch(err){ toast("Couldn't delete assignment"); }
     }));
   }
 }
 
 function openAssignmentForm(existing){
-  const isEdit = !!existing;
   const root = document.getElementById("modal-root");
-  // quotas: { teacherEmail: { chapterCode: targetCount } } -- built up
-  // interactively, one teacher at a time, rather than typing a total per
-  // chapter and auto-splitting it (the old flow, found confusing).
-  let quotas = existing?.quotas ? JSON.parse(JSON.stringify(existing.quotas)) : {};
-  let currentTeacherEmail = existing?.teacherEmails?.[0] || allTeachers[0]?.email || "";
+  if(allTeachers.length===0){
+    root.innerHTML = `<div class="overlay" id="ov"><div class="drawer wide">
+      <div class="drawer-head"><h2>New workload assignment</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      ${emptyState("No teacher accounts found yet — add teachers from Manage Teachers first.")}
+    </div></div>`;
+    document.getElementById("close-form").addEventListener("click", closeModal);
+    document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+    return;
+  }
+  // A drag-and-drop board: one column per teacher plus an "Unassigned"
+  // pool, per contest level. Every chapter card lives in exactly one
+  // column at a time, so the same chapter can never end up with two
+  // teachers -- duplicate assignment is structurally impossible, not just
+  // validated against. Existing assignment docs (one per level) load into
+  // this same board; every level touched during this session is written
+  // in one Save, so a teacher's whole PMC-4 load and a different
+  // teacher's PMC-5 load can be built and saved together.
+  const existingByLevel = {};
+  assignments.forEach(a=>{ if(!existingByLevel[a.contestLevel]) existingByLevel[a.contestLevel] = a; });
+  if(existing) existingByLevel[existing.contestLevel] = existing;
+  // allQuotas: { level: { teacherEmail: { chapterCode: targetCount } } }
+  const allQuotas = {};
+  LEVELS.forEach(l=>{ allQuotas[l] = existingByLevel[l]?.quotas ? JSON.parse(JSON.stringify(existingByLevel[l].quotas)) : {}; });
+  let activeLevel = existing?.contestLevel || LEVELS[0];
+  const sharedName = existing?.name || "";
+  const sharedDue = existing?.dueDate || "";
+
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
-      <div class="drawer-head"><h2>${isEdit?"Edit":"New"} workload assignment</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC 4 Fall 2026 Prep" value="${escapeHtml(existing?.name||"")}" /></div>
+      <div class="drawer-head"><h2>Workload assignment board</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <p class="hint" style="margin:-4px 0 12px;">Drag a chapter card into a teacher's column to assign it, between columns to reassign it, or back to Unassigned to clear it. Switch levels freely — everything you set across all four is saved together.</p>
       <div class="row2">
-        <div class="field"><label>Contest level</label><select id="as-level">${LEVELS.map(l=>`<option ${existing?.contestLevel===l?"selected":""}>${l}</option>`).join("")}</select></div>
-        <div class="field"><label>Due date <span class="hint">(optional)</span></label><input type="date" id="as-due" value="${existing?.dueDate||""}" /></div>
+        <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC Fall 2026 Prep" value="${escapeHtml(sharedName)}" /></div>
+        <div class="field"><label>Due date <span class="hint">(optional)</span></label><input type="date" id="as-due" value="${escapeHtml(sharedDue)}" /></div>
       </div>
-      <div class="section-label">Pick a teacher, then click a chapter to assign it to them</div>
-      <select id="as-teacher-select">${allTeachers.map(t=>`<option value="${t.email}" ${currentTeacherEmail===t.email?"selected":""}>${escapeHtml(t.name||t.email)}</option>`).join("") || `<option value="">No teachers found</option>`}</select>
-      <div id="as-chapters" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;"></div>
-      <div class="section-label">Summary — who's assigned what</div>
-      <div id="as-summary"></div>
-      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:14px;">${isEdit?"Save changes":"Create assignment"}</button>
+      <div class="level-tabs" id="as-level-tabs">${LEVELS.map(l=>`<button type="button" class="${l===activeLevel?"active":""}" data-level="${l}">${l}</button>`).join("")}</div>
+      <div class="kanban-board" id="as-board"></div>
+      <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:16px;">Save all assignments</button>
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
 
-  function renderChapters(){
-    const level = document.getElementById("as-level").value;
-    const chapters = chaptersForLevel(level);
-    const mine = quotas[currentTeacherEmail] || {};
-    document.getElementById("as-chapters").innerHTML = chapters.length===0 ? `<div class="hint">No chapters for this level.</div>` : chapters.map(c=>{
-      const val = mine[c.code] || 0;
-      return `<div class="pill ${val>0?"role-admin":"role-teacher"}" style="display:inline-flex; align-items:center; gap:6px; padding:5px 5px 5px 10px; cursor:default;">
-        <span data-toggle-chapter="${c.code}" style="cursor:pointer;" title="Click to ${val>0?"unassign":"assign"}">${c.code} — ${escapeHtml(c.title)}</span>
-        ${val>0 ? `<input type="number" min="1" class="as-chapter-count" data-chapter="${c.code}" value="${val}" style="width:50px; padding:2px 4px;" />` : ""}
-      </div>`;
-    }).join("");
-    document.querySelectorAll("[data-toggle-chapter]").forEach(el=>el.addEventListener("click", ()=>{
-      const code = el.dataset.toggleChapter;
-      quotas[currentTeacherEmail] = quotas[currentTeacherEmail] || {};
-      if(quotas[currentTeacherEmail][code]) delete quotas[currentTeacherEmail][code];
-      else quotas[currentTeacherEmail][code] = 5;
-      renderChapters(); renderSummary();
-    }));
-    document.querySelectorAll(".as-chapter-count").forEach(el=>el.addEventListener("input", e=>{
-      quotas[currentTeacherEmail][el.dataset.chapter] = parseInt(e.target.value,10)||0;
-      renderSummary();
+  function chapterCard(c, count){
+    return `<div class="kanban-card" draggable="true" data-chapter="${c.code}">
+      <span class="kanban-card-title">${c.code} — ${escapeHtml(c.title)}</span>
+      ${count!=null ? `<input type="number" min="1" class="kanban-card-count" data-chapter-count="${c.code}" value="${count}" />` : ""}
+    </div>`;
+  }
+  function renderBoard(){
+    const chapters = chaptersForLevel(activeLevel);
+    const mine = allQuotas[activeLevel];
+    const assignedCodes = new Set(Object.values(mine).flatMap(m=>Object.keys(m)));
+    const pool = chapters.filter(c=>!assignedCodes.has(c.code));
+    const board = document.getElementById("as-board");
+    board.innerHTML = `
+      <div class="kanban-col" data-teacher="">
+        <div class="kanban-col-head">Unassigned <span class="mono">(${pool.length})</span></div>
+        <div class="kanban-cards" data-dropzone="">${pool.map(c=>chapterCard(c,null)).join("") || `<div class="kanban-empty">All chapters assigned</div>`}</div>
+      </div>
+      ${allTeachers.map(t=>{
+        const m = mine[t.email] || {};
+        const cards = Object.keys(m).map(code=>{ const c = chapterByCode(code); return c ? chapterCard(c, m[code]) : ""; }).join("");
+        return `<div class="kanban-col" data-teacher="${t.email}">
+          <div class="kanban-col-head">${escapeHtml(t.name||t.email)} <span class="mono">(${Object.keys(m).length})</span></div>
+          <div class="kanban-cards" data-dropzone="${t.email}">${cards || `<div class="kanban-empty">Drop a chapter here</div>`}</div>
+        </div>`;
+      }).join("")}
+    `;
+    let draggedCode = null;
+    board.querySelectorAll("[data-chapter]").forEach(card=>{
+      card.addEventListener("dragstart", ()=>{ draggedCode = card.dataset.chapter; card.classList.add("dragging"); });
+      card.addEventListener("dragend", ()=>card.classList.remove("dragging"));
+    });
+    board.querySelectorAll("[data-dropzone]").forEach(zone=>{
+      zone.addEventListener("dragover", e=>{ e.preventDefault(); zone.classList.add("drag-over"); });
+      zone.addEventListener("dragleave", ()=>zone.classList.remove("drag-over"));
+      zone.addEventListener("drop", e=>{
+        e.preventDefault();
+        zone.classList.remove("drag-over");
+        if(!draggedCode) return;
+        const targetTeacher = zone.dataset.dropzone;
+        // Capture its existing count (if any) before removing -- otherwise
+        // dropping a card back into its own column, or into a column it's
+        // already in, would silently reset a custom count back to 5.
+        let prevCount = null;
+        Object.keys(mine).forEach(email=>{
+          if(mine[email][draggedCode]!=null) prevCount = mine[email][draggedCode];
+          delete mine[email][draggedCode];
+        });
+        if(targetTeacher){
+          mine[targetTeacher] = mine[targetTeacher] || {};
+          mine[targetTeacher][draggedCode] = prevCount || 5;
+        }
+        draggedCode = null;
+        renderBoard();
+      });
+    });
+    board.querySelectorAll("[data-chapter-count]").forEach(el=>el.addEventListener("input", e=>{
+      const teacherEmail = el.closest("[data-teacher]").dataset.teacher;
+      mine[teacherEmail][el.dataset.chapterCount] = parseInt(e.target.value,10)||0;
     }));
   }
-  function renderSummary(){
-    const rows = Object.entries(quotas).filter(([,m])=>Object.keys(m).length>0);
-    document.getElementById("as-summary").innerHTML = rows.length===0 ? `<div class="hint">Nothing assigned yet.</div>` : rows.map(([email,m])=>{
-      const t = allTeachers.find(x=>x.email===email);
-      return `<div class="progress-card"><b>${escapeHtml(t?.name||email)}</b><div class="hint" style="margin-top:3px;">${Object.entries(m).map(([c,n])=>`${escapeHtml(c)} (${n})`).join(", ")}</div></div>`;
-    }).join("");
-  }
-  renderChapters();
-  renderSummary();
-  document.getElementById("as-level").addEventListener("change", renderChapters);
-  document.getElementById("as-teacher-select").addEventListener("change", e=>{ currentTeacherEmail = e.target.value; renderChapters(); });
+  renderBoard();
+  document.getElementById("as-level-tabs").addEventListener("click", e=>{
+    const b = e.target.closest("[data-level]"); if(!b) return;
+    activeLevel = b.dataset.level;
+    document.querySelectorAll("#as-level-tabs button").forEach(x=>x.classList.toggle("active", x===b));
+    renderBoard();
+  });
 
   document.getElementById("as-save").addEventListener("click", async ()=>{
     const name = document.getElementById("as-name").value.trim();
-    const level = document.getElementById("as-level").value;
     const dueDate = document.getElementById("as-due").value || null;
-    const cleanQuotas = {};
-    Object.entries(quotas).forEach(([email,m])=>{
-      const filtered = Object.fromEntries(Object.entries(m).filter(([,n])=>n>0));
-      if(Object.keys(filtered).length) cleanQuotas[email] = filtered;
+    const levelsWithWork = LEVELS.filter(l=>{
+      return Object.values(allQuotas[l]).some(m=>Object.values(m).some(n=>n>0));
     });
-    const teacherEmails = Object.keys(cleanQuotas);
-    if(teacherEmails.length===0){ toast("Assign at least one chapter to a teacher"); return; }
-    const unitTotals = {};
-    Object.values(cleanQuotas).forEach(m=>Object.entries(m).forEach(([c,n])=>{ unitTotals[c]=(unitTotals[c]||0)+n; }));
-    const units = Object.entries(unitTotals).map(([unit,target])=>({unit,target}));
-    const body = { name: name || `${level} assignment`, contestLevel: level, units, teacherEmails, quotas: cleanQuotas, dueDate };
+    if(levelsWithWork.length===0){ toast("Assign at least one chapter to a teacher"); return; }
     try{
-      if(isEdit){
-        await updateDoc(doc(db,"assignments",existing.id), body);
-        toast("Assignment updated");
-      } else {
-        await addDoc(collection(db,"assignments"), {
-          ...body, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
-          createdAt: new Date().toISOString()
+      for(const level of levelsWithWork){
+        const cleanQuotas = {};
+        Object.entries(allQuotas[level]).forEach(([email,m])=>{
+          const filtered = Object.fromEntries(Object.entries(m).filter(([,n])=>n>0));
+          if(Object.keys(filtered).length) cleanQuotas[email] = filtered;
         });
-        toast("Assignment created");
+        const teacherEmails = Object.keys(cleanQuotas);
+        const unitTotals = {};
+        Object.values(cleanQuotas).forEach(m=>Object.entries(m).forEach(([c,n])=>{ unitTotals[c]=(unitTotals[c]||0)+n; }));
+        const units = Object.entries(unitTotals).map(([unit,target])=>({unit,target}));
+        const body = { name: name || `${level} assignment`, contestLevel: level, units, teacherEmails, quotas: cleanQuotas, dueDate };
+        const existingDoc = existingByLevel[level];
+        if(existingDoc){
+          await updateDoc(doc(db,"assignments",existingDoc.id), body);
+          logActivity("assignment_updated", `Updated ${level} assignment "${body.name}" (${teacherEmails.length} teacher${teacherEmails.length===1?"":"s"})`, existingDoc.id);
+        } else {
+          const ref = await addDoc(collection(db,"assignments"), {
+            ...body, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+            createdAt: new Date().toISOString()
+          });
+          logActivity("assignment_created", `Created ${level} assignment "${body.name}" (${teacherEmails.length} teacher${teacherEmails.length===1?"":"s"})`, ref.id);
+        }
       }
+      toast("Assignments saved");
       closeModal();
-    }catch(err){ console.error(err); toast("Couldn't save assignment ("+err.code+")"); }
+    }catch(err){ console.error(err); toast("Couldn't save assignments ("+err.code+")"); }
   });
 }
 
@@ -2323,12 +2519,15 @@ function renderAdmin(){
       <thead><tr><th>Question</th><th>Level</th><th>p-value</th><th>Discrimination</th><th>Quality</th><th>Attempts</th></tr></thead>
       <tbody id="stats-tbody"><tr><td colspan="6" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
     </table></div>
+    <div class="section-label">Activity log <span class="hint">(admin-only — who did what)</span></div>
+    <div id="activity-log-wrap">${loadingState("Loading activity…")}</div>
   `;
   document.getElementById("stat-q").addEventListener("change", e=>{
     if(e.target.value) renderStatForm(e.target.value);
     else document.getElementById("stat-form-wrap").innerHTML = "";
   });
   loadAllStats();
+  subscribeActivityLog();
   document.getElementById("export-data").addEventListener("click", exportAllData);
   document.getElementById("cx-add-chapter").addEventListener("click", async ()=>{
     const bookId = document.getElementById("cx-book").value;
@@ -2338,6 +2537,7 @@ function renderAdmin(){
     if(!code || !title){ toast("Enter a chapter code and title"); return; }
     try{
       await addDoc(collection(db,"curriculumExtra"), {type:"chapter", bookId, code, title, subtopics, createdAt:new Date().toISOString(), createdBy:currentUser.email});
+      logActivity("curriculum_added", `Added chapter ${code} — ${title}`, null);
       toast("Chapter added");
     }catch(err){ console.error(err); toast("Couldn't add chapter ("+err.code+")"); }
   });
@@ -2349,13 +2549,17 @@ function renderAdmin(){
     const bookId = "custom-"+bookName.toLowerCase().replace(/[^a-z0-9]+/g,"-").slice(0,30)+"-"+Date.now();
     try{
       await addDoc(collection(db,"curriculumExtra"), {type:"book", bookId, bookName, levels, age:"", chapters:[], createdAt:new Date().toISOString(), createdBy:currentUser.email});
+      logActivity("curriculum_added", `Added book "${bookName}"`, null);
       toast("Book added — now add chapters to it above");
     }catch(err){ console.error(err); toast("Couldn't add book ("+err.code+")"); }
   });
   document.querySelectorAll("[data-delete-curriculum]").forEach(b=>b.addEventListener("click", async ()=>{
     if(!(await confirmDialog("Remove this curriculum entry? Any questions already tagged with it keep their tag, but it won't be pickable anymore.", {danger:true}))) return;
-    try{ await deleteDoc(doc(db,"curriculumExtra",b.dataset.deleteCurriculum)); toast("Removed"); }
-    catch(err){ toast("Couldn't remove entry"); }
+    try{
+      await deleteDoc(doc(db,"curriculumExtra",b.dataset.deleteCurriculum));
+      logActivity("curriculum_removed", `Removed a curriculum entry`, b.dataset.deleteCurriculum);
+      toast("Removed");
+    }catch(err){ toast("Couldn't remove entry"); }
   }));
   document.getElementById("add-teacher-btn").addEventListener("click", addTeacher);
   document.getElementById("gen-password-btn").addEventListener("click", ()=>{
@@ -2373,6 +2577,33 @@ function subscribeTeachers(){
   unsubTeachers = onSnapshot(collection(db,"teachers"), snap=>{
     renderTeachersTable(snap.docs.map(d=>({email:d.id, ...d.data()})));
   }, err=>{ console.error(err); toast("Couldn't load teachers ("+err.code+")"); });
+}
+
+/* ---------------- activity log (admin-only) ---------------- */
+const ACTIVITY_ICON = {
+  question_created:"📝", question_updated:"✏️", question_status_changed:"🔄", question_deleted:"🗑",
+  tag_removed:"🏷️", teacher_added:"➕", teacher_role_changed:"🔁", teacher_removed:"➖",
+  assignment_created:"📋", assignment_updated:"📋", assignment_deleted:"🗑",
+  curriculum_added:"📚", curriculum_removed:"📚",
+};
+function subscribeActivityLog(){
+  if(unsubActivityLog) return;
+  const q = query(collection(db,"activityLog"), orderBy("createdAt","desc"), limit(150));
+  unsubActivityLog = onSnapshot(q, snap=>{
+    activityLogEntries = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderActivityLog();
+  }, err=>{ console.error(err); });
+}
+function renderActivityLog(){
+  const wrap = document.getElementById("activity-log-wrap");
+  if(!wrap) return;
+  wrap.innerHTML = activityLogEntries.length===0 ? emptyState("No activity recorded yet.") :
+    `<div class="activity-log">${activityLogEntries.map(a=>`
+      <div class="activity-row">
+        <span class="activity-icon">${ACTIVITY_ICON[a.type]||"•"}</span>
+        <span class="activity-summary">${escapeHtml(a.summary)}</span>
+        <span class="activity-meta mono">${escapeHtml(a.actorName||a.actorEmail||"—")} · ${fmtDate(a.createdAt)}</span>
+      </div>`).join("")}</div>`;
 }
 
 const ROLE_LABEL = {teacher:"Teacher", qb_lead:"QB Lead", admin:"Admin"};
@@ -2425,6 +2656,7 @@ async function addTeacher(){
     await setDoc(doc(db,"teachers",email), {
       role, name: name || null, addedBy: currentUser.email, addedAt: new Date().toISOString()
     });
+    logActivity("teacher_added", `Created ${ROLE_LABEL[role]||role} account for ${email}`, email);
     toast("Account created for "+email);
     nameInput.value = ""; emailInput.value = ""; passwordInput.value = "";
   }catch(err){
@@ -2446,6 +2678,7 @@ async function setTeacherRole(email, newRole, selectEl){
   }
   try{
     await setDoc(doc(db,"teachers",email), {role:newRole}, {merge:true});
+    logActivity("teacher_role_changed", `Set ${email}'s role to ${ROLE_LABEL[newRole]}`, email);
     toast(`Role updated to ${ROLE_LABEL[newRole]}`);
     // Own role/session state is only set once at sign-in -- refresh it
     // immediately on self-change so admin-only UI doesn't keep showing
@@ -2470,6 +2703,7 @@ async function removeTeacher(email){
   if(!(await confirmDialog(self ? "This is your own account — removing it will revoke your own access immediately. Continue?" : `Remove access for ${email}?`, {danger:true}))) return;
   try{
     await deleteDoc(doc(db,"teachers",email));
+    logActivity("teacher_removed", `Removed access for ${email}`, email);
     toast("Access removed");
     if(self) checkTeacherStatus();
   }catch(err){ console.error(err); toast("Couldn't remove teacher ("+err.code+")"); }

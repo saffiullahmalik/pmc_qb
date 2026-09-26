@@ -60,26 +60,38 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Append-only audit trail (Admin tab's Activity Log). Any signed-in
+    // teacher can write an entry about an action they just took; only
+    // admins can read the trail back -- it's an accountability tool for
+    // admins, not a feed for every teacher (see the separate "Recently
+    // posted" panel on the Bank tab for that).
+    match /activityLog/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isTeacher();
+      allow update, delete: if false;
+    }
+
     match /questions/{questionId} {
       allow read: if isTeacher();
       // Setting a question's status to "finalized" (locking it) is
       // restricted to QB Leads/admins.
       allow create: if isTeacher() &&
         (request.resource.data.status != "finalized" || isQBLeadOrAdmin());
-      // Tagging a question with contest usage (usedIn) is usage tracking,
-      // not content editing — any teacher may do this even on a locked
-      // question, since building a contest from locked questions is an
-      // everyday, non-admin workflow (see Contests tab).
-      function isUsedInOnlyChange() {
+      // Tagging a question with contest usage (usedIn) or liking it is
+      // usage/engagement tracking, not content editing — any teacher may do
+      // this even on a locked question, since building a contest from locked
+      // questions (Contests tab) and liking a locked question are both
+      // everyday, non-admin actions.
+      function isMetadataOnlyChange() {
         return request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(["usedIn", "updatedAt"]);
+          .hasOnly(["usedIn", "updatedAt", "likes"]);
       }
       // Once a question IS locked, only an admin may touch it further,
       // except a QB Lead may still unlock it (move it back off "finalized")
       // — matches the app's lock model: a QB Lead can lock/unlock, but
       // can't edit content while it stays locked; admin can always edit.
       allow update: if isTeacher() && (
-        isUsedInOnlyChange() ||
+        isMetadataOnlyChange() ||
         (resource.data.status != "finalized"
           ? (request.resource.data.status != "finalized" || isQBLeadOrAdmin())
           : (isAdmin() || (isQBLeadOrAdmin() && request.resource.data.status != "finalized")))
