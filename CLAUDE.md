@@ -51,6 +51,14 @@ questions/{questionId}
   -- enforced client-side in openForm()'s save validation as of Sept 2026),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
   difficulty (medium|hard|very_hard), unit (chapter code, e.g. "B3-C1"), subtopic,
+  skills: [skillName, ...],   -- "skill tested" -- the transferable problem-
+  -- solving technique (e.g. "Pattern Recognition", "Pigeonhole Principle"),
+  -- distinct from unit/subtopic (content topic). Available list = a
+  -- hardcoded DEFAULT_SKILLS seed (researched against how AMC 8/MATHCOUNTS
+  -- categorize problems for this age band) unioned with every skill
+  -- already used across questions (allSkills() in index.html) -- any
+  -- teacher can add a new one from the editor, no admin step, no separate
+  -- Firestore collection.
   usedIn: [contest name, ...],   -- NOTE: `uploadedToQuilgo` (bool) is deprecated/removed
   -- from the UI — Quilgo upload status now lives on contests/{id}.uploadStatus
   -- instead (see below), since "uploaded" only makes sense per contest paper.
