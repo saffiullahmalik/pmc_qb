@@ -1875,12 +1875,13 @@ function openQuestion(id){
 // the downloaded PNG, so what's on screen is exactly what gets exported.
 // Caller is responsible for a MathJax.typesetPromise() pass afterward.
 function questionPreviewHtml(q, config={}){
-  const {includeOptions=true, includeAnswer=false} = config;
+  const {includeQuestion=true, includeOptions=true, includeAnswer=false} = config;
   const opts = getQuestionOptions(q);
   const correctId = getCorrectOptionId(q);
   const correctIdx = opts.findIndex(o=>o.id===correctId);
   const correctOpt = opts[correctIdx];
   return `
+    ${includeQuestion ? `
     <div class="question-container">
       <div class="q-text-row">
         <div class="q-lang-box english"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
@@ -1888,7 +1889,7 @@ function questionPreviewHtml(q, config={}){
       </div>
       ${q.commonEquation ? `<div class="common-equation">$$${escapeHtml(q.commonEquation)}$$</div>` : ""}
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
-    </div>
+    </div>` : ""}
     ${includeOptions ? `
     <div class="question-container">
       <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
@@ -1902,17 +1903,22 @@ function questionPreviewHtml(q, config={}){
       ${q.solutionEn ? `<div style="margin-top:6px;">${renderRichText(escapeHtml(q.solutionEn))}</div>` : ""}
     </div>` : ""}`;
 }
-// Some downloads want just the bare question (e.g. a flash-card image),
-// some want it with options, some want the answer/solution baked in too --
-// ask once via a small popover instead of always producing the same thing.
-function openDownloadOptionsPopup(q){
+// Some downloads want just the bare question (e.g. a flash-card image, or
+// Quilgo's separate question/options upload fields), some want it with
+// options, some want the answer/solution baked in too -- ask once via a
+// small popover instead of always producing the same fixed image.
+// showAnswerOption=false hides the answer toggle entirely (used from the
+// Quilgo tab, where accidentally baking the answer into an exam-facing
+// image would be a real problem, not just an unwanted default).
+function openDownloadOptionsPopup(q, {showAnswerOption=true}={}){
   const root = document.getElementById("confirm-root");
   root.innerHTML = `
     <div class="overlay" id="dl-opts-ov" style="z-index:210;">
       <div class="gate-card" style="width:min(360px,92vw); text-align:left;">
         <h2 style="margin-top:0; font-size:15px;">Download as image</h2>
+        <label style="display:flex; align-items:center; gap:8px; font-weight:400; margin-bottom:10px;"><input type="checkbox" id="dl-opt-question" checked/> Include question</label>
         <label style="display:flex; align-items:center; gap:8px; font-weight:400; margin-bottom:10px;"><input type="checkbox" id="dl-opt-options" checked/> Include options</label>
-        <label style="display:flex; align-items:center; gap:8px; font-weight:400; margin-bottom:18px;"><input type="checkbox" id="dl-opt-answer"/> Include answer / solution</label>
+        ${showAnswerOption ? `<label style="display:flex; align-items:center; gap:8px; font-weight:400; margin-bottom:18px;"><input type="checkbox" id="dl-opt-answer"/> Include answer / solution</label>` : `<p class="hint" style="margin:0 0 18px;">Question and options can be downloaded separately or together — no answer key here, this is what goes to students.</p>`}
         <div style="display:flex; gap:8px;">
           <button class="btn ghost" id="dl-opts-cancel" style="flex:1; justify-content:center;">Cancel</button>
           <button class="btn primary" id="dl-opts-go" style="flex:1; justify-content:center;">Download</button>
@@ -1923,13 +1929,15 @@ function openDownloadOptionsPopup(q){
   document.getElementById("dl-opts-cancel").addEventListener("click", close);
   document.getElementById("dl-opts-ov").addEventListener("click", e=>{ if(e.target.id==="dl-opts-ov") close(); });
   document.getElementById("dl-opts-go").addEventListener("click", ()=>{
+    const includeQuestion = document.getElementById("dl-opt-question").checked;
     const includeOptions = document.getElementById("dl-opt-options").checked;
-    const includeAnswer = document.getElementById("dl-opt-answer").checked;
+    const includeAnswer = showAnswerOption && document.getElementById("dl-opt-answer").checked;
+    if(!includeQuestion && !includeOptions){ toast("Pick at least one of question or options"); return; }
     close();
-    downloadQuestionImage(q, {includeOptions, includeAnswer});
+    downloadQuestionImage(q, {includeQuestion, includeOptions, includeAnswer});
   });
 }
-async function downloadQuestionImage(q, config={includeOptions:true, includeAnswer:false}){
+async function downloadQuestionImage(q, config={includeQuestion:true, includeOptions:true, includeAnswer:false}){
   if(!window.html2canvas){ toast("Still loading — try again in a second"); return; }
   const node = document.createElement("div");
   node.style.cssText = "position:fixed; left:-9999px; top:0; width:800px; background:#fff; color:#161b19; padding:16px;";
@@ -1938,8 +1946,13 @@ async function downloadQuestionImage(q, config={includeOptions:true, includeAnsw
   if(window.MathJax?.typesetPromise) await window.MathJax.typesetPromise([node]).catch(()=>{});
   try{
     const canvas = await window.html2canvas(node, {scale:2, backgroundColor:"#ffffff"});
+    // Suffix the filename with what's actually in it -- downloading the
+    // question and options separately shouldn't have both save over the
+    // same "question_name.png" and silently clobber each other.
+    const part = config.includeQuestion && config.includeOptions ? "" :
+      config.includeQuestion ? "_question" : config.includeOptions ? "_options" : "";
     const a = document.createElement("a");
-    a.download = (q.titleEn||"question").replace(/[^a-z0-9]+/gi,"_").toLowerCase()+".png";
+    a.download = (q.titleEn||"question").replace(/[^a-z0-9]+/gi,"_").toLowerCase()+part+(config.includeAnswer?"_answer":"")+".png";
     a.href = canvas.toDataURL("image/png");
     a.click();
   }catch(err){ console.error(err); toast("Couldn't generate image"); }
@@ -1992,7 +2005,7 @@ function renderDrawerBody(){
         const locked = s.v==="finalized" && !canFinalize;
         return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only QB Leads or Admins can lock a question"`:""}>${s.l}</button>`;
       }).join("")}
-      <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image</button>
+      <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image…</button>
       ${isLocked
         ? `<span class="btn small ghost" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it by setting status back to In Review">🔒 Locked</span>`
         : `<button class="btn small ghost" id="edit-q">Edit question</button>`}
@@ -2803,7 +2816,7 @@ function renderQuilgoBody(){
         <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
         ${info ? `<div class="hint">Uploaded by <b>${escapeHtml(info.uploadedByName||"—")}</b> · ${fmtDate(info.uploadedAt)}</div>` : ""}
       </div>
-      <button class="btn small" data-dl="${q.id}">Download image</button>
+      <button class="btn small" data-dl="${q.id}">Download image…</button>
       ${info ? `<button class="btn small" data-undo="${q.id}">Undo</button>` : `<button class="btn small primary" data-mark="${q.id}">Mark uploaded</button>`}
     </div>`;
   };
@@ -2823,7 +2836,7 @@ function renderQuilgoBody(){
     catch(err){ toast("Couldn't update contest"); }
   });
   body.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{
-    const q = questions.find(x=>x.id===b.dataset.dl); if(q) downloadQuestionImage(q);
+    const q = questions.find(x=>x.id===b.dataset.dl); if(q) openDownloadOptionsPopup(q, {showAnswerOption:false});
   }));
   body.querySelectorAll("[data-mark]").forEach(b=>b.addEventListener("click", async ()=>{
     try{
