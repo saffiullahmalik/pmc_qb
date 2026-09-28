@@ -47,6 +47,11 @@ questions/{questionId}
   options: [{id, text, image}]   -- image is a compressed data-URL string or null
   correctOptionId,                -- id of the option in `options` that's correct
   graphicImage (data-URL or null), graphicImageWidth (px, teacher-adjustable), graphicNote (free text),
+  commonEquation (free text, raw LaTeX with no $ delimiters -- auto-wrapped
+  -- in $$...$$ at render time), shown once below both English and Urdu,
+  -- the same "shared, not per-language" slot the figure already occupies.
+  -- Rendered in the editor's live preview, the drawer/download's shared
+  -- questionPreviewHtml(), and the Contests print view.
   solutionEn (free text, feeds the print engine's Solution Manual -- REQUIRED,
   -- enforced client-side in openForm()'s save validation as of Sept 2026),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),

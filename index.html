@@ -339,6 +339,7 @@
   .q-lang-box.urdu{ font-family:'Noto Nastaliq Urdu', serif; direction:rtl; text-align:right; font-size:1.05rem; }
   .q-lang-box .box-label{ display:block; font-size:11px; font-weight:700; color:#0f6b5c; margin-bottom:4px; }
   .print-graphic{ text-align:center; margin:10px 0; }
+  .common-equation{ text-align:center; margin:10px 0; font-size:1.15em; }
   .print-options-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-top:8px; }
   .print-options-grid.cols-1{ grid-template-columns:1fr; }
   .print-options-grid.cols-3{ grid-template-columns:repeat(3,1fr); }
@@ -1172,6 +1173,17 @@ function openForm(existing){
   // chapter to the teacher's first assigned chapter that isn't done yet,
   // instead of whatever the Book select's first option happens to be.
   const suggestedUnit = !isEdit ? firstIncompleteAssignedUnit() : null;
+  // Plain (no $ delimiters) equation snippets for the Common equation field,
+  // which auto-wraps its whole value in $$...$$ at render time -- declared
+  // up front since the template below (built immediately) references it,
+  // same reasoning as IMAGE_SIZE_BLOCK_BYTES above: a const referenced
+  // before its own declaration line throws.
+  const EQUATION_SNIPPETS_PLAIN = [
+    {label:"a/b", insert:"\\frac{a}{b}"}, {label:"√x", insert:"\\sqrt{x}"},
+    {label:"xⁿ", insert:"x^{n}"}, {label:"x₁", insert:"x_{1}"},
+    {label:"π", insert:"\\pi"}, {label:"×", insert:"\\times"}, {label:"÷", insert:"\\div"},
+    {label:"≤", insert:"\\leq"}, {label:"≥", insert:"\\geq"},
+  ];
 
   try{
   root.innerHTML = `
@@ -1245,6 +1257,14 @@ function openForm(existing){
                 The Live Preview on the last step shows exactly how it will render.
               </div>
             </details>
+            <div class="field">
+              <label>Common equation <span class="hint">(optional — a standalone equation shown once below both English and Urdu, the same way a figure is shared between them)</span></label>
+              <textarea name="commonEquation" id="commonEquation-input" rows="2" placeholder="e.g. x^2 + y^2 = r^2 — no need to add $ signs, it's rendered as a display equation automatically">${escapeHtml(existing?.commonEquation||"")}</textarea>
+              <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+                <span class="hint">Insert:</span>
+                ${EQUATION_SNIPPETS_PLAIN.map(s=>`<button type="button" class="btn small mono" data-eq-plain="${escapeHtml(s.insert)}">${s.label}</button>`).join("")}
+              </div>
+            </div>
             <div class="field"><label>Figure / diagram <span class="hint">(optional — upload an image or draw a simple shape figure)</span></label>
               <div id="figure-wrap"></div>
               <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
@@ -1436,6 +1456,11 @@ function openForm(existing){
     ta.dispatchEvent(new Event("input", {bubbles:true}));
   }));
   document.getElementById("eq-insert-btn").addEventListener("click", ()=>{ eqPopover.hidden = !eqPopover.hidden; });
+  document.querySelectorAll("[data-eq-plain]").forEach(b=>b.addEventListener("click", ()=>{
+    const ta = document.getElementById("commonEquation-input");
+    ta.focus();
+    ta.setRangeText(b.dataset.eqPlain, ta.selectionStart, ta.selectionEnd, "end");
+  }));
   function wrapSelection(prefix, suffix){
     const ta = lastFocusedTextarea;
     const start = ta.selectionStart, end = ta.selectionEnd;
@@ -1528,6 +1553,7 @@ function openForm(existing){
     const promptEn = fd.get("promptEn")||"";
     const promptUr = fd.get("promptUr")||"";
     const graphicCaption = fd.get("graphicCaption")||"";
+    const commonEquation = fd.get("commonEquation")||"";
     const solutionEn = fd.get("solutionEn")||"";
     const correctIdx = optionsState.findIndex(o=>o.id===correctOptionId);
     const correctOpt = optionsState[correctIdx];
@@ -1543,6 +1569,7 @@ function openForm(existing){
             <p>${renderRichText(escapeHtml(promptUr))||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
+        ${commonEquation.trim() ? `<div class="common-equation">$$${escapeHtml(commonEquation.trim())}$$</div>` : ""}
         ${graphicImageState ? `<div class="print-graphic" style="text-align:${graphicPositionState};"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" />${graphicCaption?`<div class="hint" style="margin-top:4px;">${escapeHtml(graphicCaption)}</div>`:""}</div>` : ""}
       </div>
       <div class="question-container">
@@ -1600,6 +1627,7 @@ function openForm(existing){
       correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
       graphicPosition: graphicImageState?graphicPositionState:null, optionsLayout: optionsLayoutState,
       graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(), skills: skillsState,
+      commonEquation: fd.get("commonEquation").trim(),
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
@@ -1858,6 +1886,7 @@ function questionPreviewHtml(q, config={}){
         <div class="q-lang-box english"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
         <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
       </div>
+      ${q.commonEquation ? `<div class="common-equation">$$${escapeHtml(q.commonEquation)}$$</div>` : ""}
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
     </div>
     ${includeOptions ? `
@@ -2254,6 +2283,7 @@ function renderPrintView(contestId, opts){
               <p>${renderRichText(escapeHtml(q.promptUr||""))}</p>
             </div>
           </div>
+          ${q.commonEquation ? `<div class="common-equation">$$${escapeHtml(q.commonEquation)}$$</div>` : ""}
           ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
           <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
             ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
