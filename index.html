@@ -90,9 +90,19 @@
   .spinner{ display:inline-block; width:13px; height:13px; border-radius:50%; border:2px solid rgba(255,255,255,.4); border-top-color:currentColor; animation:spin .7s linear infinite; vertical-align:-2px; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
   .filters{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:18px; padding:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+  .filter-chips{ display:flex; flex-wrap:wrap; gap:7px; margin:-10px 0 16px; }
+  .filter-chip{ display:inline-flex; align-items:center; gap:5px; background:var(--accent-soft); color:var(--accent); border:none; border-radius:999px; padding:4px 6px 4px 11px; font-size:12px; font-weight:600; }
+  .filter-chip button{ all:unset; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; font-weight:700; }
+  .filter-chip button:hover{ background:rgba(0,0,0,.08); }
+  .filter-chip.clear-all{ background:var(--surface-2); color:var(--ink-dim); cursor:pointer; padding:4px 12px; }
+  .filter-chip.clear-all:hover{ color:var(--ink); }
   .filters .search{ flex:1 1 180px; min-width:150px; }
   .filters .count{ margin-left:auto; font-size:12px; color:var(--ink-dim); white-space:nowrap; }
-  .pill{ display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; letter-spacing:.01em; }
+  .pill{ display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; letter-spacing:.01em; border:none; }
+  button.pill{ cursor:pointer; }
+  button.pill:hover{ filter:brightness(0.93); }
+  .link-quickfilter{ all:unset; cursor:pointer; }
+  .link-quickfilter:hover{ text-decoration:underline; }
   .pill.level{ background:var(--blue-soft); color:var(--blue); }
   .pill.type{ background:var(--accent-soft); color:var(--accent); }
   .diff-dots{ font-size:7px; letter-spacing:1.5px; margin-left:2px; }
@@ -115,6 +125,7 @@
   .checklist label{ display:flex; align-items:flex-start; gap:7px; font-weight:400; }
   .drawer.wide{ width:min(980px, 100vw); }
   #live-preview{ background:#fff; color:#161b19; border-radius:8px; padding:4px; border:1px solid var(--border); }
+  #drawer-preview{ background:#fff; color:#161b19; border-radius:8px; padding:10px; border:1px solid var(--border); }
   #live-preview .hint{ color:#6b7280; }
   .callout{ background:var(--accent-soft); color:var(--ink); border-left:3px solid var(--accent); padding:8px 11px; border-radius:6px; font-size:12px; line-height:1.5; margin-top:6px; }
   .callout.warn{ background:var(--gold-soft); border-left-color:var(--gold); }
@@ -245,11 +256,12 @@
   .opt-item .k{ font-family:'IBM Plex Mono'; font-size:11px; color:var(--ink-dim); width:20px; height:20px; border-radius:50%; background:var(--surface); display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
   .opt-item.correct .k{ background:var(--accent); color:var(--accent-ink); }
   .status-track{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;}
-  .comment{ padding:10px 0; border-bottom:1px solid var(--border); }
-  .comment:last-child{ border-bottom:none; }
-  .comment .who{ font-size:12px; font-weight:600; }
-  .comment .when{ font-size:11px; color:var(--ink-dim); font-weight:400; }
-  .comment .txt{ font-size:13px; margin-top:3px; }
+  .comment-card{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:10px 12px; margin-bottom:8px; }
+  .comment-head{ display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  .comment-avatar{ width:22px; height:22px; border-radius:50%; background:var(--accent-soft); color:var(--accent); font-family:'Lexend'; font-weight:700; font-size:11px; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+  .comment-head b{ font-size:12.5px; }
+  .comment-head .hint{ margin-left:auto; }
+  .comment-txt{ font-size:13px; line-height:1.5; }
   .edit-log{ font-size:11.5px; color:var(--ink-dim); }
   .edit-log li{ margin-bottom:3px; }
   .rate-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -596,7 +608,8 @@ let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
-let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"" };
+let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false };
+let bankVisibleCount = 30;
 let quilgoContestId = "";
 let workloadExpandedLevel = null;
 let quilgoSearch = "";
@@ -896,22 +909,48 @@ function renderTab(){
 
 /* ================= BANK TAB ================= */
 function filteredQuestions(){
-  return questions.filter(q=>{
+  const list = questions.filter(q=>{
     if(filters.level && !(Array.isArray(q.level) && q.level.includes(filters.level))) return false;
     if(filters.qtype && q.qType!==filters.qtype) return false;
     if(filters.diff && q.difficulty!==filters.diff) return false;
     if(filters.status && q.status!==filters.status) return false;
     if(filters.unit && q.unit!==filters.unit) return false;
+    if(filters.mine && q.authorEmail!==currentUser.email) return false;
     if(filters.q){
       const hay = ((q.titleEn||"")+" "+(q.promptEn||"")+" "+(q.subtopic||"")).toLowerCase();
       if(!hay.includes(filters.q.toLowerCase())) return false;
     }
     return true;
   });
+  return sortQuestions(list);
+}
+const DIFFICULTY_ORDER = ["medium","hard","very_hard"];
+function sortQuestions(list){
+  const sorted = list.slice();
+  if(filters.sort==="oldest") sorted.sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
+  else if(filters.sort==="updated") sorted.sort((a,b)=>(b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+  else if(filters.sort==="difficulty") sorted.sort((a,b)=>DIFFICULTY_ORDER.indexOf(b.difficulty)-DIFFICULTY_ORDER.indexOf(a.difficulty));
+  // "newest" needs no re-sort -- `questions` is already subscribed
+  // ordered createdAt desc.
+  return sorted;
 }
 
+const SORT_LABEL = {newest:"Newest first", oldest:"Oldest first", updated:"Recently updated", difficulty:"Hardest first"};
+function activeFilterChips(){
+  const chips = [];
+  if(filters.level) chips.push({k:"level", l:`Level: ${filters.level}`});
+  if(filters.qtype) chips.push({k:"qtype", l:`Type: ${QTYPES.find(t=>t.v===filters.qtype)?.l||filters.qtype}`});
+  if(filters.diff) chips.push({k:"diff", l:`Difficulty: ${DIFFS.find(d=>d.v===filters.diff)?.l||filters.diff}`});
+  if(filters.status) chips.push({k:"status", l:`Status: ${STATUSES.find(s=>s.v===filters.status)?.l||filters.status}`});
+  if(filters.book) chips.push({k:"book", l:`Book: ${allCurriculum().find(b=>b.bookId===filters.book)?.book||filters.book}`});
+  if(filters.unit) chips.push({k:"unit", l:`Chapter: ${chapterLabel(filters.unit)}`});
+  if(filters.mine) chips.push({k:"mine", l:"Only mine"});
+  if(filters.q) chips.push({k:"q", l:`Search: "${filters.q}"`});
+  return chips;
+}
 function renderBank(){
   const list = filteredQuestions();
+  const chips = activeFilterChips();
   const main = document.getElementById("main");
   main.innerHTML = `
     <div class="pagehead"><h1>Question Bank</h1><button class="btn primary" id="new-q">+ New Question</button></div>
@@ -924,20 +963,40 @@ function renderBank(){
       <select id="f-status"><option value="">All statuses</option>${STATUSES.map(t=>`<option value="${t.v}" ${filters.status===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
       <select id="f-book">${bookSelectOptions(filters.book)}</select>
       <select id="f-unit">${chapterSelectOptions(filters.book, filters.unit, true)}</select>
+      <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
+      <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;"><input type="checkbox" id="f-mine" ${filters.mine?"checked":""}/> Only mine</label>
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
     </div>
-    ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div>`}
+    ${chips.length ? `<div class="filter-chips">
+      ${chips.map(c=>`<span class="filter-chip">${escapeHtml(c.l)} <button type="button" data-clear-chip="${c.k}" aria-label="Remove filter">×</button></span>`).join("")}
+      <button type="button" class="filter-chip clear-all" id="clear-all-filters">Clear all</button>
+    </div>` : ""}
+    ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div><div id="load-more-wrap"></div>`}
   `;
   document.getElementById("new-q").addEventListener("click", ()=>openForm(null));
-  ["level","type","diff","status","unit"].forEach(k=>{
-    document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; renderBank(); });
+  ["level","type","diff","status","unit","sort"].forEach(k=>{
+    document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
-  document.getElementById("f-book").addEventListener("change", e=>{ filters.book = e.target.value; filters.unit = ""; renderBank(); });
-  document.getElementById("f-q").addEventListener("input", e=>{ filters.q = e.target.value; renderBank(); });
+  document.getElementById("f-book").addEventListener("change", e=>{ filters.book = e.target.value; filters.unit = ""; bankVisibleCount = 30; renderBank(); });
+  document.getElementById("f-q").addEventListener("input", e=>{ filters.q = e.target.value; bankVisibleCount = 30; renderBank(); });
+  document.getElementById("f-mine").addEventListener("change", e=>{ filters.mine = e.target.checked; bankVisibleCount = 30; renderBank(); });
+  document.querySelectorAll("[data-clear-chip]").forEach(b=>b.addEventListener("click", ()=>{
+    const k = b.dataset.clearChip;
+    filters[k] = (k==="mine") ? false : "";
+    bankVisibleCount = 30; renderBank();
+  }));
+  document.getElementById("clear-all-filters")?.addEventListener("click", ()=>{
+    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false };
+    bankVisibleCount = 30; renderBank();
+  });
   if(list.length){
     const grid = document.getElementById("q-grid");
-    grid.innerHTML = list.map(cardHtml).join("");
+    const visible = list.slice(0, bankVisibleCount);
+    grid.innerHTML = visible.map(cardHtml).join("");
+    document.getElementById("load-more-wrap").innerHTML = list.length>visible.length
+      ? `<button type="button" class="btn" id="load-more" style="width:100%; justify-content:center; margin-top:10px;">Load more (${list.length-visible.length} remaining)</button>` : "";
+    document.getElementById("load-more")?.addEventListener("click", ()=>{ bankVisibleCount += 30; renderBank(); });
     grid.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); openQuestion(b.dataset.view); }));
     grid.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); const q = questions.find(x=>x.id===b.dataset.edit); if(q) openForm(q); }));
     grid.querySelectorAll("[data-delete]").forEach(b=>b.addEventListener("click", async e=>{
@@ -947,6 +1006,11 @@ function renderBank(){
       try{ await deleteDoc(doc(db,"questions",q.id)); logActivity("question_deleted", `Deleted "${q.titleEn||"Untitled"}"`, q.id); toast("Question deleted"); }
       catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
     }));
+    grid.querySelectorAll("[data-quickfilter-level]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.level = b.dataset.quickfilterLevel; bankVisibleCount = 30; renderBank(); }));
+    grid.querySelectorAll("[data-quickfilter-qtype]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.qtype = b.dataset.quickfilterQtype; bankVisibleCount = 30; renderBank(); }));
+    grid.querySelectorAll("[data-quickfilter-diff]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.diff = b.dataset.quickfilterDiff; bankVisibleCount = 30; renderBank(); }));
+    grid.querySelectorAll("[data-quickfilter-status]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.status = b.dataset.quickfilterStatus; bankVisibleCount = 30; renderBank(); }));
+    grid.querySelectorAll("[data-quickfilter-unit]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.unit = b.dataset.quickfilterUnit; bankVisibleCount = 30; renderBank(); }));
     grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
   }
   animateProgressBars();
@@ -1025,15 +1089,15 @@ function cardHtml(q){
       <div class="q-row-thumb">${q.graphicImage ? `<img src="${q.graphicImage}" alt="" />` : ICON_EMPTY}</div>
       <div class="q-row-body">
         <div class="tags">
-          ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
-          <span class="pill type">${typeLbl}</span>
-          <span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span>
-          <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+          ${(q.level||[]).map(l=>`<button type="button" class="pill level" data-quickfilter-level="${l}" title="Filter by ${l}">${l}</button>`).join("")}
+          <button type="button" class="pill type" data-quickfilter-qtype="${q.qType}" title="Filter by type">${typeLbl}</button>
+          <button type="button" class="pill diff-${q.difficulty}" data-quickfilter-diff="${q.difficulty}" title="Filter by difficulty">${diffLbl}${difficultyDots(q.difficulty)}</button>
+          <button type="button" class="pill status-${q.status}" data-quickfilter-status="${q.status}" title="Filter by status">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</button>
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>
         <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
         <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
-        <div class="meta"><span>${escapeHtml(q.authorName||"—")} · ${escapeHtml(chapterLabel(q.unit))} · <span class="mono">♥ ${(q.likes||[]).length}</span></span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
+        <div class="meta"><span>${escapeHtml(q.authorName||"—")} · <button type="button" class="link-quickfilter" data-quickfilter-unit="${q.unit}" title="Filter by chapter">${escapeHtml(chapterLabel(q.unit))}</button> · <span class="mono">♥ ${(q.likes||[]).length}</span></span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
       </div>
       <div class="q-row-actions">
         <button class="btn small" data-view="${q.id}" title="View" aria-label="View question">👁 View</button>
@@ -1694,13 +1758,14 @@ function openQuestion(id){
   unsubRatings = onSnapshot(ratingsQ, snap=>{ _ratings = snap.docs.map(d=>({id:d.id,...d.data()})); if(openQuestionId===id) renderDrawerBody(); }, console.error);
 }
 
-async function downloadQuestionImage(q){
-  if(!window.html2canvas){ toast("Still loading — try again in a second"); return; }
+// The one "final preview" box -- question text (English + Urdu), figure,
+// options with the correct one marked -- shared by the drawer's View and
+// the downloaded PNG, so what's on screen is exactly what gets exported.
+// Caller is responsible for a MathJax.typesetPromise() pass afterward.
+function questionPreviewHtml(q){
   const opts = getQuestionOptions(q);
   const correctId = getCorrectOptionId(q);
-  const node = document.createElement("div");
-  node.style.cssText = "position:fixed; left:-9999px; top:0; width:800px; background:#fff; color:#161b19; padding:16px;";
-  node.innerHTML = `
+  return `
     <div class="question-container">
       <div class="q-text-row">
         <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
@@ -1711,6 +1776,12 @@ async function downloadQuestionImage(q){
         ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
       </div>
     </div>`;
+}
+async function downloadQuestionImage(q){
+  if(!window.html2canvas){ toast("Still loading — try again in a second"); return; }
+  const node = document.createElement("div");
+  node.style.cssText = "position:fixed; left:-9999px; top:0; width:800px; background:#fff; color:#161b19; padding:16px;";
+  node.innerHTML = questionPreviewHtml(q);
   document.body.appendChild(node);
   if(window.MathJax?.typesetPromise) await window.MathJax.typesetPromise([node]).catch(()=>{});
   try{
@@ -1759,11 +1830,8 @@ function renderDrawerBody(){
       <button class="btn ghost small" id="close-form">Close</button>
     </div>
     <div class="edit-log" style="margin-top:6px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
-    <div class="section-label">Prompt (English)</div>
-    <div class="prompt-box">${renderRichText(escapeHtml(q.promptEn||""))}</div>
-    ${q.graphicImage ? `<div style="text-align:${q.graphicPosition||"center"}; margin:10px 0;"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:8px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
-    <div class="opt-list" style="${q.optionsLayout===2?"display:grid; grid-template-columns:1fr 1fr; gap:6px;":""}">${getQuestionOptions(q).map((o,i)=>{ const isCorrect = o.id===getCorrectOptionId(q); return `<div class="opt-item ${isCorrect?"correct":""}"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))} ${isCorrect?"✓":""}</div>`; }).join("")}</div>
-    ${q.promptUr ? `<div class="section-label">اردو</div><div class="prompt-box ur">${renderRichText(escapeHtml(q.promptUr))}</div>` : ""}
+    <div class="section-label">Final preview <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">— exactly what "Download as image" produces</span></div>
+    <div id="drawer-preview">${questionPreviewHtml(q)}</div>
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box">${escapeHtml(q.solutionEn)}</div>` : ""}
     <div class="section-label">Status</div>
     <div class="status-track">
@@ -1784,12 +1852,18 @@ function renderDrawerBody(){
       <span class="mono" style="font-size:12px; color:var(--ink-dim);">${avg? avg.toFixed(1)+" avg · "+_ratings.length+" rating"+(_ratings.length===1?"":"s") : "No ratings yet"} ${flags? " · "+flags+" flagged ambiguous":""}</span>
       <label style="display:flex; align-items:center; gap:5px; font-size:12px; margin-left:auto;"><input type="checkbox" id="flag-amb" ${myRating?.ambiguous?"checked":""}/> Flag ambiguous</label>
     </div>
+    ${(q.likes||[]).length ? `<div class="hint" style="margin-top:4px;">Liked by ${(q.likes||[]).map(e=>escapeHtml(allTeachers.find(t=>t.email===e)?.name||e)).join(", ")}</div>` : ""}
     <div class="section-label">Comments (${_comments.length})</div>
-    <div id="comments-list">${_comments.length? _comments.map(c=>`<div class="comment"><span class="who">${escapeHtml(c.authorName)}</span> <span class="when">${fmtDate(c.createdAt)}</span><div class="txt">${escapeHtml(c.text)}</div></div>`).join("") : `<div class="hint">No comments yet — be the first to give feedback.</div>`}</div>
+    <div id="comments-list">${_comments.length? _comments.map(c=>`
+      <div class="comment-card">
+        <div class="comment-head"><span class="comment-avatar">${escapeHtml((c.authorName||"?").trim().charAt(0).toUpperCase())}</span><b>${escapeHtml(c.authorName)}</b><span class="hint mono">${fmtDate(c.createdAt)}</span></div>
+        <div class="comment-txt">${escapeHtml(c.text)}</div>
+      </div>`).join("") : `<div class="hint">No comments yet — be the first to give feedback.</div>`}</div>
     <div class="field" style="margin-top:10px;"><textarea id="new-comment" rows="2" placeholder="Add a comment for other teachers…"></textarea><button class="btn small primary" id="post-comment" style="align-self:flex-start;">Post comment</button></div>
     <div class="section-label">Edit history</div>
     <ul class="edit-log">${(q.editHistory||[]).slice().reverse().map(h=>`<li>${fmtDate(h.ts)} — <b>${escapeHtml(h.by)}</b>: ${escapeHtml(h.note)}</li>`).join("")}</ul>
   `;
+  if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("drawer-preview")]).catch(console.error);
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("edit-q")?.addEventListener("click", ()=>openForm(q));
   document.getElementById("download-img").addEventListener("click", ()=>downloadQuestionImage(q));
