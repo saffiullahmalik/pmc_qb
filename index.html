@@ -1855,7 +1855,7 @@ function questionPreviewHtml(q, config={}){
   return `
     <div class="question-container">
       <div class="q-text-row">
-        <div class="q-lang-box english"><span class="box-label">${escapeHtml(q.titleEn||"Question")}</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
+        <div class="q-lang-box english"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
         <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
       </div>
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
