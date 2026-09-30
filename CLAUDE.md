@@ -92,6 +92,16 @@ questions/{questionId}
 
 contests/{contestId}
   name, headerText, durationMinutes, totalMarks,
+  contestLevel (one of LEVELS), day (number), slot (number)
+    -- added Sept 2026 so a contest represents one paper in the
+    -- category × day × slot grid (e.g. PMC-4, Day 2, Slot 1), and the
+    -- Quilgo tab can find one paper via three cascading selects instead
+    -- of a flat name search. Contests from before this change won't have
+    -- these -- they surface under Quilgo's "Unspecified" bucket, fixed
+    -- via the Contests tab's Edit action (openContestForm(existing), which
+    -- only edits these details, not questionIds -- re-picking questions on
+    -- an existing paper is deliberately not supported, since a paper may
+    -- already be partway through Quilgo upload).
   questionIds: [id, ...]   -- order here is the paper's printed order (drag-and-drop set in the UI)
   uploadStatus: { [questionId]: {uploadedBy, uploadedByName, uploadedAt} }
     -- Quilgo-upload tracking lives HERE, not on the question doc, because

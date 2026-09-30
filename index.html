@@ -640,7 +640,7 @@ let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", 
 let bankVisibleCount = 30;
 let quilgoContestId = "";
 let workloadExpandedLevel = null;
-let quilgoSearch = "";
+let quilgoLevel = "", quilgoDay = "", quilgoSlot = "";
 
 function escapeHtml(s){
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -2101,6 +2101,14 @@ function renderDrawerBody(){
 }
 
 /* ================= CONTESTS TAB ================= */
+// How many of a contest's questions still haven't been marked uploaded to
+// Quilgo -- shared by the Contests table's "Mark complete" gate and the
+// Quilgo tab, so a paper can't be marked done while work remains on it.
+function contestPendingCount(c){
+  const qs = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
+  const uploadStatus = c.uploadStatus || {};
+  return qs.filter(q=>!uploadStatus[q.id]).length;
+}
 function renderContests(){
   const main = document.getElementById("main");
   main.innerHTML = `
@@ -2108,28 +2116,42 @@ function renderContests(){
     <p class="desc">Assemble a paper from locked questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
     ${!dataReady.contests ? loadingState("Loading contests…") : contests.length===0 ? emptyState("No contests created yet.") : `
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Quilgo</th><th></th></tr></thead>
+      <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Quilgo</th><th></th></tr></thead>
       <tbody>
-        ${contests.map(c=>`
+        ${contests.map(c=>{
+          const pending = contestPendingCount(c);
+          return `
         <tr>
+          <td class="mono">${escapeHtml(c.contestLevel||"—")}</td>
+          <td class="mono">${c.day??"—"}</td>
+          <td class="mono">${c.slot??"—"}</td>
           <td>${escapeHtml(c.name)}</td>
           <td class="mono">${fmtDate(c.createdAt)}</td>
           <td class="mono">${(c.questionIds||[]).length}</td>
           <td class="mono">${c.durationMinutes?c.durationMinutes+" min":"—"}</td>
           <td class="mono">${c.totalMarks??"—"}</td>
-          <td>${c.quilgoComplete ? `<span class="pill status-uploaded">Complete</span>` : (isAdminUser?`<button class="btn small" data-mark-complete="${c.id}">Mark complete</button>`:`<span class="hint">Pending</span>`)}</td>
+          <td>${c.quilgoComplete ? `<span class="pill status-uploaded">Complete</span>` : (isAdminUser?`<button class="btn small" data-mark-complete="${c.id}" ${pending>0?`disabled title="${pending} question${pending===1?"":"s"} still pending upload"`:""}>Mark complete</button>`:`<span class="hint">Pending</span>`)}</td>
           <td style="white-space:nowrap;">
+            <button class="btn small" data-edit-contest="${c.id}">Edit</button>
             <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
             ${isAdminUser?`<button class="btn small" style="color:var(--red);" data-delete-contest="${c.id}">Delete</button>`:""}
           </td>
-        </tr>`).join("")}
+        </tr>`;}).join("")}
       </tbody>
     </table></div>`}
   `;
-  document.getElementById("new-contest").addEventListener("click", openContestForm);
+  document.getElementById("new-contest").addEventListener("click", ()=>openContestForm());
+  main.querySelectorAll("[data-edit-contest]").forEach(b=>b.addEventListener("click", ()=>{
+    const c = contests.find(x=>x.id===b.dataset.editContest);
+    if(c) openContestForm(c);
+  }));
   main.querySelectorAll("[data-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.print)));
   main.querySelectorAll("[data-mark-complete]").forEach(b=>b.addEventListener("click", async ()=>{
-    try{ await updateDoc(doc(db,"contests",b.dataset.markComplete), {quilgoComplete:true}); toast("Marked complete"); }
+    try{
+      await updateDoc(doc(db,"contests",b.dataset.markComplete), {quilgoComplete:true});
+      logActivity("contest_quilgo_complete", `Marked Quilgo upload complete for "${contests.find(x=>x.id===b.dataset.markComplete)?.name||"—"}"`, b.dataset.markComplete);
+      toast("Marked complete");
+    }
     catch(err){ toast("Couldn't update contest"); }
   }));
   main.querySelectorAll("[data-delete-contest]").forEach(b=>b.addEventListener("click", async ()=>{
@@ -2138,30 +2160,41 @@ function renderContests(){
     try{
       await deleteDoc(doc(db,"contests",b.dataset.deleteContest));
       if(c) await Promise.all((c.questionIds||[]).map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayRemove(c.name)}).catch(()=>{})));
+      logActivity("contest_deleted", `Deleted contest "${c?.name||"—"}"`, b.dataset.deleteContest);
       toast("Contest deleted");
     }
     catch(err){ toast("Couldn't delete contest"); }
   }));
 }
 
-function openContestForm(){
+function openContestForm(existing){
+  const isEdit = !!existing;
   const root = document.getElementById("modal-root");
   const eligible = questions.filter(q=>q.status==="finalized"||q.status==="uploaded");
-  let selectedOrder = [];
+  let selectedOrder = isEdit ? [...(existing.questionIds||[])] : [];
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
-      <div class="drawer-head"><h2>Create new contest</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <div class="drawer-head"><h2>${isEdit?"Edit contest":"Create new contest"}</h2><button class="btn ghost small" id="close-form">Close</button></div>
       <form id="contest-form">
-        <div class="field"><label>Contest name <span class="hint">(also stamped on each question as a usage tag)</span></label><input type="text" name="name" required placeholder="e.g. PMC Fall 2026 – Round 1 – Day 1 – Slot 1" /></div>
-        <div class="field"><label>Paper header text</label><input type="text" name="headerText" placeholder="e.g. PMC 4 (Fall 2026) — Round 1" /></div>
         <div class="row2">
-          <div class="field"><label>Duration (minutes)</label><input type="number" name="durationMinutes" min="1" placeholder="60" /></div>
-          <div class="field"><label>Total marks</label><input type="number" name="totalMarks" min="1" placeholder="30" /></div>
+          <div class="field"><label>Category</label><select name="contestLevel" id="cf-level">${LEVELS.map(l=>`<option ${existing?.contestLevel===l?"selected":""}>${l}</option>`).join("")}</select></div>
+          <div class="row2" style="grid-template-columns:1fr 1fr;">
+            <div class="field"><label>Day</label><input type="number" name="day" min="1" value="${existing?.day??1}" required /></div>
+            <div class="field"><label>Slot</label><input type="number" name="slot" min="1" value="${existing?.slot??1}" required /></div>
+          </div>
         </div>
+        <div class="field"><label>Contest name <span class="hint">(also stamped on each question as a usage tag)</span></label><input type="text" name="name" required placeholder="e.g. PMC Fall 2026 – Round 1 – Day 1 – Slot 1" value="${escapeHtml(existing?.name||"")}" /></div>
+        <div class="field"><label>Paper header text</label><input type="text" name="headerText" placeholder="e.g. PMC 4 (Fall 2026) — Round 1" value="${escapeHtml(existing?.headerText||"")}" /></div>
+        <div class="row2">
+          <div class="field"><label>Duration (minutes)</label><input type="number" name="durationMinutes" min="1" placeholder="60" value="${existing?.durationMinutes??""}" /></div>
+          <div class="field"><label>Total marks</label><input type="number" name="totalMarks" min="1" placeholder="30" value="${existing?.totalMarks??""}" /></div>
+        </div>
+        ${isEdit ? `
+        <div class="callout">This paper has ${(existing.questionIds||[]).length} question(s) selected. Editing here only changes the paper's details, not which questions are in it — delete and recreate the contest if the question set itself needs to change.</div>
+        ` : `
         <div class="row2" style="align-items:start;">
           <div>
-            <div class="section-label" style="margin-top:0;">Select questions</div>
-            <select id="picker-level" style="margin-bottom:8px;"><option value="">All levels (${eligible.length} locked/uploaded)</option>${LEVELS.map(l=>`<option value="${l}">${l} (${eligible.filter(q=>(q.level||[]).includes(l)).length})</option>`).join("")}</select>
+            <div class="section-label" style="margin-top:0;">Select questions <span class="hint" id="picker-count"></span></div>
             <div id="q-picker" style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;"></div>
           </div>
           <div>
@@ -2171,80 +2204,105 @@ function openContestForm(){
             </div>
           </div>
         </div>
-        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:12px;" ${eligible.length===0?"disabled":""}>Create contest</button>
+        `}
+        <button type="submit" class="btn primary" style="width:100%; justify-content:center; margin-top:12px;" ${(!isEdit && eligible.length===0)?"disabled":""}>${isEdit?"Save changes":"Create contest"}</button>
       </form>
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
 
-  function renderPicker(){
-    const level = document.getElementById("picker-level").value;
-    const list = eligible.filter(q=>!level || (q.level||[]).includes(level));
-    const picker = document.getElementById("q-picker");
-    picker.innerHTML = list.length===0 ? `<div class="empty">No locked or uploaded questions match.</div>` : list.map(q=>{
-      const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
-      return `
-      <label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
-        <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
-        <span style="flex:1; min-width:0;">
-          <b>${escapeHtml(q.titleEn||"Untitled")}</b>
-          <div class="tags" style="margin:3px 0;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span></div>
-          <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
-        </span>
-      </label>`;
-    }).join("");
-    picker.querySelectorAll("[data-qid]").forEach(cb=>cb.addEventListener("change", ()=>{
-      if(cb.checked) selectedOrder.push(cb.dataset.qid);
-      else selectedOrder = selectedOrder.filter(id=>id!==cb.dataset.qid);
-      renderOrderList();
-    }));
-  }
-  document.getElementById("picker-level").addEventListener("change", renderPicker);
-
-  function renderOrderList(){
-    const list = document.getElementById("order-list");
-    if(selectedOrder.length===0){ list.innerHTML = `<div class="hint" style="padding:6px;">Check questions on the left to add them here.</div>`; return; }
-    list.innerHTML = selectedOrder.map((id,i)=>{
-      const q = eligible.find(x=>x.id===id);
-      return `<div class="opt-row" draggable="true" data-id="${id}" aria-label="${escapeHtml(q?.titleEn||"Untitled")}, position ${i+1}, draggable to reorder" style="cursor:grab; background:var(--surface-2); border-radius:6px; padding:6px 8px; margin-bottom:5px;">
-        <span class="mono" style="width:20px;">${i+1}.</span>
-        <span style="flex:1;">${escapeHtml(q?.titleEn||"Untitled")}</span>
-        <span class="hint" aria-hidden="true">⠿</span>
-      </div>`;
-    }).join("");
-    let dragId = null;
-    list.querySelectorAll("[data-id]").forEach(row=>{
-      row.addEventListener("dragstart", ()=>{ dragId = row.dataset.id; });
-      row.addEventListener("dragover", e=>e.preventDefault());
-      row.addEventListener("drop", e=>{
-        e.preventDefault();
-        if(!dragId || dragId===row.dataset.id) return;
-        const from = selectedOrder.indexOf(dragId), to = selectedOrder.indexOf(row.dataset.id);
-        selectedOrder.splice(from,1);
-        selectedOrder.splice(to,0,dragId);
+  if(!isEdit){
+    function renderPicker(){
+      const level = document.getElementById("cf-level").value;
+      const list = eligible.filter(q=>(q.level||[]).includes(level));
+      document.getElementById("picker-count").textContent = `(${list.length} locked/uploaded for ${level})`;
+      const picker = document.getElementById("q-picker");
+      picker.innerHTML = list.length===0 ? `<div class="empty">No locked or uploaded questions for ${level} yet.</div>` : list.map(q=>{
+        const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
+        return `
+        <label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+          <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
+          <span style="flex:1; min-width:0;">
+            <b>${escapeHtml(q.titleEn||"Untitled")}</b>
+            <div class="tags" style="margin:3px 0;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span></div>
+            <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
+            ${(q.usedIn||[]).length ? `<div class="hint" style="color:var(--gold);">⚠ Already used in: ${(q.usedIn||[]).map(escapeHtml).join(", ")}</div>` : ""}
+          </span>
+        </label>`;
+      }).join("");
+      picker.querySelectorAll("[data-qid]").forEach(cb=>cb.addEventListener("change", ()=>{
+        if(cb.checked) selectedOrder.push(cb.dataset.qid);
+        else selectedOrder = selectedOrder.filter(id=>id!==cb.dataset.qid);
         renderOrderList();
+      }));
+    }
+    document.getElementById("cf-level").addEventListener("change", renderPicker);
+
+    function renderOrderList(){
+      const list = document.getElementById("order-list");
+      if(selectedOrder.length===0){ list.innerHTML = `<div class="hint" style="padding:6px;">Check questions on the left to add them here.</div>`; return; }
+      list.innerHTML = selectedOrder.map((id,i)=>{
+        const q = eligible.find(x=>x.id===id);
+        return `<div class="opt-row" draggable="true" data-id="${id}" aria-label="${escapeHtml(q?.titleEn||"Untitled")}, position ${i+1}, draggable to reorder" style="cursor:grab; background:var(--surface-2); border-radius:6px; padding:6px 8px; margin-bottom:5px;">
+          <span class="mono" style="width:20px;">${i+1}.</span>
+          <span style="flex:1;">${escapeHtml(q?.titleEn||"Untitled")}</span>
+          <span class="hint" aria-hidden="true">⠿</span>
+        </div>`;
+      }).join("");
+      let dragId = null;
+      list.querySelectorAll("[data-id]").forEach(row=>{
+        row.addEventListener("dragstart", ()=>{ dragId = row.dataset.id; });
+        row.addEventListener("dragover", e=>e.preventDefault());
+        row.addEventListener("drop", e=>{
+          e.preventDefault();
+          if(!dragId || dragId===row.dataset.id) return;
+          const from = selectedOrder.indexOf(dragId), to = selectedOrder.indexOf(row.dataset.id);
+          selectedOrder.splice(from,1);
+          selectedOrder.splice(to,0,dragId);
+          renderOrderList();
+        });
       });
-    });
+    }
+    renderPicker();
+    renderOrderList();
   }
-  renderPicker();
 
   document.getElementById("contest-form").addEventListener("submit", async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const name = fd.get("name").trim();
-    if(selectedOrder.length===0){ toast("Pick at least one question"); return; }
+    if(!isEdit && selectedOrder.length===0){ toast("Pick at least one question"); return; }
+    const body = {
+      name, headerText: fd.get("headerText").trim(),
+      contestLevel: fd.get("contestLevel"), day: parseInt(fd.get("day"),10)||1, slot: parseInt(fd.get("slot"),10)||1,
+      durationMinutes: fd.get("durationMinutes") ? parseInt(fd.get("durationMinutes"),10) : null,
+      totalMarks: fd.get("totalMarks") ? parseInt(fd.get("totalMarks"),10) : null,
+    };
     try{
-      await addDoc(collection(db,"contests"), {
-        name, headerText: fd.get("headerText").trim(),
-        durationMinutes: fd.get("durationMinutes") ? parseInt(fd.get("durationMinutes"),10) : null,
-        totalMarks: fd.get("totalMarks") ? parseInt(fd.get("totalMarks"),10) : null,
-        questionIds: selectedOrder, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
-        createdAt: new Date().toISOString()
-      });
-      await Promise.all(selectedOrder.map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayUnion(name)})));
-      toast("Contest created");
+      if(isEdit){
+        await updateDoc(doc(db,"contests",existing.id), body);
+        // The name is also stamped on every question as a usedIn tag --
+        // renaming here would otherwise leave those tags pointing at the
+        // old name forever.
+        if(name!==existing.name){
+          await Promise.all((existing.questionIds||[]).map(qid=>
+            updateDoc(doc(db,"questions",qid), {usedIn: arrayRemove(existing.name)}).catch(()=>{})
+              .then(()=>updateDoc(doc(db,"questions",qid), {usedIn: arrayUnion(name)}).catch(()=>{}))
+          ));
+        }
+        logActivity("contest_updated", `Updated contest "${name}"`, existing.id);
+        toast("Contest updated");
+      } else {
+        const ref = await addDoc(collection(db,"contests"), {
+          ...body, questionIds: selectedOrder, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+          createdAt: new Date().toISOString()
+        });
+        await Promise.all(selectedOrder.map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayUnion(name)})));
+        logActivity("contest_created", `Created contest "${name}" (${body.contestLevel}, Day ${body.day} Slot ${body.slot})`, ref.id);
+        toast("Contest created");
+      }
       closeModal();
-    }catch(err){ console.error(err); toast("Couldn't create contest ("+err.code+")"); }
+    }catch(err){ console.error(err); toast("Couldn't save contest ("+err.code+")"); }
   });
 }
 
@@ -2784,18 +2842,39 @@ function openAssignmentForm(existing){
 /* ================= QUILGO TAB ================= */
 function renderQuilgo(){
   const main = document.getElementById("main");
-  const filteredContests = contests.filter(c=>!quilgoSearch || c.name.toLowerCase().includes(quilgoSearch.toLowerCase()));
+  // Contests need contestLevel/day/slot (added when this cascading picker
+  // shipped) to be findable this way -- older contests without them fall
+  // into the "Unspecified" bucket, which points back at Edit instead of
+  // silently disappearing from the tab.
+  const withMeta = contests.filter(c=>c.contestLevel && c.day!=null && c.slot!=null);
+  const unspecified = contests.filter(c=>!(c.contestLevel && c.day!=null && c.slot!=null));
+  const days = quilgoLevel ? Array.from(new Set(withMeta.filter(c=>c.contestLevel===quilgoLevel).map(c=>c.day))).sort((a,b)=>a-b) : [];
+  const slots = (quilgoLevel && quilgoDay!=="") ? Array.from(new Set(withMeta.filter(c=>c.contestLevel===quilgoLevel && String(c.day)===String(quilgoDay)).map(c=>c.slot))).sort((a,b)=>a-b) : [];
+  const matches = (quilgoLevel && quilgoDay!=="" && quilgoSlot!=="") ? withMeta.filter(c=>c.contestLevel===quilgoLevel && String(c.day)===String(quilgoDay) && String(c.slot)===String(quilgoSlot)) : [];
+  if(matches.length===1) quilgoContestId = matches[0].id;
+  else if(matches.length!==1 && quilgoLevel!=="__unspecified__" && !matches.some(c=>c.id===quilgoContestId)) quilgoContestId = "";
+
   main.innerHTML = `
     <div class="pagehead"><h1>Quilgo Upload</h1></div>
-    <p class="desc">Pick a contest paper below to see its questions in print order, download each as an image, and mark it uploaded once it's live on Quilgo.</p>
+    <p class="desc">Pick the category, day, and slot to land on one paper, download each question, and mark it uploaded once it's live on Quilgo.</p>
     <div class="filters">
-      <input class="search" id="quilgo-search" type="search" placeholder="Search contests (e.g. PMC 4 Round 1 Slot 1)…" value="${escapeHtml(quilgoSearch)}" />
-      <select id="quilgo-contest"><option value="">Select a contest…</option>${filteredContests.map(c=>`<option value="${c.id}" ${quilgoContestId===c.id?"selected":""}>${escapeHtml(c.name)}</option>`).join("")}</select>
+      <select id="quilgo-level">
+        <option value="">Category…</option>
+        ${LEVELS.map(l=>`<option value="${l}" ${quilgoLevel===l?"selected":""}>${l}</option>`).join("")}
+        ${unspecified.length ? `<option value="__unspecified__" ${quilgoLevel==="__unspecified__"?"selected":""}>Unspecified (${unspecified.length}) — needs category/day/slot</option>` : ""}
+      </select>
+      ${quilgoLevel && quilgoLevel!=="__unspecified__" ? `<select id="quilgo-day"><option value="">Day…</option>${days.map(d=>`<option value="${d}" ${String(quilgoDay)===String(d)?"selected":""}>Day ${d}</option>`).join("")}</select>` : ""}
+      ${quilgoLevel && quilgoLevel!=="__unspecified__" && quilgoDay!=="" ? `<select id="quilgo-slot"><option value="">Slot…</option>${slots.map(s=>`<option value="${s}" ${String(quilgoSlot)===String(s)?"selected":""}>Slot ${s}</option>`).join("")}</select>` : ""}
+      ${quilgoLevel==="__unspecified__" ? `<select id="quilgo-contest-unspecified"><option value="">Select a contest…</option>${unspecified.map(c=>`<option value="${c.id}" ${quilgoContestId===c.id?"selected":""}>${escapeHtml(c.name)}</option>`).join("")}</select>` : ""}
     </div>
+    ${matches.length>1 ? `<div class="callout warn">More than one contest matches ${quilgoLevel} Day ${quilgoDay} Slot ${quilgoSlot} — pick one: ${matches.map(c=>`<button type="button" class="btn small" data-pick-match="${c.id}">${escapeHtml(c.name)}</button>`).join(" ")}</div>` : ""}
     <div id="quilgo-body"></div>
   `;
-  document.getElementById("quilgo-search").addEventListener("input", e=>{ quilgoSearch = e.target.value; renderQuilgo(); });
-  document.getElementById("quilgo-contest").addEventListener("change", e=>{ quilgoContestId = e.target.value; renderQuilgoBody(); });
+  document.getElementById("quilgo-level").addEventListener("change", e=>{ quilgoLevel = e.target.value; quilgoDay=""; quilgoSlot=""; quilgoContestId=""; renderQuilgo(); });
+  document.getElementById("quilgo-day")?.addEventListener("change", e=>{ quilgoDay = e.target.value; quilgoSlot=""; quilgoContestId=""; renderQuilgo(); });
+  document.getElementById("quilgo-slot")?.addEventListener("change", e=>{ quilgoSlot = e.target.value; renderQuilgo(); });
+  document.getElementById("quilgo-contest-unspecified")?.addEventListener("change", e=>{ quilgoContestId = e.target.value; renderQuilgoBody(); });
+  document.querySelectorAll("[data-pick-match]").forEach(b=>b.addEventListener("click", ()=>{ quilgoContestId = b.dataset.pickMatch; renderQuilgoBody(); }));
   renderQuilgoBody();
 }
 
@@ -2803,7 +2882,7 @@ function renderQuilgoBody(){
   const body = document.getElementById("quilgo-body");
   if(!body) return;
   const c = contests.find(x=>x.id===quilgoContestId);
-  if(!c){ body.innerHTML = emptyState("Pick a contest above to see its questions."); return; }
+  if(!c){ body.innerHTML = emptyState("Pick a category, day, and slot above to see that paper's questions."); return; }
   const qs = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
   const uploadStatus = c.uploadStatus || {};
   const row = (q)=>{
@@ -2822,17 +2901,24 @@ function renderQuilgoBody(){
   };
   const pending = qs.filter(q=>!uploadStatus[q.id]);
   const done = qs.filter(q=>uploadStatus[q.id]);
+  const paperLabel = c.contestLevel ? `${c.contestLevel} — Day ${c.day}, Slot ${c.slot} — ${escapeHtml(c.name)}` : escapeHtml(c.name);
   body.innerHTML = `
+    <div class="section-label" style="margin-top:0;">${paperLabel}</div>
     ${c.quilgoComplete
       ? `<div class="progress-card" style="border-color:var(--accent);"><span class="pill status-uploaded">Complete</span> <span class="hint">This contest's Quilgo upload work is marked done.</span></div>`
-      : isAdminUser ? `<button class="btn small" id="quilgo-mark-complete" style="margin-bottom:14px;">Mark this contest's Quilgo task complete</button>` : ""}
+      : isAdminUser ? `<button class="btn small" id="quilgo-mark-complete" style="margin-bottom:14px;" ${pending.length>0?`disabled title="${pending.length} question${pending.length===1?"":"s"} still pending upload"`:""}>Mark this contest's Quilgo task complete</button>` : ""}
+    ${pending.length>0 ? `<div class="callout">Up next: <b>${qs.indexOf(pending[0])+1}. ${escapeHtml(pending[0].titleEn||"Untitled")}</b></div>` : ""}
     <div class="section-label">Pending upload (${pending.length})</div>
     ${pending.length===0 ? `<div class="empty">${qs.length===0?"This contest has no questions.":"All questions in this contest are uploaded."}</div>` : pending.map(row).join("")}
     <div class="section-label" style="margin-top:22px;">Already uploaded (${done.length})</div>
     ${done.length===0 ? `<div class="hint">None yet.</div>` : done.map(row).join("")}
   `;
   document.getElementById("quilgo-mark-complete")?.addEventListener("click", async ()=>{
-    try{ await updateDoc(doc(db,"contests",c.id), {quilgoComplete:true}); toast("Marked complete"); }
+    try{
+      await updateDoc(doc(db,"contests",c.id), {quilgoComplete:true});
+      logActivity("contest_quilgo_complete", `Marked Quilgo upload complete for "${c.name}"`, c.id);
+      toast("Marked complete");
+    }
     catch(err){ toast("Couldn't update contest"); }
   });
   body.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{
