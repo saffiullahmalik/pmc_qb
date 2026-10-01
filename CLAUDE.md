@@ -26,7 +26,7 @@ The portal's design follows an official school SOP ("Preparation, Review, Admini
 
 ## Access control model (important — don't weaken this without discussion)
 
-A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of three roles: `teacher` | `qb_lead` | `admin`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
+A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of four roles: `teacher` | `qb_lead` | `admin` | `external_reviewer`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
 
 - `qb_lead` ("QB Lead" — was called "Head Teacher" until this rename) additionally unlocks setting a question's status to `finalized` — a plain `teacher` cannot finalize, and once finalized, further edits also require `qb_lead`/`admin` (enforced by `isQBLeadOrAdmin()` in `firestore.rules`, not just hidden client-side).
 - `role: "admin"` additionally unlocks:
@@ -34,6 +34,7 @@ A signed-in user can read/write question data **only if** a document exists at `
   - Deleting questions
   - Deleting/updating others' comments
   - Managing workload `assignments` (the Assignment tab)
+- `role: "external_reviewer"` (added Oct 2026) is a read-and-comment-only role for an outside reviewer who spot-checks random questions — including **locked** ones — and leaves feedback for an admin to act on. They get a single repurposed "Review" tab (`renderExternalReviewerBank()`) with a "pick a random question" button instead of the normal Bank tab's create/filter/edit toolkit; every other nav tab is hidden for them client-side. Enforcement is server-side too, via a new `isContentTeacher()` function in `firestore.rules` (role in `["teacher","qb_lead","admin"]`) required for creating/editing questions and contests — `isTeacher()` (any of the four roles, including this one) still gates reads and comment-creation, since reading everything and commenting on anything (even locked) is exactly what this role is for. They're excluded from `pickReviewer()`'s balanced peer-review rotation and from the team comparison/leaderboard charts (`teacherComparisonData()`) — they don't author content or carry a quota. A comment from this role gets an "External Reviewer" badge in the thread (`reviewerBadge()` in `renderDrawerBody()`), and an admin viewing a **locked** question with such a comment sees an explicit callout prompting them to unlock it to act on the feedback.
 
 All of this is enforced in `firestore.rules`, not in client-side JS — the client UI hides admin controls from non-admins, but the real enforcement is server-side. Emails are lowercased on both sides (client lookup and rules) specifically because Firestore document IDs are case-sensitive and admins type them by hand — this was a real bug caught during setup and fixed.
 
@@ -118,18 +119,21 @@ contests/{contestId}
   contestLevel (one of LEVELS), day (number), slot (number)
     -- added Sept 2026 so a contest represents one paper in the
     -- category × day × slot grid (e.g. PMC-4, Day 2, Slot 1), and the
-    -- Quilgo tab can find one paper via three cascading selects instead
+    -- Upload tab (nav label "Upload" -- internally still named quilgo/Quilgo
+    -- throughout the code and this doc, e.g. renderQuilgo(), data-tab="quilgo";
+    -- only the user-visible text was de-branded in Oct 2026, not the
+    -- identifiers) can find one paper via three cascading selects instead
     -- of a flat name search. Contests from before this change won't have
-    -- these -- they surface under Quilgo's "Unspecified" bucket, fixed
-    -- via the Contests tab's Edit action (openContestForm(existing), which
-    -- only edits these details, not questionIds -- re-picking questions on
-    -- an existing paper is deliberately not supported, since a paper may
-    -- already be partway through Quilgo upload).
+    -- these -- they surface under the "Unspecified" bucket, fixed via the
+    -- Contests tab's Edit action (openContestForm(existing), which only
+    -- edits these details, not questionIds -- re-picking questions on an
+    -- existing paper is deliberately not supported, since a paper may
+    -- already be partway through upload).
   questionIds: [id, ...]   -- order here is the paper's printed order (drag-and-drop set in the UI)
   uploadStatus: { [questionId]: {uploadedBy, uploadedByName, uploadedAt} }
-    -- Quilgo-upload tracking lives HERE, not on the question doc, because
+    -- Upload tracking lives HERE, not on the question doc, because
     -- "uploaded" only makes sense in the context of a specific contest paper.
-    -- The Quilgo tab reads/writes this map keyed by question id.
+    -- The Upload tab reads/writes this map keyed by question id.
   createdBy, createdByName, createdAt
 
 assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
@@ -146,7 +150,7 @@ assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   -- assigning the same chapter to two teachers is structurally impossible.
 
 teachers/{email, lowercase}
-  role: "teacher" | "qb_lead" | "admin"
+  role: "teacher" | "qb_lead" | "admin" | "external_reviewer"
 
 settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
   dailyCreationTarget (default 15), dailyCreationLimit (default 20),

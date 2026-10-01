@@ -20,6 +20,16 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/teachers/$(request.auth.token.email));
     }
 
+    // "external_reviewer" is a read-and-comment-only role (an outside
+    // reviewer who spot-checks random questions, including locked ones, and
+    // leaves feedback for an admin to act on) -- isTeacher() stays true for
+    // them (so they can read everything and create comments), but content
+    // actions (creating/editing questions, contests) require this instead.
+    function isContentTeacher() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["teacher", "qb_lead", "admin"];
+    }
+
     function isAdmin() {
       return isSignedIn() &&
         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role == "admin";
@@ -40,12 +50,13 @@ service cloud.firestore {
       allow read: if isTeacher();
       allow create, update: if isAdmin() &&
         email == email.lower() &&
-        request.resource.data.role in ["teacher", "qb_lead", "admin"];
+        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer"];
       allow delete: if isAdmin();
     }
 
     match /contests/{contestId} {
-      allow read, create, update: if isTeacher();
+      allow read: if isTeacher();
+      allow create, update: if isContentTeacher();
       allow delete: if isAdmin();
     }
 
@@ -84,8 +95,9 @@ service cloud.firestore {
     match /questions/{questionId} {
       allow read: if isTeacher();
       // Setting a question's status to "finalized" (locking it) is
-      // restricted to QB Leads/admins.
-      allow create: if isTeacher() &&
+      // restricted to QB Leads/admins; creating content at all requires
+      // isContentTeacher() -- an external reviewer reads and comments only.
+      allow create: if isContentTeacher() &&
         (request.resource.data.status != "finalized" || isQBLeadOrAdmin());
       // Tagging a question with contest usage (usedIn) or liking it is
       // usage/engagement tracking, not content editing — any teacher may do
@@ -100,11 +112,13 @@ service cloud.firestore {
       // except a QB Lead may still unlock it (move it back off "finalized")
       // — matches the app's lock model: a QB Lead can lock/unlock, but
       // can't edit content while it stays locked; admin can always edit.
+      // The content-edit branch requires isContentTeacher() -- an external
+      // reviewer can still flip isMetadataOnlyChange() (e.g. a like).
       allow update: if isTeacher() && (
         isMetadataOnlyChange() ||
-        (resource.data.status != "finalized"
+        (isContentTeacher() && (resource.data.status != "finalized"
           ? (request.resource.data.status != "finalized" || isQBLeadOrAdmin())
-          : (isAdmin() || (isQBLeadOrAdmin() && request.resource.data.status != "finalized")))
+          : (isAdmin() || (isQBLeadOrAdmin() && request.resource.data.status != "finalized"))))
       );
       allow delete: if isAdmin();
 
