@@ -57,6 +57,12 @@ These exist so a rush to hit a quota never comes at the cost of quality — the 
 
 ---
 
+## Difficulty balance (per assigned chapter)
+
+Each assigned chapter's target splits evenly across the three difficulties — a 15-question target means 5 Medium, 5 Hard, 5 Very Hard (any target not divisible by 3 rounds up on Medium and Hard first). The editor shows where you stand against that split live as you pick a chapter and difficulty, and **won't let you save** a question in a difficulty that's already full for that chapter — pick a different difficulty instead. This only applies to chapters actually assigned to you; self-initiated questions outside an assignment aren't balance-checked.
+
+---
+
 ## Peer review, in detail
 
 - **Assignment is random but balanced** — when a question goes "In Review," the portal looks at every other teacher's currently-pending review queue and picks randomly among whoever has the fewest pending reviews right now. No one teacher gets buried while another coasts.

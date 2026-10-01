@@ -1328,6 +1328,21 @@ function myAssignedChapters(){
   });
   return mine;
 }
+// SOP §2.4's ~33/33/33 medium/hard/very-hard split, applied to one
+// chapter's assigned target -- any remainder (target not divisible by 3)
+// goes to medium then hard first, so the three always sum back to target.
+function difficultyQuotas(target){
+  const base = Math.floor(target/3);
+  let rem = target - base*3;
+  const q = {medium:base, hard:base, very_hard:base};
+  ["medium","hard","very_hard"].forEach(d=>{ if(rem>0){ q[d]++; rem--; } });
+  return q;
+}
+// `excludeId` lets an edit of an existing question check its own chapter's
+// balance without counting itself twice.
+function myDifficultyCountForChapter(email, level, unit, difficulty, excludeId){
+  return questions.filter(q=>q.id!==excludeId && q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit && q.difficulty===difficulty).length;
+}
 // Same data as myAssignedChapters(), grouped and summed per contest level --
 // feeds the insights-rail's compact "Your assignments" widget (one thin bar
 // per level instead of one big card per chapter), with the per-chapter
@@ -1451,6 +1466,7 @@ function openForm(existing){
               <div class="field"><label>Difficulty</label>
                 <select name="difficulty" id="f-difficulty">${DIFFS.map(t=>`<option value="${t.v}" ${existing?.difficulty===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
                 <div class="callout" id="difficulty-callout"></div>
+                <div id="difficulty-balance-hint"></div>
               </div>
             </div>
             <div class="row2">
@@ -1730,8 +1746,34 @@ function openForm(existing){
     const v = document.getElementById("f-difficulty").value;
     document.getElementById("difficulty-callout").innerHTML = `${escapeHtml(DIFFICULTY_SOP[v]||"")}<br><span class="hint">${escapeHtml(DIFFICULTY_DISTRIBUTION_NOTE)}</span>`;
   }
+  // Live view of SOP §2.4's balance for whichever assigned chapter is
+  // currently selected -- an assigned chapter's target splits ~evenly
+  // across medium/hard/very_hard (difficultyQuotas()); this shows where the
+  // teacher already stands against that split before they even try to save,
+  // same information the step-submit guard below enforces at save time.
+  function updateDifficultyBalanceHint(){
+    const hintEl = document.getElementById("difficulty-balance-hint");
+    if(!hintEl) return;
+    const chapterCode = document.getElementById("f-chapter").value;
+    const chosenLevels = Array.from(formEl.querySelectorAll('input[name="level"]:checked')).map(el=>el.value);
+    const diff = document.getElementById("f-difficulty").value;
+    const relevant = myAssignedChapters().filter(m=>m.unit===chapterCode && chosenLevels.includes(m.contestLevel));
+    if(relevant.length===0){ hintEl.innerHTML = ""; return; }
+    hintEl.innerHTML = relevant.map(m=>{
+      const quotas = difficultyQuotas(m.target);
+      const parts = ["medium","hard","very_hard"].map(d=>{
+        const have = myDifficultyCountForChapter(currentUser.email, m.contestLevel, m.unit, d, existing?.id);
+        const full = have>=quotas[d];
+        const label = DIFFS.find(x=>x.v===d)?.l||d;
+        return `<span style="${d===diff?"font-weight:700; text-decoration:underline;":""} ${full?"color:var(--red);":""}">${label} ${have}/${quotas[d]}${full?" (full)":""}</span>`;
+      }).join(" &middot; ");
+      return `<div class="hint" style="margin-top:4px;">${escapeHtml(m.contestLevel)} ${escapeHtml(m.unit)} balance (target ${m.target}) — ${parts}</div>`;
+    }).join("");
+  }
   updateDifficultyCallout();
-  document.getElementById("f-difficulty").addEventListener("change", updateDifficultyCallout);
+  updateDifficultyBalanceHint();
+  document.getElementById("f-difficulty").addEventListener("change", ()=>{ updateDifficultyCallout(); updateDifficultyBalanceHint(); });
+  formEl.querySelectorAll('input[name="level"]').forEach(el=>el.addEventListener("change", updateDifficultyBalanceHint));
 
   function renderSkillsChips(){
     const wrap = document.getElementById("skills-chip-wrap");
@@ -1785,7 +1827,7 @@ function openForm(existing){
   }
   populateChapters(true);
   document.getElementById("f-book").addEventListener("change", ()=>populateChapters(false));
-  document.getElementById("f-chapter").addEventListener("change", ()=>{ populateSubtopics(); updateOffTaskWarning(); });
+  document.getElementById("f-chapter").addEventListener("change", ()=>{ populateSubtopics(); updateOffTaskWarning(); updateDifficultyBalanceHint(); });
 
   function renderLivePreview(){
     const pane = document.getElementById("live-preview");
@@ -1926,6 +1968,24 @@ function openForm(existing){
     if(!isEdit && countTodayCreated(currentUser.email) >= dailyLimits.dailyCreationLimit){
       toast(`Daily limit reached — ${dailyLimits.dailyCreationLimit} questions is the cap for today, come back tomorrow`);
       return;
+    }
+    // SOP §2.4 balance: an assigned chapter's target splits ~evenly across
+    // medium/hard/very_hard (difficultyQuotas()) -- block saving past a
+    // difficulty's share for a chapter actually assigned to this teacher,
+    // so 15 assigned doesn't quietly become 15 "very hard" ones.
+    {
+      const chosenUnit = fd.get("unit"), chosenDiff = fd.get("difficulty"), chosenLevels = fd.getAll("level");
+      const overQuota = myAssignedChapters().find(m=>{
+        if(m.unit!==chosenUnit || !chosenLevels.includes(m.contestLevel)) return false;
+        const quotas = difficultyQuotas(m.target);
+        return myDifficultyCountForChapter(currentUser.email, m.contestLevel, m.unit, chosenDiff, existing?.id) >= quotas[chosenDiff];
+      });
+      if(overQuota){
+        const quotas = difficultyQuotas(overQuota.target);
+        const diffLabel = DIFFS.find(d=>d.v===chosenDiff)?.l || chosenDiff;
+        toast(`${overQuota.contestLevel} ${overQuota.unit}'s ${diffLabel} share (${quotas[chosenDiff]} of its ${overQuota.target}-question target) is already full — pick a different difficulty to keep the ~33/33/33 split.`);
+        showStep(2); return;
+      }
     }
     // `existing?.status!=="finalized"` grandfathers in a question that's
     // *already* finalized (e.g. from before peer review existed) being

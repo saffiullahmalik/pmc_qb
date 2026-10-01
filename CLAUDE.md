@@ -163,6 +163,17 @@ settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
   -- countTodaySubmittedReviews() in index.html) -- same "business rule,
   -- not a security boundary" treatment as the required-solution check.
 
+Difficulty balance (Oct 2026, no new doc -- derived from assignments.quotas):
+  each assigned chapter's target splits ~evenly across medium/hard/very_hard
+  (difficultyQuotas(target) in index.html; a remainder not divisible by 3
+  goes to medium then hard first). openForm()'s save validation blocks
+  saving a question past a difficulty's share for a chapter that's actually
+  assigned to the author (myAssignedChapters().find(...) in the
+  step-submit handler) -- same client-side-only "business rule" treatment
+  as the daily limits above, not a security boundary. The editor also
+  shows this live (updateDifficultyBalanceHint(), triggered on chapter/
+  level/difficulty change) before the teacher ever tries to save.
+
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
   -- append-only (rules block update/delete entirely); any signed-in teacher
