@@ -72,7 +72,18 @@
   .who img{ width:24px;height:24px;border-radius:50%; }
   .who b{ color:var(--ink); font-weight:600; display:block; font-size:12px; }
   .link-btn{ all:unset; cursor:pointer; color:var(--accent); font-size:11.5px; }
-  .main{ flex:1 1 auto; min-width:0; padding:26px 32px 60px; max-width:1180px; }
+  .main-col{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+  .main{ padding:26px 32px 60px; max-width:1180px; }
+  #gamify-bar:empty{ display:none; }
+  .gamify-strip{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:9px 32px; background:var(--surface); border-bottom:1px solid var(--border); font-size:12.5px; }
+  .gamify-strip .streak{ font-weight:700; color:var(--gold); white-space:nowrap; }
+  .gamify-strip .g-metric{ display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .gamify-strip .g-metric .progress-bar{ width:60px; height:6px; }
+  .gamify-strip .g-cmp{ margin-left:auto; color:var(--ink-dim); white-space:nowrap; }
+  @media (max-width:760px){
+    .gamify-strip{ padding:8px 16px; gap:10px; font-size:11.5px; }
+    .gamify-strip .g-cmp{ display:none; }
+  }
   .pagehead{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:4px; padding-top:10px; border-top:3px solid transparent; flex-wrap:wrap;}
   [data-section="contests"] .pagehead{ border-top-color:var(--blue); }
   [data-section="quilgo"] .pagehead{ border-top-color:var(--gold); }
@@ -395,7 +406,10 @@
       <button class="link-btn" id="signout-btn" style="margin-top:8px;">Sign out</button>
     </div>
   </nav>
-  <main class="main" id="main"></main>
+  <div class="main-col">
+    <div id="gamify-bar"></div>
+    <main class="main" id="main"></main>
+  </div>
 </div>
 
 <div id="modal-root"></div>
@@ -489,10 +503,15 @@ function allSkills(){
 // Which status values a role may pick in the editor. The question's current
 // value is always included even if not normally pickable by this role, so
 // re-saving never silently downgrades a status someone else set.
-function allowedStatusOptions(currentStatus){
+function allowedStatusOptions(currentStatus, peerReview){
   let allowed = isAdminUser ? STATUSES
     : canFinalize ? STATUSES.filter(s=>s.v!=="uploaded")
     : STATUSES.filter(s=>s.v==="draft"||s.v==="in_review");
+  // Locking requires an independent reviewer to have actually solved the
+  // question and agreed with the marked answer first -- applies to every
+  // role, admin included, since the whole point is catching a wrong/
+  // ambiguous answer before it reaches a contest.
+  if(peerReview && peerReview.outcome!=="agree") allowed = allowed.filter(s=>s.v!=="finalized");
   if(currentStatus && !allowed.some(s=>s.v===currentStatus)){
     allowed = [...allowed, STATUSES.find(s=>s.v===currentStatus)];
   }
@@ -552,6 +571,10 @@ const CURRICULUM = [
 // the hardcoded Beast Academy data at read time -- the hardcoded data is
 // never edited/migrated, this is purely additive.
 let curriculumExtra = [];
+// Admin-adjustable daily creation/review caps (settings/limits). Defaults
+// here match what a brand-new install sees before the doc is ever written,
+// so the app works sensibly even before an admin opens the settings form.
+let dailyLimits = { dailyCreationLimit:20, dailyCreationTarget:15, dailyReviewLimit:20 };
 function allCurriculum(){
   const merged = CURRICULUM.map(b=>({...b, chapters:[...b.chapters]}));
   curriculumExtra.forEach(doc=>{
@@ -567,7 +590,12 @@ function allCurriculum(){
 function allChapters(){ return allCurriculum().flatMap(b=>b.chapters); }
 function chapterByCode(code){ return allChapters().find(c=>c.code===code); }
 function chapterLabel(code){ const c=chapterByCode(code); return c ? `${c.code} — ${c.title}` : (code||"—"); }
-function chaptersForLevel(level){ return (allCurriculum().find(b=>b.levels.includes(level))?.chapters) || []; }
+// .filter+.flatMap, not .find -- more than one curriculum book can cover
+// the same level (e.g. a cross-level "IQ & Logic Reasoning" book added via
+// Admin -> Curriculum -> Add a whole new book, alongside the normal
+// Beast Academy book for that level); .find would silently return only
+// whichever book happened to come first and drop the other's chapters.
+function chaptersForLevel(level){ return allCurriculum().filter(b=>b.levels.includes(level)).flatMap(b=>b.chapters); }
 function chaptersForBook(bookId){ return (allCurriculum().find(b=>b.bookId===bookId)?.chapters) || []; }
 function bookIdForChapterCode(code){ return allCurriculum().find(b=>b.chapters.some(c=>c.code===code))?.bookId || ""; }
 function bookSelectOptions(selectedBookId){
@@ -633,7 +661,7 @@ let allTeachers = [];
 let activityLogEntries = [];
 let currentTab = "bank";
 let openQuestionId = null;
-let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"" };
@@ -859,6 +887,7 @@ onAuthStateChanged(auth, user=>{
   if(unsubAssignments){ unsubAssignments(); unsubAssignments=null; }
   if(unsubCurriculumExtra){ unsubCurriculumExtra(); unsubCurriculumExtra=null; }
   if(unsubActivityLog){ unsubActivityLog(); unsubActivityLog=null; }
+  if(unsubSettings){ unsubSettings(); unsubSettings=null; }
   if(unsubComments){ unsubComments(); unsubComments=null; }
   if(unsubRatings){ unsubRatings(); unsubRatings=null; }
   dataReady = { questions:false, contests:false, assignments:false };
@@ -900,6 +929,7 @@ function startDataSubscriptions(){
     if(currentTab==="bank" || currentTab==="activity" || currentTab==="contests" || currentTab==="quilgo" || currentTab==="workload") renderTab();
     if(openQuestionId) renderDrawer();
     updateActivityBadge();
+    renderGamifyBar();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
   const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
   unsubContests = onSnapshot(cy, snap=>{
@@ -917,6 +947,11 @@ function startDataSubscriptions(){
     // tabs or reloads, since Bank is the default landing tab.
     if(currentTab==="workload" || currentTab==="bank") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load assignments ("+err.code+")"); });
+  unsubSettings = onSnapshot(doc(db,"settings","limits"), snap=>{
+    if(snap.exists()) dailyLimits = {...dailyLimits, ...snap.data()};
+    renderGamifyBar();
+    if(currentTab==="admin") renderTab();
+  }, err=>console.error(err));
   unsubCurriculumExtra = onSnapshot(collection(db,"curriculumExtra"), snap=>{
     curriculumExtra = snap.docs.map(d=>({id:d.id, ...d.data()}));
     if(currentTab==="bank" || currentTab==="curriculum" || currentTab==="admin") renderTab();
@@ -934,6 +969,31 @@ function renderTab(){
   else if(currentTab==="curriculum") renderCurriculum();
   else if(currentTab==="sop") renderSOP();
   else if(currentTab==="admin") renderAdmin();
+  renderGamifyBar();
+}
+// Persistent strip above the tab content (survives renderTab(), which only
+// ever replaces #main) -- the always-visible "how am I doing today" signal
+// the gamification ask was for, separate from the fuller breakdown +
+// CTAs on the Bank tab's own dashboard cards.
+function renderGamifyBar(){
+  const bar = document.getElementById("gamify-bar");
+  if(!bar || !isTeacherApproved || !currentUser) return;
+  const streak = computeStreak(currentUser.email);
+  const today = countTodayCreated(currentUser.email);
+  const week = countThisWeek(currentUser.email);
+  const toReview = pendingReviewsFor(currentUser.email).length;
+  const avg = teamAverageToday();
+  const pct = Math.min(100, Math.round((today/dailyLimits.dailyCreationTarget)*100));
+  bar.innerHTML = `
+    <div class="gamify-strip">
+      ${streak>0 ? `<span class="streak">🔥 ${streak}-day streak</span>` : `<span class="hint">No streak yet — hit ${dailyLimits.dailyCreationTarget} today to start one</span>`}
+      <span class="g-metric">Today <b class="mono">${today}/${dailyLimits.dailyCreationTarget}</b>${today>dailyLimits.dailyCreationTarget?` <span class="hint">(+${today-dailyLimits.dailyCreationTarget} bonus)</span>`:""}
+        <span class="progress-bar" style="display:inline-block; vertical-align:middle;"><div class="progress-bar-fill" style="width:${pct}%;"></div></span>
+      </span>
+      <span class="g-metric">This week <b class="mono">${week}</b></span>
+      ${toReview>0 ? `<span class="g-metric">📋 <b class="mono">${toReview}</b> to review</span>` : ""}
+      <span class="g-cmp">You: ${today} · Team avg today: ${avg.toFixed(1)}</span>
+    </div>`;
 }
 
 /* ================= BANK TAB ================= */
@@ -1007,6 +1067,11 @@ function renderBank(){
     ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div><div id="load-more-wrap"></div>`}
   `;
   document.getElementById("new-q").addEventListener("click", ()=>openForm(null));
+  document.getElementById("dash-start-now")?.addEventListener("click", ()=>openForm(null));
+  document.getElementById("dash-review-now")?.addEventListener("click", ()=>{
+    const q = pendingReviewsFor(currentUser.email)[0];
+    if(q) openReviewForm(q);
+  });
   ["level","type","diff","status","unit","sort","skill"].forEach(k=>{
     document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
@@ -1038,6 +1103,7 @@ function renderBank(){
       try{ await deleteDoc(doc(db,"questions",q.id)); logActivity("question_deleted", `Deleted "${q.titleEn||"Untitled"}"`, q.id); toast("Question deleted"); }
       catch(err){ console.error(err); toast("Couldn't delete question ("+err.code+")"); }
     }));
+    grid.querySelectorAll("[data-review]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); const q = questions.find(x=>x.id===b.dataset.review); if(q) openReviewForm(q); }));
     grid.querySelectorAll("[data-quickfilter-level]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.level = b.dataset.quickfilterLevel; bankVisibleCount = 30; renderBank(); }));
     grid.querySelectorAll("[data-quickfilter-qtype]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.qtype = b.dataset.quickfilterQtype; bankVisibleCount = 30; renderBank(); }));
     grid.querySelectorAll("[data-quickfilter-diff]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.diff = b.dataset.quickfilterDiff; bankVisibleCount = 30; renderBank(); }));
@@ -1100,10 +1166,16 @@ function firstIncompleteAssignedUnit(){
 }
 function myAssignedChaptersHtml(){
   const mine = myAssignedChapters();
-  if(mine.length===0) return "";
-  return `
-    <div class="progress-card" style="border-color:var(--accent); background:var(--accent-soft);">
-      <b>Assigned to you</b>
+  const totalRemaining = mine.reduce((s,m)=>s+Math.max(0, m.target-countByStatus(currentUser.email,m.contestLevel,m.unit).finalized),0);
+  const pending = pendingReviewsFor(currentUser.email);
+  let html = "";
+  if(mine.length){
+    html += `
+    <div class="progress-card dash-card" style="border-color:var(--accent); background:var(--accent-soft);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <b>You're assigned ${totalRemaining} question${totalRemaining===1?"":"s"} to go</b>
+        <button class="btn small primary" id="dash-start-now">Start making now</button>
+      </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:8px;">
         ${mine.map(m=>{
           const c = countByStatus(currentUser.email, m.contestLevel, m.unit);
@@ -1111,6 +1183,18 @@ function myAssignedChaptersHtml(){
         }).join("")}
       </div>
     </div>`;
+  }
+  if(pending.length){
+    html += `
+    <div class="progress-card dash-card" style="border-color:var(--gold); background:var(--gold-soft); margin-top:${mine.length?"10px":"0"};">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <b>${pending.length} question${pending.length===1?"":"s"} to review</b>
+        <button class="btn small primary" id="dash-review-now">Solve now</button>
+      </div>
+      <div class="hint" style="margin-top:6px;">${pending.slice(0,3).map(q=>escapeHtml(q.titleEn||"Untitled")).join(" · ")}${pending.length>3?` · +${pending.length-3} more`:""}</div>
+    </div>`;
+  }
+  return html;
 }
 
 function cardHtml(q){
@@ -1138,6 +1222,7 @@ function cardHtml(q){
         ${isLocked
           ? `<span class="btn small" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it from the detail view">🔒 Locked</span>`
           : `<button class="btn small" data-edit="${q.id}" title="Edit" aria-label="Edit question">✏️ Edit</button>`}
+        ${q.peerReview?.reviewerEmail===currentUser.email && q.peerReview.outcome==="pending" ? `<button class="btn small primary" data-review="${q.id}" title="Review" aria-label="Review question">🔍 Review</button>` : ""}
         ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete="${q.id}" title="Delete" aria-label="Delete question">🗑 Delete</button>` : ""}
       </div>
     </div>`;
@@ -1297,7 +1382,10 @@ function openForm(existing){
 
           <div class="step-panel" data-step="4" hidden>
             <div class="field"><label>Solution <span class="hint">(required — feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" id="solutionEn-input" rows="3" required placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
-            <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select></div>
+            <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status, existing?.peerReview).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select>
+              ${existing?.peerReview?.outcome==="disagree" ? `<div class="callout warn" style="margin-top:6px;">⚠ Reviewer flagged this question — see the comments below, fix it, then save to send it back for another look.</div>` : ""}
+              ${existing?.peerReview?.outcome==="pending" ? `<div class="hint" style="margin-top:4px;">Awaiting review from ${escapeHtml(existing.peerReview.reviewerName)}.</div>` : ""}
+            </div>
             ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
             <div class="section-label">Live preview</div>
             <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
@@ -1633,6 +1721,20 @@ function openForm(existing){
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
+    // The author revising a question a reviewer disagreed with re-queues it
+    // for the *same* reviewer (continuity) rather than a fresh random pick.
+    if(isEdit && existing.peerReview?.outcome==="disagree"){
+      body.peerReview = freshPeerReview({email:existing.peerReview.reviewerEmail, name:existing.peerReview.reviewerName});
+    }
+    // Moving into "in_review" for the first time auto-assigns a reviewer --
+    // same balanced-random pick the drawer's quick-status buttons use.
+    if(body.status==="in_review" && !existing?.peerReview && !body.peerReview){
+      const reviewer = pickReviewer(body.authorEmail);
+      if(reviewer){
+        body.peerReview = freshPeerReview(reviewer);
+        logActivity("review_assigned", `Assigned "${body.titleEn}" to ${reviewer.name||reviewer.email} for review`, existing?.id||null);
+      }
+    }
     try{
       if(isEdit){
         const note = fd.get("editNote")?.trim() || "Edited";
@@ -1668,6 +1770,13 @@ function openForm(existing){
     if(optionsState.some(o=>!o.text.trim() && !o.image)){ toast("Every option needs text or an image"); showStep(2); return; }
     if(totalImageBytes() > IMAGE_SIZE_BLOCK_BYTES){ toast("Couldn't save — images are too large together; remove one or shrink a figure before saving"); showStep(2); return; }
     if(!fd.get("solutionEn").trim()){ toast("A solution is required before saving"); showStep(4); return; }
+    if(!isEdit && countTodayCreated(currentUser.email) >= dailyLimits.dailyCreationLimit){
+      toast(`Daily limit reached — ${dailyLimits.dailyCreationLimit} questions is the cap for today, come back tomorrow`);
+      return;
+    }
+    if(fd.get("status")==="finalized" && existing?.peerReview && existing.peerReview.outcome!=="agree"){
+      toast("Can't lock yet — peer review hasn't agreed with the marked answer"); showStep(4); return;
+    }
     const correctOpt = optionsState.find(o=>o.id===correctOptionId);
     openConfirmPopup({
       promptEn: fd.get("promptEn").trim(), correctOpt,
@@ -1877,7 +1986,7 @@ function openQuestion(id){
 // the downloaded PNG, so what's on screen is exactly what gets exported.
 // Caller is responsible for a MathJax.typesetPromise() pass afterward.
 function questionPreviewHtml(q, config={}){
-  const {includeQuestion=true, includeOptions=true, includeAnswer=false} = config;
+  const {includeQuestion=true, includeOptions=true, includeAnswer=false, revealAnswer=true} = config;
   const opts = getQuestionOptions(q);
   const correctId = getCorrectOptionId(q);
   const correctIdx = opts.findIndex(o=>o.id===correctId);
@@ -1895,7 +2004,7 @@ function questionPreviewHtml(q, config={}){
     ${includeOptions ? `
     <div class="question-container">
       <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
-        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${o.id===correctId?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${(revealAnswer && o.id===correctId)?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
       </div>
     </div>` : ""}
     ${includeAnswer ? `
@@ -1961,6 +2070,60 @@ async function downloadQuestionImage(q, config={includeQuestion:true, includeOpt
   finally{ node.remove(); }
 }
 
+// Reviewer solves the question blind (revealAnswer:false hides the ✓
+// marker) before ever seeing the marked answer -- that's the entire point
+// of a peer review catching a wrong/ambiguous question.
+function openReviewForm(q){
+  const root = document.getElementById("modal-root");
+  const opts = getQuestionOptions(q);
+  root.innerHTML = `
+    <div class="overlay" id="ov"><div class="drawer wide">
+      <div class="drawer-head"><h2>Review this question</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <p class="hint">Solve it yourself first — this only works if you don't peek at the marked answer beforehand.</p>
+      <div id="review-preview">${questionPreviewHtml(q, {includeOptions:false})}</div>
+      <div class="section-label">Your answer</div>
+      <div id="review-opts">
+        ${opts.map((o,i)=>`<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+          <input type="radio" name="review-answer" value="${o.id}" style="margin-top:3px;" />
+          <span>${String.fromCharCode(65+i)}. ${o.image?`<img src="${o.image}" alt="Option image" style="height:22px; vertical-align:middle; margin-right:4px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</span>
+        </label>`).join("")}
+      </div>
+      <div class="field"><label>Your working / solution</label><textarea id="review-note" rows="3" placeholder="Briefly show how you solved it"></textarea></div>
+      <div class="field"><label>Time taken (minutes)</label><input type="number" id="review-time" min="1" placeholder="e.g. 4" /></div>
+      <button class="btn primary" id="review-submit" style="width:100%; justify-content:center; margin-top:10px;">Submit review</button>
+    </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("review-preview"), document.getElementById("review-opts")]).catch(console.error);
+  document.getElementById("review-submit").addEventListener("click", async ()=>{
+    const chosen = document.querySelector('input[name="review-answer"]:checked');
+    if(!chosen){ toast("Pick the answer you solved it as"); return; }
+    if(countTodaySubmittedReviews(currentUser.email) >= dailyLimits.dailyReviewLimit){
+      toast(`Daily review limit reached — ${dailyLimits.dailyReviewLimit} is the cap for today`); return;
+    }
+    const note = document.getElementById("review-note").value.trim();
+    const timeMinutes = parseInt(document.getElementById("review-time").value,10) || null;
+    const correctId = getCorrectOptionId(q);
+    const outcome = chosen.value===correctId ? "agree" : "disagree";
+    try{
+      await updateDoc(doc(db,"questions",q.id), {
+        peerReview: { ...q.peerReview, submittedAt:new Date().toISOString(), reviewerOptionId:chosen.value, reviewerNote:note, reviewTimeMinutes:timeMinutes, outcome }
+      });
+      if(outcome==="disagree"){
+        const myOpt = opts.find(o=>o.id===chosen.value), correctOpt = opts.find(o=>o.id===correctId);
+        await addDoc(collection(db,"questions",q.id,"comments"), {
+          authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email,
+          text: `Review: I solved this as "${myOpt?.text||"?"}", but the marked answer is "${correctOpt?.text||"?"}". ${note}`.trim(),
+          createdAt: new Date().toISOString(),
+        });
+      }
+      logActivity("review_submitted", `Reviewed "${q.titleEn||"Untitled"}" — ${outcome}`, q.id);
+      toast(outcome==="agree" ? "Review submitted — you agreed with the marked answer" : "Review submitted — flagged as a disagreement");
+      closeModal();
+    }catch(err){ console.error(err); toast("Couldn't submit review"); }
+  });
+}
+
 function renderDrawer(){
   const q = questions.find(x=>x.id===openQuestionId);
   const root = document.getElementById("modal-root");
@@ -2001,13 +2164,22 @@ function renderDrawerBody(){
     <div class="section-label">Final preview <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">— exactly what "Download as image" produces</span></div>
     <div id="drawer-preview">${questionPreviewHtml(q)}</div>
     ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box" id="drawer-solution">${renderRichText(escapeHtml(q.solutionEn))}</div>` : ""}
+    ${q.peerReview ? `<div class="section-label">Peer review</div>
+      <div class="progress-card" style="${q.peerReview.outcome==="disagree"?"border-color:var(--red);":q.peerReview.outcome==="agree"?"border-color:var(--accent);":""}">
+        ${q.peerReview.outcome==="pending" ? `Awaiting review from <b>${escapeHtml(q.peerReview.reviewerName)}</b>.` : ""}
+        ${q.peerReview.outcome==="agree" ? `<span class="pill status-uploaded">Agrees</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> solved this and confirmed the marked answer${q.peerReview.reviewTimeMinutes?` in ${q.peerReview.reviewTimeMinutes} min`:""}.` : ""}
+        ${q.peerReview.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);">Disagrees</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> solved this differently${q.peerReview.reviewTimeMinutes?` (${q.peerReview.reviewTimeMinutes} min)`:""} — see comments, fix, and resave to send it back.` : ""}
+      </div>` : ""}
     <div class="section-label">Status</div>
     <div class="status-track">
       ${STATUSES.map(s=>{
-        const locked = s.v==="finalized" && !canFinalize;
-        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="Only QB Leads or Admins can lock a question"`:""}>${s.l}</button>`;
+        const locked = (s.v==="finalized" && !canFinalize) || (s.v==="finalized" && q.peerReview && q.peerReview.outcome!=="agree");
+        const title = s.v==="finalized" && !canFinalize ? "Only QB Leads or Admins can lock a question"
+          : s.v==="finalized" && q.peerReview && q.peerReview.outcome!=="agree" ? "Can't lock yet — peer review hasn't agreed with the marked answer" : "";
+        return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="${title}"`:""}>${s.l}</button>`;
       }).join("")}
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image…</button>
+      ${q.peerReview?.reviewerEmail===currentUser.email && q.peerReview.outcome==="pending" ? `<button class="btn small primary" id="review-q">🔍 Review this</button>` : ""}
       ${isLocked
         ? `<span class="btn small ghost" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it by setting status back to In Review">🔒 Locked</span>`
         : `<button class="btn small ghost" id="edit-q">Edit question</button>`}
@@ -2034,6 +2206,7 @@ function renderDrawerBody(){
   if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("drawer-preview"), document.getElementById("drawer-solution")].filter(Boolean)).catch(console.error);
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("edit-q")?.addEventListener("click", ()=>openForm(q));
+  document.getElementById("review-q")?.addEventListener("click", ()=>openReviewForm(q));
   document.getElementById("download-img").addEventListener("click", ()=>openDownloadOptionsPopup(q));
   document.getElementById("delete-q")?.addEventListener("click", async ()=>{
     if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
@@ -2060,9 +2233,18 @@ function renderDrawerBody(){
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can lock a question"); return; }
+      if(btn.dataset.status==="finalized" && q.peerReview && q.peerReview.outcome!=="agree"){
+        toast("Can't lock yet — peer review hasn't agreed with the marked answer"); return;
+      }
+      const update = {status:btn.dataset.status, updatedAt:new Date().toISOString()};
+      if(btn.dataset.status==="in_review" && !q.peerReview){
+        const reviewer = pickReviewer(q.authorEmail);
+        if(reviewer) update.peerReview = freshPeerReview(reviewer);
+      }
       try{
-        await updateDoc(doc(db,"questions",q.id), {status:btn.dataset.status, updatedAt:new Date().toISOString()});
+        await updateDoc(doc(db,"questions",q.id), update);
         logActivity("question_status_changed", `Set "${q.titleEn||"Untitled"}" to ${STATUSES.find(s=>s.v===btn.dataset.status)?.l||btn.dataset.status}`, q.id);
+        if(update.peerReview) logActivity("review_assigned", `Assigned "${q.titleEn||"Untitled"}" to ${update.peerReview.reviewerName} for review`, q.id);
         toast("Status updated");
       }
       catch(err){ toast("Couldn't update status"); }
@@ -2396,6 +2578,76 @@ function countByStatus(email, level, unit){
   const inReview = mine.filter(q=>q.status==="in_review").length;
   const draft = mine.filter(q=>q.status==="draft").length;
   return {finalized, inReview, draft, total:mine.length};
+}
+
+/* ---------------- daily limits, streaks, gamification ----------------
+   All pure functions over the already-subscribed `questions` array --
+   same "compute client-side over a small dataset" approach as every
+   other progress/count helper in this app, no new collection needed. */
+function isSameLocalDay(iso, date){
+  if(!iso) return false;
+  const d = new Date(iso);
+  return d.getFullYear()===date.getFullYear() && d.getMonth()===date.getMonth() && d.getDate()===date.getDate();
+}
+function countCreatedOn(email, date){
+  return questions.filter(q=>q.authorEmail===email && isSameLocalDay(q.createdAt, date)).length;
+}
+function countTodayCreated(email){ return countCreatedOn(email, new Date()); }
+function countReviewsSubmittedOn(email, date){
+  return questions.filter(q=>q.peerReview?.reviewerEmail===email && isSameLocalDay(q.peerReview?.submittedAt, date)).length;
+}
+function countTodaySubmittedReviews(email){ return countReviewsSubmittedOn(email, new Date()); }
+function pendingReviewsFor(email){
+  return questions.filter(q=>q.peerReview?.reviewerEmail===email && q.peerReview?.outcome==="pending");
+}
+function countThisWeek(email){
+  const now = new Date();
+  const start = new Date(now); start.setDate(now.getDate()-6); start.setHours(0,0,0,0);
+  return questions.filter(q=>q.authorEmail===email && q.createdAt && new Date(q.createdAt)>=start).length;
+}
+// Consecutive days (ending today or yesterday -- a day not over yet
+// shouldn't zero the streak) where this teacher met dailyCreationTarget.
+function computeStreak(email){
+  let streak = 0;
+  const day = new Date();
+  if(countCreatedOn(email, day) < dailyLimits.dailyCreationTarget) day.setDate(day.getDate()-1);
+  while(countCreatedOn(email, day) >= dailyLimits.dailyCreationTarget){
+    streak++;
+    day.setDate(day.getDate()-1);
+  }
+  return streak;
+}
+function teamAverageToday(){
+  const activeTeachers = allTeachers.filter(t=>t.role!=="admin" || questions.some(q=>q.authorEmail===t.email));
+  if(activeTeachers.length===0) return 0;
+  const total = activeTeachers.reduce((s,t)=>s+countTodayCreated(t.email),0);
+  return total/activeTeachers.length;
+}
+
+/* ---------------- peer review ---------------- */
+// Balanced + random: among everyone except the author, find whoever has
+// the fewest reviews currently sitting in their "pending" queue, then pick
+// randomly among that tied-least-loaded set -- spreads load evenly without
+// being predictable about who gets what.
+function pickReviewer(authorEmail){
+  const candidates = allTeachers.filter(t=>t.email!==authorEmail);
+  if(candidates.length===0) return null;
+  const load = {};
+  candidates.forEach(t=>load[t.email]=0);
+  questions.forEach(q=>{
+    const r = q.peerReview;
+    if(r && r.outcome==="pending" && load[r.reviewerEmail]!=null) load[r.reviewerEmail]++;
+  });
+  const minLoad = Math.min(...candidates.map(t=>load[t.email]));
+  const leastLoaded = candidates.filter(t=>load[t.email]===minLoad);
+  return leastLoaded[Math.floor(Math.random()*leastLoaded.length)];
+}
+function freshPeerReview(reviewer){
+  return {
+    reviewerEmail: reviewer.email, reviewerName: reviewer.name||reviewer.email,
+    assignedAt: new Date().toISOString(), submittedAt: null,
+    reviewerOptionId: null, reviewerNote: "", reviewTimeMinutes: null, outcome: "pending",
+  };
 }
 
 function progressCard(label, actual, target, sublabel){
@@ -3019,6 +3271,14 @@ function renderAdmin(){
       ${STATUSES.map(s=>`<div class="stat-tile"><div class="num">${byStatus[s.v]||0}</div><div class="lbl">${s.l}</div></div>`).join("")}
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
+    <div class="section-label">Daily limits</div>
+    <p class="desc">Caps how many questions a teacher can create, and how many peer reviews they can submit, per day — keeps quality up by preventing a rush of low-effort questions. The 15/20 split is just the suggested target shown on each teacher's dashboard (hit 15 to keep a streak); the cap below is the hard stop.</p>
+    <div class="filters" style="align-items:flex-end;">
+      <div class="field" style="margin:0;"><label>Daily creation target</label><input type="number" id="limit-target" min="1" value="${dailyLimits.dailyCreationTarget}" style="width:90px;" /></div>
+      <div class="field" style="margin:0;"><label>Daily creation cap</label><input type="number" id="limit-creation" min="1" value="${dailyLimits.dailyCreationLimit}" style="width:90px;" /></div>
+      <div class="field" style="margin:0;"><label>Daily review cap</label><input type="number" id="limit-review" min="1" value="${dailyLimits.dailyReviewLimit}" style="width:90px;" /></div>
+      <button class="btn primary" id="save-limits">Save limits</button>
+    </div>
     <div class="section-label">Backup</div>
     <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
     <button class="btn" id="export-data">⬇ Export all data as JSON</button>
@@ -3105,6 +3365,16 @@ function renderAdmin(){
   loadAllStats();
   subscribeActivityLog();
   document.getElementById("export-data").addEventListener("click", exportAllData);
+  document.getElementById("save-limits").addEventListener("click", async ()=>{
+    const dailyCreationTarget = parseInt(document.getElementById("limit-target").value,10)||15;
+    const dailyCreationLimit = parseInt(document.getElementById("limit-creation").value,10)||20;
+    const dailyReviewLimit = parseInt(document.getElementById("limit-review").value,10)||20;
+    try{
+      await setDoc(doc(db,"settings","limits"), {dailyCreationTarget, dailyCreationLimit, dailyReviewLimit}, {merge:true});
+      logActivity("limits_updated", `Set daily limits to target ${dailyCreationTarget}, creation cap ${dailyCreationLimit}, review cap ${dailyReviewLimit}`, null);
+      toast("Limits saved");
+    }catch(err){ console.error(err); toast("Couldn't save limits"); }
+  });
   document.getElementById("cx-add-chapter").addEventListener("click", async ()=>{
     const bookId = document.getElementById("cx-book").value;
     const code = document.getElementById("cx-code").value.trim();
@@ -3161,6 +3431,8 @@ const ACTIVITY_ICON = {
   tag_removed:"🏷️", teacher_added:"➕", teacher_role_changed:"🔁", teacher_removed:"➖",
   assignment_created:"📋", assignment_updated:"📋", assignment_deleted:"🗑",
   curriculum_added:"📚", curriculum_removed:"📚",
+  contest_created:"🏆", contest_updated:"🏆", contest_deleted:"🗑", contest_quilgo_complete:"✅",
+  review_assigned:"🔍", review_submitted:"✔️", limits_updated:"⚙️",
 };
 function subscribeActivityLog(){
   if(unsubActivityLog) return;

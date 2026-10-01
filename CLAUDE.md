@@ -77,6 +77,23 @@ questions/{questionId}
   likes: [teacherEmail, ...],   -- a lightweight ♥ toggle, separate from the
   -- 5-star rating below; arrayUnion/arrayRemove, allowed even on a locked
   -- question (see isMetadataOnlyChange() in firestore.rules).
+  peerReview: { reviewerEmail, reviewerName, assignedAt, submittedAt,
+    reviewerOptionId, reviewerNote, reviewTimeMinutes, outcome } | null,
+    -- added Oct 2026. Auto-assigned (pickReviewer() -- random among
+    -- whoever has the fewest currently-"pending" reviews, i.e. balanced
+    -- load, not round-robin) the moment status is set to "in_review" and
+    -- no peerReview exists yet. outcome is "pending" until the reviewer
+    -- submits (openReviewForm()), then "agree" (their answer matched
+    -- correctOptionId) or "disagree" (it didn't -- also auto-posts an
+    -- explanatory comment). allowedStatusOptions() removes "finalized"
+    -- from the status dropdown entirely -- not just a soft warning --
+    -- until outcome is "agree", for every role including admin. Editing a
+    -- "disagree" question resets peerReview to "pending" for the *same*
+    -- reviewer (continuity) rather than picking someone new. No rules
+    -- change needed for any of this -- the existing question-update rule
+    -- already lets any teacher write to a non-finalized question
+    -- regardless of authorship, which is exactly what a reviewer updating
+    -- someone else's question needs.
   status (draft|in_review|finalized|uploaded),
   authorName, authorEmail, createdAt, updatedAt,
   editHistory: [{ts, by, note}, ...]
@@ -131,6 +148,17 @@ assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
 teachers/{email, lowercase}
   role: "teacher" | "qb_lead" | "admin"
 
+settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
+  dailyCreationTarget (default 15), dailyCreationLimit (default 20),
+  dailyReviewLimit (default 20)
+  -- one global number each, not per-teacher. Read by every teacher
+  -- (dailyLimits global in index.html, kept live via onSnapshot and
+  -- defaulted to these same numbers before the doc is ever written, so a
+  -- brand-new install behaves sensibly with no setup step); only an admin
+  -- can write it. Enforced client-side only (countTodayCreated()/
+  -- countTodaySubmittedReviews() in index.html) -- same "business rule,
+  -- not a security boundary" treatment as the required-solution check.
+
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
   -- append-only (rules block update/delete entirely); any signed-in teacher
@@ -154,6 +182,7 @@ Images (question figure + per-option images) are stored **inline on the Firestor
 - `PMC_Examination_SOP_v2.pdf` — the real official SOP; transcribed into the app's own "SOP" tab and into the difficulty/options-construction callouts in the question editor (`DIFFICULTY_SOP`/`OPTIONS_CONSTRUCTION_NOTE` in `index.html`). If this PDF is ever revised, those transcriptions need updating too — they're not generated from the PDF at runtime.
 - `design-reference/` — prototype/source-art files (`pmc_4_v1.html`, a bubble-answer-sheet prototype, the logo's Illustrator source) kept for design reference, not runtime assets. `sundarstem_logo.png` stays at the repo root since `index.html` references it directly.
 - `backup-viewer.html` — a standalone, offline, read-only viewer for a backup JSON file (the kind the Admin tab's "Export all data" button produces). No Firebase imports, no network calls at all — open it directly as a local file in any browser if the live site is ever unreachable. Deliberately separate from `index.html`.
+- `PROJECT_GUIDE.md` — the plain-language companion to this file: what the portal does, every tab's purpose, the full question lifecycle including peer review, daily limits, and admin controls. Written for Saffi/teachers/admins, not for an AI or developer picking up the code — update it alongside this file whenever a workflow (not just the data model) changes.
 
 ## Status as of this writing (Sept 2026)
 

@@ -60,6 +60,13 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Admin-adjustable daily creation/review caps (Admin tab's "Daily
+    // limits" form) and any other future global settings docs.
+    match /settings/{id} {
+      allow read: if isTeacher();
+      allow write: if isAdmin();
+    }
+
     // Append-only audit trail (Admin tab's Activity Log). Any signed-in
     // teacher can write an entry about an action they just took; only
     // admins can read the trail back -- it's an accountability tool for
