@@ -620,10 +620,18 @@ let curriculumExtra = [];
 let dailyLimits = { dailyCreationLimit:20, dailyCreationTarget:15, dailyReviewLimit:20 };
 function allCurriculum(){
   const merged = CURRICULUM.map(b=>({...b, chapters:[...b.chapters]}));
+  // Two passes, not one -- curriculumExtra comes from an unordered
+  // collection() query (no orderBy), so there's no guarantee a custom
+  // book's own "book" doc is iterated before its "chapter" docs. A chapter
+  // processed first used to find no matching book yet in `merged` and get
+  // silently dropped by the `if(b)` guard below -- e.g. adding a book then
+  // several chapters to it could show only whichever chapters happened to
+  // sort after the book doc, not all of them.
   curriculumExtra.forEach(doc=>{
-    if(doc.type==="book"){
-      merged.push({bookId:doc.bookId, levels:doc.levels||[], age:doc.age||"", book:doc.bookName, chapters:(doc.chapters||[]).slice(), custom:true});
-    } else if(doc.type==="chapter"){
+    if(doc.type==="book") merged.push({bookId:doc.bookId, levels:doc.levels||[], age:doc.age||"", book:doc.bookName, chapters:(doc.chapters||[]).slice(), custom:true});
+  });
+  curriculumExtra.forEach(doc=>{
+    if(doc.type==="chapter"){
       const b = merged.find(x=>x.bookId===doc.bookId);
       if(b) b.chapters.push({code:doc.code, title:doc.title, subtopics:doc.subtopics||[], custom:true});
     }
