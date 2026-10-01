@@ -30,11 +30,14 @@ service cloud.firestore {
         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["qb_lead", "admin"];
     }
 
-    // Each teacher can read their own allow-list entry (to check status);
-    // admins can read the full list and create/update/delete entries —
-    // this is what powers the Admin tab's "Manage Teachers" UI.
+    // Any signed-in approved teacher can read the full roster -- every
+    // teacher's client (not just admins) needs this to balanced-randomly
+    // pick a peer reviewer from the full team (pickReviewer() in
+    // index.html) and to compute the gamify bar's team-average comparison;
+    // only admins can create/update/delete entries — this is what powers
+    // the Admin tab's "Manage Teachers" UI.
     match /teachers/{email} {
-      allow read: if isSignedIn() && (request.auth.token.email == email || isAdmin());
+      allow read: if isTeacher();
       allow create, update: if isAdmin() &&
         email == email.lower() &&
         request.resource.data.role in ["teacher", "qb_lead", "admin"];

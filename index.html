@@ -956,6 +956,11 @@ function startDataSubscriptions(){
     curriculumExtra = snap.docs.map(d=>({id:d.id, ...d.data()}));
     if(currentTab==="bank" || currentTab==="curriculum" || currentTab==="admin") renderTab();
   }, err=>{ console.error(err); });
+  // Every signed-in teacher (not just admins) needs the full roster
+  // client-side to balanced-randomly pick a peer reviewer (pickReviewer())
+  // and for the gamify bar's team-average comparison -- renderTeachersTable()
+  // already no-ops safely when the Admin tab's own table isn't in the DOM.
+  subscribeTeachers();
 }
 
 function renderTab(){
@@ -3422,7 +3427,8 @@ function subscribeTeachers(){
   if(unsubTeachers) return;
   unsubTeachers = onSnapshot(collection(db,"teachers"), snap=>{
     renderTeachersTable(snap.docs.map(d=>({email:d.id, ...d.data()})));
-  }, err=>{ console.error(err); toast("Couldn't load teachers ("+err.code+")"); });
+    renderGamifyBar();
+  }, err=>{ console.error(err); });
 }
 
 /* ---------------- activity log (admin-only) ---------------- */
