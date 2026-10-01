@@ -1156,8 +1156,8 @@ function openForm(existing){
   let graphicPositionState = existing?.graphicPosition || "center";
   let optionsLayoutState = existing?.optionsLayout || 2;
   let skillsState = existing?.skills ? [...existing.skills] : [];
-  let previewEnSize = 15, previewUrSize = 17;
-  let previewEnLineHeight = 1.5, previewUrLineHeight = 1.5;
+  let previewEnSize = existing?.fontSizeEn || 15, previewUrSize = existing?.fontSizeUr || 17;
+  let previewEnLineHeight = existing?.lineHeightEn || 1.5, previewUrLineHeight = existing?.lineHeightUr || 1.5;
   let step = 1;
   const totalSteps = 4;
   // Firestore hard-caps a document at 1MiB; a question can carry a figure
@@ -1628,6 +1628,8 @@ function openForm(existing){
       graphicPosition: graphicImageState?graphicPositionState:null, optionsLayout: optionsLayoutState,
       graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(), skills: skillsState,
       commonEquation: fd.get("commonEquation").trim(),
+      fontSizeEn: previewEnSize, fontSizeUr: previewUrSize,
+      lineHeightEn: previewEnLineHeight, lineHeightUr: previewUrLineHeight,
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
@@ -1884,8 +1886,8 @@ function questionPreviewHtml(q, config={}){
     ${includeQuestion ? `
     <div class="question-container">
       <div class="q-text-row">
-        <div class="q-lang-box english"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
-        <div class="q-lang-box urdu"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
+        <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5};"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
+        <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||17}px; line-height:${q.lineHeightUr||1.5};"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
       </div>
       ${q.commonEquation ? `<div class="common-equation">$$${escapeHtml(q.commonEquation)}$$</div>` : ""}
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
@@ -2345,11 +2347,11 @@ function renderPrintView(contestId, opts){
         ${qs.map((q,i)=>`
         <div class="question-container">
           <div class="q-text-row">
-            <div class="q-lang-box english">
+            <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5};">
               <span class="box-label">Question ${i+1}</span>
               <p>${renderRichText(escapeHtml(q.promptEn||""))}</p>
             </div>
-            <div class="q-lang-box urdu">
+            <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||17}px; line-height:${q.lineHeightUr||1.5};">
               <span class="box-label">سوال ${i+1}</span>
               <p>${renderRichText(escapeHtml(q.promptUr||""))}</p>
             </div>

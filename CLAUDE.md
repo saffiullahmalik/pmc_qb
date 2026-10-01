@@ -52,6 +52,12 @@ questions/{questionId}
   -- the same "shared, not per-language" slot the figure already occupies.
   -- Rendered in the editor's live preview, the drawer/download's shared
   -- questionPreviewHtml(), and the Contests print view.
+  fontSizeEn/fontSizeUr (px, default 15/17), lineHeightEn/lineHeightUr
+  -- (default 1.5/1.5) -- set via the editor's live-preview +/- controls.
+  -- Fixed Oct 2026: these were only ever applied inside the editor's own
+  -- live preview and never actually saved, so the chosen size/line-height
+  -- never showed up in View, the downloaded image, or the print view --
+  -- now persisted here and read with the same defaults by all three.
   solutionEn (free text, feeds the print engine's Solution Manual -- REQUIRED,
   -- enforced client-side in openForm()'s save validation as of Sept 2026),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
