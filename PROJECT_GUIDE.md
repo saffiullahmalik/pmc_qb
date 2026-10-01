@@ -25,7 +25,7 @@ Every person who can sign in has one of four roles, set by an admin:
 - **Teacher** — can write, edit, and comment on any question; can rate and like questions; can be assigned chapters or peer reviews.
 - **QB Lead** — everything a teacher can, plus can lock a question (once peer review agrees with it) and unlock one back to "In Review."
 - **Admin** — everything above, plus: create/remove teacher accounts, delete questions, manage workload assignments, set daily limits, add curriculum, and see the full activity log.
-- **External Reviewer** — a separate, read-and-comment-only account for an outside spot-checker. They get one simplified screen (a "Pick a random question" button) instead of the normal toolkit, can open **any** question including already-locked ones, and can leave a comment — but can't write, edit, or change a question's status. Their comments carry a purple "External Reviewer" tag so they stand out in the thread, and if they comment on a locked question, the admin viewing it sees an explicit prompt to unlock it and apply the fix.
+- **External Reviewer** — a separate, read-and-comment-only account for an outside spot-checker. They see the normal Question Bank tab — same filters, same search, every question regardless of status — so they can browse and pick whatever they want to check, exactly like everyone else; they just don't get a "+ New Question" button, and can't edit, delete, or change a question's status once they open one, including already-locked ones. Their comments carry a purple "External Reviewer" tag so they stand out in the thread, and if they comment on a locked question, the admin viewing it sees an explicit prompt to unlock it and apply the fix.
 
 There's no public sign-up — an admin creates every login from **Admin → Manage teachers**.
 
@@ -69,7 +69,7 @@ Each assigned chapter's target splits evenly across the three difficulties — a
 - **The reviewer solves it blind** — the review screen hides which option is marked correct. They pick their own answer, write their solution, and log their time, same as if they were a student doing the real exam.
 - **A disagreement is a real signal**, not just an opinion — it usually means the question is ambiguous, has a typo, or the wrong option was marked. That's exactly what this step exists to catch before a question reaches a live contest.
 - Your "to review" queue shows up on the Question Bank tab's dashboard and the Activity feed, with a **Solve now** button.
-- Separately, an **External Reviewer** account (see "Who can do what") can be asked to spot-check random questions — including already-locked ones — any time, independent of this balanced rotation.
+- Separately, an **External Reviewer** account (see "Who can do what") can browse and spot-check any question at any time — including already-locked ones — independent of this balanced rotation.
 
 ---
 

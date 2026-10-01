@@ -1196,32 +1196,15 @@ function activeFilterChips(){
   if(filters.q) chips.push({k:"q", l:`Search: "${filters.q}"`});
   return chips;
 }
-// External reviewers get this instead of the normal Bank tab -- a single
-// "pick something at random" entry point into the existing drawer (full
-// preview + the existing comment thread, which already works on a locked
-// question), rather than the full filter/create/edit toolkit a real
-// content-creating teacher needs.
-function renderExternalReviewerBank(){
-  const main = document.getElementById("main");
-  main.innerHTML = `
-    <div class="pagehead"><h1>Review</h1></div>
-    <p class="desc">Pick a random question from the full bank — including locked ones — solve it yourself, and leave feedback as a comment. An admin can unlock a locked question to apply any correction you suggest.</p>
-    ${!dataReady.questions ? loadingState("Loading questions…") : questions.length===0 ? emptyState("No questions in the bank yet.") : `<button class="btn primary" id="pick-random">🎲 Pick a random question</button>`}
-  `;
-  document.getElementById("pick-random")?.addEventListener("click", ()=>{
-    if(questions.length===0) return;
-    const pick = questions[Math.floor(Math.random()*questions.length)];
-    openQuestion(pick.id);
-  });
-}
 function renderBank(){
-  if(isExternalReviewerUser) return renderExternalReviewerBank();
   const list = filteredQuestions();
   const chips = activeFilterChips();
   const main = document.getElementById("main");
   main.innerHTML = `
-    <div class="pagehead"><h1>Question Bank</h1><button class="btn primary" id="new-q">+ New Question</button></div>
-    <p class="desc">Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.</p>
+    <div class="pagehead"><h1>Question Bank</h1>${isExternalReviewerUser ? "" : `<button class="btn primary" id="new-q">+ New Question</button>`}</div>
+    <p class="desc">${isExternalReviewerUser
+      ? `Browse and filter every question — draft, in review, locked, or uploaded — exactly as a student would see it, then comment with feedback. You can open and comment on any question, including locked ones, but can't create, edit, or change status.`
+      : `Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.`}</p>
     <div class="filters">
       <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
@@ -1232,7 +1215,7 @@ function renderBank(){
       <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-skill"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}" ${filters.skill===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
-      <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;"><input type="checkbox" id="f-mine" ${filters.mine?"checked":""}/> Only mine</label>
+      ${isExternalReviewerUser ? "" : `<label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;"><input type="checkbox" id="f-mine" ${filters.mine?"checked":""}/> Only mine</label>`}
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
     </div>
     ${chips.length ? `<div class="filter-chips">
@@ -1241,13 +1224,13 @@ function renderBank(){
     </div>` : ""}
     ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div><div id="load-more-wrap"></div>`}
   `;
-  document.getElementById("new-q").addEventListener("click", ()=>openForm(null));
+  document.getElementById("new-q")?.addEventListener("click", ()=>openForm(null));
   ["level","type","diff","status","unit","sort","skill"].forEach(k=>{
     document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
   document.getElementById("f-book").addEventListener("change", e=>{ filters.book = e.target.value; filters.unit = ""; bankVisibleCount = 30; renderBank(); });
   document.getElementById("f-q").addEventListener("input", e=>{ filters.q = e.target.value; bankVisibleCount = 30; renderBank(); });
-  document.getElementById("f-mine").addEventListener("change", e=>{ filters.mine = e.target.checked; bankVisibleCount = 30; renderBank(); });
+  document.getElementById("f-mine")?.addEventListener("change", e=>{ filters.mine = e.target.checked; bankVisibleCount = 30; renderBank(); });
   document.querySelectorAll("[data-clear-chip]").forEach(b=>b.addEventListener("click", ()=>{
     const k = b.dataset.clearChip;
     filters[k] = (k==="mine") ? false : "";
@@ -1387,7 +1370,7 @@ function cardHtml(q){
       </div>
       <div class="q-row-actions">
         <button class="btn small" data-view="${q.id}" title="View" aria-label="View question">👁 View</button>
-        ${isLocked
+        ${isExternalReviewerUser ? "" : isLocked
           ? `<span class="btn small" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it from the detail view">🔒 Locked</span>`
           : `<button class="btn small" data-edit="${q.id}" title="Edit" aria-label="Edit question">✏️ Edit</button>`}
         ${q.peerReview?.reviewerEmail===currentUser.email && q.peerReview.outcome==="pending" ? `<button class="btn small primary" data-review="${q.id}" title="Review" aria-label="Review question">🔍 Review</button>` : ""}
