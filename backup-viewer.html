@@ -64,6 +64,7 @@
       <button data-tab="contests">Contests</button>
       <button data-tab="assignments">Assignments</button>
       <button data-tab="teachers">Teachers</button>
+      <button data-tab="curriculum">Curriculum</button>
     </div>
     <input type="search" class="search" id="search" placeholder="Search…" />
     <div id="list"></div>
@@ -120,7 +121,8 @@ function showContent(){
     <div class="stat-tile"><div class="num">${(data.questions||[]).length}</div><div class="lbl">Questions</div></div>
     <div class="stat-tile"><div class="num">${(data.contests||[]).length}</div><div class="lbl">Contests</div></div>
     <div class="stat-tile"><div class="num">${(data.assignments||[]).length}</div><div class="lbl">Assignments</div></div>
-    <div class="stat-tile"><div class="num">${(data.teachers||[]).length}</div><div class="lbl">Teachers</div></div>`;
+    <div class="stat-tile"><div class="num">${(data.teachers||[]).length}</div><div class="lbl">Teachers</div></div>
+    <div class="stat-tile"><div class="num">${(data.curriculumExtra||[]).length}</div><div class="lbl">Custom chapters</div></div>`;
   renderList();
 }
 
@@ -162,6 +164,15 @@ function renderList(){
         <div class="top"><span class="pill">${esc(x.role||"teacher")}</span><span>${fmtDate(x.addedAt)}</span></div>
         <div class="title">${esc(x.name||"—")}</div>
         <div class="body">${esc(x.email||"")}</div>
+      </div>`).join("");
+  } else if(currentTab==="curriculum"){
+    let items = data.curriculumExtra||[];
+    if(q) items = items.filter(x => (x.bookName||"").toLowerCase().includes(q) || (x.chapters||[]).some(c=>(c.title||"").toLowerCase().includes(q)));
+    list.innerHTML = items.length===0 ? `<div class="empty">No custom curriculum entries match.</div>` : items.map(x=>`
+      <div class="row">
+        <div class="top"><span>${(x.levels||[]).map(l=>`<span class="pill">${esc(l)}</span>`).join("")}</span><span>${(x.chapters||[]).length} chapter(s)</span></div>
+        <div class="title">${esc(x.bookName||"—")}</div>
+        <div class="body">${(x.chapters||[]).map(c=>esc(c.code+" — "+c.title)).join(", ")}</div>
       </div>`).join("");
   }
 }

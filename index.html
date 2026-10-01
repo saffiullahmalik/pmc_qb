@@ -510,8 +510,11 @@ function allowedStatusOptions(currentStatus, peerReview){
   // Locking requires an independent reviewer to have actually solved the
   // question and agreed with the marked answer first -- applies to every
   // role, admin included, since the whole point is catching a wrong/
-  // ambiguous answer before it reaches a contest.
-  if(peerReview && peerReview.outcome!=="agree") allowed = allowed.filter(s=>s.v!=="finalized");
+  // ambiguous answer before it reaches a contest. Checked with `?.` (not
+  // `peerReview &&`) so a question with NO peerReview yet -- e.g. a
+  // brand-new question, or any question never moved to "in_review" -- is
+  // blocked too, not just one with an active disagreement.
+  if(peerReview?.outcome!=="agree") allowed = allowed.filter(s=>s.v!=="finalized");
   if(currentStatus && !allowed.some(s=>s.v===currentStatus)){
     allowed = [...allowed, STATUSES.find(s=>s.v===currentStatus)];
   }
@@ -1779,7 +1782,11 @@ function openForm(existing){
       toast(`Daily limit reached — ${dailyLimits.dailyCreationLimit} questions is the cap for today, come back tomorrow`);
       return;
     }
-    if(fd.get("status")==="finalized" && existing?.peerReview && existing.peerReview.outcome!=="agree"){
+    // `existing?.status!=="finalized"` grandfathers in a question that's
+    // *already* finalized (e.g. from before peer review existed) being
+    // resaved without a status change -- this only blocks a NEW transition
+    // into "finalized" that hasn't earned an agreeing review.
+    if(fd.get("status")==="finalized" && existing?.status!=="finalized" && existing?.peerReview?.outcome!=="agree"){
       toast("Can't lock yet — peer review hasn't agreed with the marked answer"); showStep(4); return;
     }
     const correctOpt = optionsState.find(o=>o.id===correctOptionId);
@@ -2174,13 +2181,14 @@ function renderDrawerBody(){
         ${q.peerReview.outcome==="pending" ? `Awaiting review from <b>${escapeHtml(q.peerReview.reviewerName)}</b>.` : ""}
         ${q.peerReview.outcome==="agree" ? `<span class="pill status-uploaded">Agrees</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> solved this and confirmed the marked answer${q.peerReview.reviewTimeMinutes?` in ${q.peerReview.reviewTimeMinutes} min`:""}.` : ""}
         ${q.peerReview.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);">Disagrees</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> solved this differently${q.peerReview.reviewTimeMinutes?` (${q.peerReview.reviewTimeMinutes} min)`:""} — see comments, fix, and resave to send it back.` : ""}
-      </div>` : ""}
+        ${isAdminUser && q.peerReview.outcome==="pending" ? `<div style="margin-top:8px;"><button class="btn small" id="reassign-review">↻ Reassign to someone else</button></div>` : ""}
+      </div>` : (q.status!=="finalized" ? `<div class="section-label">Peer review</div><div class="hint">Not yet reviewed — move to "In Review" to get a reviewer assigned.</div>` : "")}
     <div class="section-label">Status</div>
     <div class="status-track">
       ${STATUSES.map(s=>{
-        const locked = (s.v==="finalized" && !canFinalize) || (s.v==="finalized" && q.peerReview && q.peerReview.outcome!=="agree");
+        const locked = (s.v==="finalized" && !canFinalize) || (s.v==="finalized" && q.status!=="finalized" && q.peerReview?.outcome!=="agree");
         const title = s.v==="finalized" && !canFinalize ? "Only QB Leads or Admins can lock a question"
-          : s.v==="finalized" && q.peerReview && q.peerReview.outcome!=="agree" ? "Can't lock yet — peer review hasn't agreed with the marked answer" : "";
+          : s.v==="finalized" && q.status!=="finalized" && q.peerReview?.outcome!=="agree" ? "Can't lock yet — peer review hasn't agreed with the marked answer" : "";
         return `<button class="btn small ${q.status===s.v?"primary":""}" data-status="${s.v}" ${locked?`disabled title="${title}"`:""}>${s.l}</button>`;
       }).join("")}
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image…</button>
@@ -2212,6 +2220,16 @@ function renderDrawerBody(){
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("edit-q")?.addEventListener("click", ()=>openForm(q));
   document.getElementById("review-q")?.addEventListener("click", ()=>openReviewForm(q));
+  document.getElementById("reassign-review")?.addEventListener("click", async ()=>{
+    const reviewer = pickReviewer(q.authorEmail, q.peerReview.reviewerEmail);
+    if(!reviewer){ toast("No other teacher available to reassign to"); return; }
+    if(!(await confirmDialog(`Reassign from ${q.peerReview.reviewerName} to ${reviewer.name||reviewer.email}? Their in-progress review (if any) will be discarded.`))) return;
+    try{
+      await updateDoc(doc(db,"questions",q.id), {peerReview: freshPeerReview(reviewer)});
+      logActivity("review_assigned", `Reassigned "${q.titleEn||"Untitled"}" from ${q.peerReview.reviewerName} to ${reviewer.name||reviewer.email} for review`, q.id);
+      toast("Reassigned");
+    }catch(err){ console.error(err); toast("Couldn't reassign"); }
+  });
   document.getElementById("download-img").addEventListener("click", ()=>openDownloadOptionsPopup(q));
   document.getElementById("delete-q")?.addEventListener("click", async ()=>{
     if(!(await confirmDialog(`Delete "${q.titleEn||"this question"}" permanently? This can't be undone.`, {danger:true}))) return;
@@ -2238,7 +2256,7 @@ function renderDrawerBody(){
   body.querySelectorAll("[data-status]").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(btn.dataset.status==="finalized" && !canFinalize){ toast("Only QB Leads or Admins can lock a question"); return; }
-      if(btn.dataset.status==="finalized" && q.peerReview && q.peerReview.outcome!=="agree"){
+      if(btn.dataset.status==="finalized" && q.status!=="finalized" && q.peerReview?.outcome!=="agree"){
         toast("Can't lock yet — peer review hasn't agreed with the marked answer"); return;
       }
       const update = {status:btn.dataset.status, updatedAt:new Date().toISOString()};
@@ -2634,8 +2652,8 @@ function teamAverageToday(){
 // the fewest reviews currently sitting in their "pending" queue, then pick
 // randomly among that tied-least-loaded set -- spreads load evenly without
 // being predictable about who gets what.
-function pickReviewer(authorEmail){
-  const candidates = allTeachers.filter(t=>t.email!==authorEmail);
+function pickReviewer(authorEmail, excludeAlso){
+  const candidates = allTeachers.filter(t=>t.email!==authorEmail && t.email!==excludeAlso);
   if(candidates.length===0) return null;
   const load = {};
   candidates.forEach(t=>load[t.email]=0);
@@ -3246,7 +3264,7 @@ async function exportAllData(){
     const payload = {
       exportedAt: new Date().toISOString(),
       exportedBy: currentUser.email,
-      questions, contests, assignments, teachers,
+      questions, contests, assignments, teachers, curriculumExtra, dailyLimits,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
