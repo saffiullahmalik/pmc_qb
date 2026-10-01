@@ -74,14 +74,32 @@
   .link-btn{ all:unset; cursor:pointer; color:var(--accent); font-size:11.5px; }
   .main-col{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
   .main{ padding:26px 32px 60px; max-width:1180px; }
+  .content-row{ display:flex; align-items:flex-start; }
+  .content-row .main{ flex:1 1 auto; min-width:0; }
+  .insights-rail{ width:300px; flex:0 0 300px; padding:26px 32px 40px 0; display:flex; flex-direction:column; gap:14px; }
+  .insights-rail:empty{ display:none; }
+  .insights-rail .dash-chart-card{ margin-bottom:0; }
+  .insights-rail .dash-chart-card b{ font-size:12.5px; }
+  @media (max-width:1400px){
+    .content-row{ flex-direction:column; }
+    .insights-rail{ width:100%; flex:0 0 auto; padding:0 32px 18px; flex-direction:row; flex-wrap:wrap; }
+    .insights-rail .dash-chart-card{ flex:1 1 230px; }
+  }
+  @media (max-width:760px){
+    .insights-rail{ padding:0 16px 14px; }
+  }
   #gamify-bar:empty{ display:none; }
-  .gamify-strip{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:9px 32px; background:var(--surface); border-bottom:1px solid var(--border); font-size:12.5px; }
+  .gamify-strip{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:10px 32px; background:var(--surface); border-bottom:1px solid var(--border); font-size:12.5px; }
   .gamify-strip .streak{ font-weight:700; color:var(--gold); white-space:nowrap; }
-  .gamify-strip .g-metric{ display:flex; align-items:center; gap:6px; white-space:nowrap; }
-  .gamify-strip .g-metric .progress-bar{ width:60px; height:6px; }
+  .gamify-strip .g-metric{ display:flex; align-items:center; gap:7px; white-space:nowrap; }
+  .gamify-strip .g-metric b{ font-size:13px; }
+  .gamify-strip .g-metric .progress-bar{ width:100px; height:9px; background:var(--border); }
+  .gamify-strip .g-metric .progress-bar-fill{ background:var(--accent); }
+  .gamify-strip .g-metric .progress-bar-fill.over-target{ background:var(--gold); }
   .gamify-strip .g-cmp{ margin-left:auto; color:var(--ink-dim); white-space:nowrap; }
   @media (max-width:760px){
     .gamify-strip{ padding:8px 16px; gap:10px; font-size:11.5px; }
+    .gamify-strip .g-metric .progress-bar{ width:64px; }
     .gamify-strip .g-cmp{ display:none; }
   }
   .pagehead{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:4px; padding-top:10px; border-top:3px solid transparent; flex-wrap:wrap;}
@@ -185,10 +203,17 @@
   .dash-chart-card-donut{ display:flex; flex-direction:column; align-items:center; text-align:center; }
   .chart-svg{ width:100%; height:auto; display:block; margin-top:6px; }
   .chart-svg.donut{ width:148px; margin:10px auto 0; }
+  /* A .bar-* class's `fill` (needed so the same classes paint solid <rect>
+     bars and <span class="swatch"> legend dots) otherwise beats a circle's
+     own fill="none" attribute -- CSS always wins over a presentation
+     attribute -- which silently filled the whole donut hole with whichever
+     segment was drawn last instead of leaving a clean ring. */
+  .chart-svg.donut circle{ fill:none; }
   .bar-done{ fill:var(--accent); stroke:var(--accent); background:var(--accent); }
   .bar-inreview{ fill:var(--gold); stroke:var(--gold); background:var(--gold); }
   .bar-draft{ fill:var(--blue); stroke:var(--blue); background:var(--blue); }
   .bar-remaining{ fill:var(--border); stroke:var(--border); background:var(--border); }
+  .bar-disagree{ fill:var(--red); stroke:var(--red); background:var(--red); }
   .chart-value-label{ font-size:10.5px; fill:var(--ink-dim); font-variant-numeric:tabular-nums; }
   .chart-axis-label{ font-size:12px; font-weight:600; fill:var(--ink-dim); }
   .donut-center-value{ font-size:20px; font-weight:600; fill:var(--ink); }
@@ -408,7 +433,10 @@
   </nav>
   <div class="main-col">
     <div id="gamify-bar"></div>
-    <main class="main" id="main"></main>
+    <div class="content-row">
+      <main class="main" id="main"></main>
+      <aside class="insights-rail" id="insights-rail"></aside>
+    </div>
   </div>
 </div>
 
@@ -933,6 +961,7 @@ function startDataSubscriptions(){
     if(openQuestionId) renderDrawer();
     updateActivityBadge();
     renderGamifyBar();
+    renderInsightsRail();
   }, err=>{ console.error(err); toast("Couldn't load questions ("+err.code+")"); });
   const cy = query(collection(db,"contests"), orderBy("createdAt","desc"), limit(200));
   unsubContests = onSnapshot(cy, snap=>{
@@ -953,6 +982,7 @@ function startDataSubscriptions(){
   unsubSettings = onSnapshot(doc(db,"settings","limits"), snap=>{
     if(snap.exists()) dailyLimits = {...dailyLimits, ...snap.data()};
     renderGamifyBar();
+    renderInsightsRail();
     if(currentTab==="admin") renderTab();
   }, err=>console.error(err));
   unsubCurriculumExtra = onSnapshot(collection(db,"curriculumExtra"), snap=>{
@@ -978,6 +1008,7 @@ function renderTab(){
   else if(currentTab==="sop") renderSOP();
   else if(currentTab==="admin") renderAdmin();
   renderGamifyBar();
+  renderInsightsRail();
 }
 // Persistent strip above the tab content (survives renderTab(), which only
 // ever replaces #main) -- the always-visible "how am I doing today" signal
@@ -996,12 +1027,61 @@ function renderGamifyBar(){
     <div class="gamify-strip">
       ${streak>0 ? `<span class="streak">🔥 ${streak}-day streak</span>` : `<span class="hint">No streak yet — hit ${dailyLimits.dailyCreationTarget} today to start one</span>`}
       <span class="g-metric">Today <b class="mono">${today}/${dailyLimits.dailyCreationTarget}</b>${today>dailyLimits.dailyCreationTarget?` <span class="hint">(+${today-dailyLimits.dailyCreationTarget} bonus)</span>`:""}
-        <span class="progress-bar" style="display:inline-block; vertical-align:middle;"><div class="progress-bar-fill" style="width:${pct}%;"></div></span>
+        <span class="progress-bar" style="display:inline-block; vertical-align:middle;"><div class="progress-bar-fill ${today>=dailyLimits.dailyCreationTarget?"over-target":""}" style="width:${pct}%;"></div></span>
       </span>
       <span class="g-metric">This week <b class="mono">${week}</b></span>
       ${toReview>0 ? `<span class="g-metric">📋 <b class="mono">${toReview}</b> to review</span>` : ""}
       <span class="g-cmp">You: ${today} · Team avg today: ${avg.toFixed(1)}</span>
     </div>`;
+}
+// Right-side rail that fills the unused space beside #main on wide screens
+// (same sibling-of-#main-content pattern as #gamify-bar). Only the Bank tab
+// uses it today -- that's where the empty space + "no sense of progress at
+// a glance" complaint was, so it's scoped there rather than added to every
+// tab, where it would crowd pages that don't need it (SOP, Curriculum...).
+function renderInsightsRail(){
+  const rail = document.getElementById("insights-rail");
+  if(!rail) return;
+  if(currentTab!=="bank" || !isTeacherApproved || !currentUser || !dataReady.questions){ rail.innerHTML = ""; return; }
+  const mine = questions.filter(q=>q.authorEmail===currentUser.email);
+  const done = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
+  const inReview = mine.filter(q=>q.status==="in_review").length;
+  const draft = mine.filter(q=>q.status==="draft").length;
+  const week = last7DaysCounts(currentUser.email);
+  const today = countTodayCreated(currentUser.email);
+  const avg = teamAverageToday();
+  const rv = myReviewStats(currentUser.email);
+  const lastPosted = mine.reduce((latest,q)=> (!latest || q.createdAt>latest.createdAt) ? q : latest, null);
+  rail.innerHTML = `
+    <div class="dash-chart-card dash-chart-card-donut">
+      <b>Your questions</b>
+      ${donutChartSvg([{value:done,cls:"bar-done"},{value:inReview,cls:"bar-inreview"},{value:draft,cls:"bar-draft"}], mine.length, "locked")}
+      <div class="chart-legend">
+        <span><span class="swatch bar-done"></span>Locked ${done}</span>
+        <span><span class="swatch bar-inreview"></span>In review ${inReview}</span>
+        <span><span class="swatch bar-draft"></span>Draft ${draft}</span>
+      </div>
+      ${lastPosted ? `<p class="hint" style="margin:8px 0 0;">Last posted ${fmtDate(lastPosted.createdAt)}</p>` : ""}
+    </div>
+    <div class="dash-chart-card">
+      <b>Last 7 days</b>
+      ${simpleBarSvg(week.labels, week.values, "bar-done")}
+    </div>
+    <div class="dash-chart-card">
+      <b>Today vs team</b>
+      ${simpleBarSvg(["You","Team"], [today, Math.round(avg*10)/10], "bar-inreview")}
+      <p class="hint" style="margin:8px 0 0;">You: <b class="mono">${today}</b> &middot; Team avg: <b class="mono">${avg.toFixed(1)}</b></p>
+    </div>
+    ${rv.total ? `<div class="dash-chart-card dash-chart-card-donut">
+      <b>Reviews you've done</b>
+      ${donutChartSvg([{value:rv.agree,cls:"bar-done"},{value:rv.disagree,cls:"bar-disagree"}], rv.total, "agreed")}
+      <div class="chart-legend">
+        <span><span class="swatch bar-done"></span>Agreed ${rv.agree}</span>
+        <span><span class="swatch bar-disagree"></span>Disagreed ${rv.disagree}</span>
+      </div>
+      ${rv.avgTime ? `<p class="hint" style="margin:8px 0 0;">Avg. time per review: ${rv.avgTime} min</p>` : ""}
+    </div>` : ""}
+  `;
 }
 
 /* ================= BANK TAB ================= */
@@ -2646,6 +2726,45 @@ function teamAverageToday(){
   const total = activeTeachers.reduce((s,t)=>s+countTodayCreated(t.email),0);
   return total/activeTeachers.length;
 }
+// Last 7 calendar days (oldest first, today last) -- feeds the Bank tab's
+// insights-rail trend chart.
+function last7DaysCounts(email){
+  const days = [];
+  for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); days.push(d); }
+  return { labels: days.map(d=>d.toLocaleDateString(undefined,{weekday:"narrow"})), values: days.map(d=>countCreatedOn(email,d)) };
+}
+function myReviewStats(email){
+  const mine = questions.filter(q=>q.peerReview?.reviewerEmail===email && q.peerReview.submittedAt);
+  const agree = mine.filter(q=>q.peerReview.outcome==="agree").length;
+  const disagree = mine.filter(q=>q.peerReview.outcome==="disagree").length;
+  const times = mine.map(q=>q.peerReview.reviewTimeMinutes).filter(Boolean);
+  const avgTime = times.length ? Math.round(times.reduce((a,b)=>a+b,0)/times.length) : null;
+  return {agree, disagree, total:mine.length, avgTime};
+}
+// Each teacher's assigned target (summed across every assignment/level/
+// chapter) alongside their actual draft/in-review/done counts across ALL
+// their authored questions -- not just assigned chapters, so self-initiated
+// work shows up too, not only quota fulfillment. Sorted by total output so
+// the most active teachers surface first regardless of whether they have a
+// formal quota at all.
+function teacherComparisonData(){
+  const targets = {};
+  assignments.forEach(a=>{
+    Object.entries(a.quotas||{}).forEach(([email,units])=>{
+      targets[email] = (targets[email]||0) + Object.values(units).reduce((s,n)=>s+n,0);
+    });
+  });
+  return allTeachers
+    .filter(t=>t.role!=="admin" || questions.some(q=>q.authorEmail===t.email) || targets[t.email])
+    .map(t=>{
+      const mine = questions.filter(q=>q.authorEmail===t.email);
+      const done = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
+      const inReview = mine.filter(q=>q.status==="in_review").length;
+      const draft = mine.filter(q=>q.status==="draft").length;
+      return { label: t.name||t.email, target: targets[t.email]||0, draft, inReview, done };
+    })
+    .sort((a,b)=> (b.draft+b.inReview+b.done) - (a.draft+a.inReview+a.done));
+}
 
 /* ---------------- peer review ---------------- */
 // Balanced + random: among everyone except the author, find whoever has
@@ -2732,7 +2851,12 @@ function barChartSvg(levels, byLevel){
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by contest level">${bars}</svg>`;
 }
-function donutChartSvg(segments, total){
+// `label` defaults to "done" (the Workload dashboard's original use); the
+// center % always reflects segments[0] -- every caller puts its headline
+// segment first, so this stays correct without re-finding by class name
+// and lets a non-"done" first segment (e.g. review agreement rate) use its
+// own label.
+function donutChartSvg(segments, total, label="done"){
   const R = 52, STROKE = 20, cx = 74, cy = 74, C = 2*Math.PI*R;
   const denom = total>0 ? total : 1;
   let offset = 0, arcs = "";
@@ -2744,14 +2868,66 @@ function donutChartSvg(segments, total){
     arcs += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke-width="${STROKE}" class="${seg.cls}" stroke-dasharray="${dash.toFixed(1)} ${(C-dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`;
     offset += slot;
   });
-  const done = segments.find(s=>s.cls==="bar-done")?.value||0;
-  const pct = total>0 ? Math.round(done/total*100) : 0;
+  const headline = segments[0]?.value||0;
+  const pct = total>0 ? Math.round(headline/total*100) : 0;
   return `<svg viewBox="0 0 148 148" class="chart-svg donut" role="img" aria-label="Overall status breakdown">
     <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke-width="${STROKE}" class="bar-remaining"/>
     ${arcs}
     <text x="${cx}" y="${cy-2}" text-anchor="middle" class="mono donut-center-value">${pct}%</text>
-    <text x="${cx}" y="${cy+14}" text-anchor="middle" class="donut-center-label">done</text>
+    <text x="${cx}" y="${cy+14}" text-anchor="middle" class="donut-center-label">${escapeHtml(label)}</text>
   </svg>`;
+}
+// Horizontal stacked bar, one row per category -- used for the Admin tab's
+// per-teacher comparison, where the category count can grow as staff grows
+// (a vertical bar chart's x-axis labels would get cramped; rows scale better).
+// `rows` is an array (not a label-keyed map) specifically so two teachers
+// who happen to share a display name never collide/overwrite each other.
+function hBarChartSvg(rows){
+  const rowH = 24, gap = 12, padT = 6, labelW = 108, padR = 54;
+  const W = 540, chartW = W - labelW - padR;
+  const maxVal = Math.max(1, ...rows.map(s=>Math.max(s.target, s.draft+s.inReview+s.done)));
+  const H = rows.length * (rowH+gap) + padT;
+  let out = "";
+  rows.forEach((s,i)=>{
+    const y = padT + i*(rowH+gap);
+    const total = s.draft + s.inReview + s.done;
+    const remaining = Math.max(0, s.target - total);
+    const segs = [
+      {v:s.done, cls:"bar-done"}, {v:s.inReview, cls:"bar-inreview"},
+      {v:s.draft, cls:"bar-draft"}, {v:remaining, cls:"bar-remaining"},
+    ];
+    let x = labelW;
+    let segsSvg = "";
+    segs.forEach(seg=>{
+      if(seg.v<=0) return;
+      const w = (seg.v/maxVal)*chartW;
+      segsSvg += `<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${rowH}" class="${seg.cls}" rx="3"/>`;
+      x += w;
+    });
+    out += `<text x="${labelW-8}" y="${(y+rowH/2+4).toFixed(1)}" text-anchor="end" class="chart-axis-label" style="font-size:11px;">${escapeHtml(s.label)}</text>`;
+    out += segsSvg;
+    out += `<text x="${(x+6).toFixed(1)}" y="${(y+rowH/2+4).toFixed(1)}" class="mono chart-value-label">${total}${s.target?"/"+s.target:""}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by teacher">${out}</svg>`;
+}
+// Small single-series bar chart (daily trend, "you vs team" comparisons) --
+// no target/breakdown concept, just one bar per label.
+function simpleBarSvg(labels, values, cls="bar-done"){
+  const W = 260, H = 108, padT = 14, padB = 18, gap = 6;
+  const chartH = H - padT - padB;
+  const maxVal = Math.max(1, ...values);
+  const barW = (W - gap*(labels.length-1)) / labels.length;
+  let bars = "";
+  labels.forEach((lab,i)=>{
+    const v = values[i];
+    const h = maxVal>0 ? (v/maxVal)*chartH : 0;
+    const x = i*(barW+gap);
+    const y = padT + chartH - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(h,v>0?2:0).toFixed(1)}" class="${cls}" rx="2"/>`;
+    bars += `<text x="${(x+barW/2).toFixed(1)}" y="${H-5}" text-anchor="middle" class="chart-axis-label" style="font-size:9.5px;">${escapeHtml(String(lab))}</text>`;
+    if(v>0) bars += `<text x="${(x+barW/2).toFixed(1)}" y="${(y-4).toFixed(1)}" text-anchor="middle" class="chart-value-label">${v}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Chart">${bars}</svg>`;
 }
 
 function renderWorkload(){
@@ -2977,15 +3153,17 @@ function openAssignmentForm(existing){
         <div class="field"><label>Due date <span class="hint">(optional)</span></label><input type="date" id="as-due" value="${escapeHtml(sharedDue)}" /></div>
       </div>
       <div class="level-tabs" id="as-level-tabs">${LEVELS.map(l=>`<button type="button" class="${l===activeLevel?"active":""}" data-level="${l}">${l}</button>`).join("")}</div>
+      <p class="hint" style="margin:8px 0 0;">${curriculumExtra.some(e=>e.type==="book") ? `Custom chapters (purple "Custom" tag below) come from Curriculum &rarr; manage or add more tracks like IQ &amp; Logic Reasoning there.` : `Want a cross-level track like <b>IQ &amp; Logic Reasoning</b> to assign here? <button type="button" class="link-btn" id="as-goto-curriculum" style="display:inline; font-weight:600;">Add it from Curriculum Map &rarr;</button>`}</p>
       <div class="kanban-board" id="as-board"></div>
       <button class="btn primary" id="as-save" style="width:100%; justify-content:center; margin-top:16px;">Save all assignments</button>
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  document.getElementById("as-goto-curriculum")?.addEventListener("click", ()=>{ closeModal(); switchTab("curriculum"); });
 
   function chapterCard(c, count){
     return `<div class="kanban-card" draggable="true" data-chapter="${c.code}">
-      <span class="kanban-card-title">${c.code} — ${escapeHtml(c.title)}</span>
+      <span class="kanban-card-title">${c.custom?`<span class="pill" style="background:var(--violet-soft); color:var(--violet); font-size:9.5px; padding:1px 6px; margin-right:4px;">Custom</span>`:""}${c.code} — ${escapeHtml(c.title)}</span>
       ${count!=null ? `<div style="display:flex; align-items:center; gap:6px;">
         <input type="number" min="1" class="kanban-card-count" data-chapter-count="${c.code}" value="${count}" />
         <button type="button" class="btn small" data-remove-chapter="${c.code}" title="Unassign" aria-label="Unassign ${escapeHtml(c.title)}" style="margin-left:auto; padding:2px 7px;">✕</button>
@@ -3287,6 +3465,7 @@ function renderAdmin(){
   }
   const byStatus = {}; STATUSES.forEach(s=>byStatus[s.v]=0);
   questions.forEach(q=>{ byStatus[q.status] = (byStatus[q.status]||0)+1; });
+  const teamRows = teacherComparisonData();
   main.innerHTML = `
     <div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
     <p class="desc">Enter post-test performance per question to compute p-value and discrimination index (Teacher Guide §10).</p>
@@ -3294,6 +3473,30 @@ function renderAdmin(){
       ${STATUSES.map(s=>`<div class="stat-tile"><div class="num">${byStatus[s.v]||0}</div><div class="lbl">${s.l}</div></div>`).join("")}
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
+    <div class="section-label">Team comparison</div>
+    <p class="desc">How much each teacher is actually producing — created vs. locked, against their assigned target where one exists.</p>
+    ${teamRows.length===0 ? emptyState("No teacher activity yet.") : `
+      <div class="dash-charts">
+        <div class="dash-chart-card">
+          <b>By teacher</b>
+          ${hBarChartSvg(teamRows)}
+          <div class="chart-legend">
+            <span><span class="swatch bar-done"></span>Locked/uploaded</span>
+            <span><span class="swatch bar-inreview"></span>In review</span>
+            <span><span class="swatch bar-draft"></span>Draft</span>
+            <span><span class="swatch bar-remaining"></span>Not started (if assigned)</span>
+          </div>
+        </div>
+        <div class="dash-chart-card dash-chart-card-donut">
+          <b>All questions, by status</b>
+          ${donutChartSvg([
+            {value:byStatus.finalized+byStatus.uploaded, cls:"bar-done"},
+            {value:byStatus.in_review, cls:"bar-inreview"},
+            {value:byStatus.draft, cls:"bar-draft"},
+          ], questions.length, "locked")}
+        </div>
+      </div>
+    `}
     <div class="section-label">Daily limits</div>
     <p class="desc">Caps how many questions a teacher can create, and how many peer reviews they can submit, per day — keeps quality up by preventing a rush of low-effort questions. The 15/20 split is just the suggested target shown on each teacher's dashboard (hit 15 to keep a streak); the cap below is the hard stop.</p>
     <div class="filters" style="align-items:flex-end;">
@@ -3446,6 +3649,7 @@ function subscribeTeachers(){
   unsubTeachers = onSnapshot(collection(db,"teachers"), snap=>{
     renderTeachersTable(snap.docs.map(d=>({email:d.id, ...d.data()})));
     renderGamifyBar();
+    renderInsightsRail();
   }, err=>{ console.error(err); });
 }
 
