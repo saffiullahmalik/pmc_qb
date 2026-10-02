@@ -2911,8 +2911,10 @@ function teacherComparisonData(){
 function pickReviewer(authorEmail, excludeAlso){
   // External reviewers are a separate, admin-managed spot-check channel --
   // not part of the balanced-random peer-review rotation every other
-  // teacher participates in.
-  const candidates = allTeachers.filter(t=>t.email!==authorEmail && t.email!==excludeAlso && t.role!=="external_reviewer");
+  // teacher participates in. Admins are excluded too, by request -- review
+  // work distributes only among the content-creating teachers/QB leads,
+  // not the admin account itself.
+  const candidates = allTeachers.filter(t=>t.email!==authorEmail && t.email!==excludeAlso && t.role!=="external_reviewer" && t.role!=="admin");
   if(candidates.length===0) return null;
   const load = {};
   candidates.forEach(t=>load[t.email]=0);

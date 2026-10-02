@@ -82,8 +82,10 @@ questions/{questionId}
     reviewerOptionId, reviewerNote, reviewTimeMinutes, outcome } | null,
     -- added Oct 2026. Auto-assigned (pickReviewer() -- random among
     -- whoever has the fewest currently-"pending" reviews, i.e. balanced
-    -- load, not round-robin) the moment status is set to "in_review" and
-    -- no peerReview exists yet. outcome is "pending" until the reviewer
+    -- load, not round-robin; excludes "admin" and "external_reviewer" roles
+    -- by request, so review work distributes only among teacher/qb_lead
+    -- accounts, not the admin account itself) the moment status is set to
+    -- "in_review" and no peerReview exists yet. outcome is "pending" until the reviewer
     -- submits (openReviewForm()), then "agree" (their answer matched
     -- correctOptionId) or "disagree" (it didn't -- also auto-posts an
     -- explanatory comment). allowedStatusOptions() removes "finalized"
