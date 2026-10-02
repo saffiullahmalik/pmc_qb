@@ -77,8 +77,8 @@ Each assigned chapter's target splits evenly across the three difficulties — a
 
 A thin strip at the top of every tab shows your current streak, today's progress toward the daily target, this week's total, and how many reviews you still owe. The Question Bank tab's right-hand panel goes further:
 
-- **Your assignments** — one thin bar per PMC level showing how much of your assigned quota is locked; click a level to expand it into its individual chapters.
-- **Your questions** — a donut of your own draft/in-review/locked breakdown.
+- **Your assignments** — one thin bar per PMC level showing how much of your assigned quota is locked (with a ✓ once a level hits 100%); click a level to expand it into its individual chapters, each showing its own draft/in-review/reviewed breakdown underneath.
+- **Your questions** — a donut of your own draft/in-review/reviewed/locked breakdown. "Reviewed" means a peer already agreed with the answer — it's just waiting on a QB Lead to lock it, which is different from still being actively reviewed.
 - **Last 7 days** — a bar per day of how many questions you created.
 - **Team** — every active teacher as a bar labeled by initials (e.g. "Imdad Hussain" → "IH"), sorted by total output (creating *and* reviewing both count), with your own bar bolded so you can find yourself at a glance — hover any bar for the full name.
 - **Reviews** — your pending review count with a **Solve now** button, plus a donut of how often your completed reviews agreed with the marked answer.

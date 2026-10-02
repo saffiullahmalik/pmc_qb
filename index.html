@@ -226,6 +226,7 @@
   .bar-draft{ fill:var(--blue); stroke:var(--blue); background:var(--blue); }
   .bar-remaining{ fill:var(--border); stroke:var(--border); background:var(--border); }
   .bar-disagree{ fill:var(--red); stroke:var(--red); background:var(--red); }
+  .bar-reviewed{ fill:var(--violet); stroke:var(--violet); background:var(--violet); }
   .chart-value-label{ font-size:10.5px; fill:var(--ink-dim); font-variant-numeric:tabular-nums; }
   .chart-axis-label{ font-size:12px; font-weight:600; fill:var(--ink-dim); }
   .donut-center-value{ font-size:20px; font-weight:600; fill:var(--ink); }
@@ -1075,7 +1076,8 @@ function renderInsightsRail(){
   if(currentTab!=="bank" || !isTeacherApproved || !currentUser || isExternalReviewerUser || !dataReady.questions){ rail.innerHTML = ""; return; }
   const mine = questions.filter(q=>q.authorEmail===currentUser.email);
   const done = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
-  const inReview = mine.filter(q=>q.status==="in_review").length;
+  const reviewed = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
+  const inReview = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome!=="agree").length;
   const draft = mine.filter(q=>q.status==="draft").length;
   const week = last7DaysCounts(currentUser.email);
   const rv = myReviewStats(currentUser.email);
@@ -1097,29 +1099,33 @@ function renderInsightsRail(){
         const s = byLevel[l];
         const pct = s.target>0 ? Math.min(100, Math.round(s.done/s.target*100)) : 0;
         const expanded = railExpandedLevel===l;
+        const levelComplete = s.target>0 && s.done>=s.target;
         return `
         <button type="button" class="hbar-row" data-rail-level="${l}">
           <span class="hbar-chevron">${expanded?"▾":"▸"}</span>
           <span class="hbar-label">${l}</span>
           <span class="hbar-track"><span class="hbar-fill" style="width:${pct}%;"></span></span>
-          <span class="hbar-value">${s.done}/${s.target}</span>
+          <span class="hbar-value">${s.done}/${s.target}${levelComplete?" ✓":""}</span>
         </button>
         ${expanded ? s.chapters.map(ch=>{
           const cpct = ch.target>0 ? Math.min(100, Math.round(ch.c.finalized/ch.target*100)) : 0;
+          const chComplete = ch.target>0 && ch.c.finalized>=ch.target;
           return `
           <div class="hbar-row sub">
             <span class="hbar-label" title="${escapeHtml(ch.unit+" — "+ch.title)}">${escapeHtml(ch.unit)}</span>
             <span class="hbar-track"><span class="hbar-fill" style="width:${cpct}%;"></span></span>
-            <span class="hbar-value">${ch.c.finalized}/${ch.target}</span>
-          </div>`;
+            <span class="hbar-value">${ch.c.finalized}/${ch.target}${chComplete?" ✓":""}</span>
+          </div>
+          <div class="hint" style="margin:0 0 4px 108px; font-size:10px;">${ch.c.draft} draft &middot; ${ch.c.inReview} in review &middot; ${ch.c.reviewed} reviewed${chComplete?` &middot; <b style="color:var(--accent);">Complete</b>`:""}</div>`;
         }).join("") : ""}`;
       }).join("")}
     </div>` : ""}
     <div class="dash-chart-card dash-chart-card-donut">
       <b>Your questions</b>
-      ${donutChartSvg([{value:done,cls:"bar-done"},{value:inReview,cls:"bar-inreview"},{value:draft,cls:"bar-draft"}], mine.length, "locked")}
+      ${donutChartSvg([{value:done,cls:"bar-done"},{value:reviewed,cls:"bar-reviewed"},{value:inReview,cls:"bar-inreview"},{value:draft,cls:"bar-draft"}], mine.length, "locked")}
       <div class="chart-legend">
         <span><span class="swatch bar-done"></span>Locked ${done}</span>
+        <span><span class="swatch bar-reviewed"></span>Reviewed ${reviewed}</span>
         <span><span class="swatch bar-inreview"></span>In review ${inReview}</span>
         <span><span class="swatch bar-draft"></span>Draft ${draft}</span>
       </div>
@@ -2798,12 +2804,20 @@ function unitsForLevel(level){
   return chaptersForLevel(level).map(c=>c.code);
 }
 
+// Four mutually-exclusive, sum-to-total buckets -- not just the 3 raw
+// status values -- because "in_review" alone conflates two very different
+// states: a question a reviewer is still actively working (or disagreed
+// on), and one that's already been reviewed and agreed but is just sitting
+// there waiting for a QB Lead to click Lock. `reviewed` splits that second
+// state out so progress displays can show it distinctly instead of
+// burying it inside "in review".
 function countByStatus(email, level, unit){
   const mine = questions.filter(q=> q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit);
   const finalized = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
-  const inReview = mine.filter(q=>q.status==="in_review").length;
+  const reviewed = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
+  const inReview = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome!=="agree").length;
   const draft = mine.filter(q=>q.status==="draft").length;
-  return {finalized, inReview, draft, total:mine.length};
+  return {finalized, reviewed, inReview, draft, total:mine.length};
 }
 
 /* ---------------- daily limits, streaks, gamification ----------------
@@ -2895,12 +2909,13 @@ function teacherComparisonData(){
     .map(t=>{
       const mine = questions.filter(q=>q.authorEmail===t.email);
       const done = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
-      const inReview = mine.filter(q=>q.status==="in_review").length;
+      const reviewed = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
+      const inReview = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome!=="agree").length;
       const draft = mine.filter(q=>q.status==="draft").length;
       const reviewsDone = questions.filter(q=>q.peerReview?.reviewerEmail===t.email && q.peerReview.submittedAt).length;
-      return { label: t.name||t.email, email: t.email, target: targets[t.email]||0, draft, inReview, done, reviewsDone };
+      return { label: t.name||t.email, email: t.email, target: targets[t.email]||0, draft, inReview, reviewed, done, reviewsDone };
     })
-    .sort((a,b)=> (b.draft+b.inReview+b.done+b.reviewsDone) - (a.draft+a.inReview+a.done+a.reviewsDone));
+    .sort((a,b)=> (b.draft+b.inReview+b.reviewed+b.done+b.reviewsDone) - (a.draft+a.inReview+a.reviewed+a.done+a.reviewsDone));
 }
 
 /* ---------------- peer review ---------------- */
@@ -2936,9 +2951,10 @@ function freshPeerReview(reviewer){
 
 function progressCard(label, actual, target, sublabel){
   const pct = target>0 ? Math.min(100, Math.round((actual/target)*100)) : 0;
+  const complete = target>0 && actual>=target;
   return `
-    <div class="progress-card">
-      <div class="row"><b>${escapeHtml(label)}</b><span class="mono">${actual} / ${target}</span></div>
+    <div class="progress-card" style="${complete?"border-color:var(--accent);":""}">
+      <div class="row"><b>${escapeHtml(label)}</b><span class="mono">${actual} / ${target}${complete?` <span class="pill status-uploaded" style="margin-left:5px;">Complete</span>`:""}</span></div>
       <div class="progress-bar"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
       ${sublabel ? `<div class="hint" style="margin-top:5px;">${sublabel}</div>` : ""}
     </div>`;
@@ -2978,17 +2994,17 @@ function dueDateLabel(dueDate){
 function barChartSvg(levels, byLevel){
   const W = 520, H = 190, padL = 6, padR = 6, padT = 22, padB = 24;
   const chartW = W - padL - padR, chartH = H - padT - padB;
-  const maxVal = Math.max(1, ...levels.map(l=>Math.max(byLevel[l].target, byLevel[l].draft+byLevel[l].inReview+byLevel[l].done)));
+  const maxVal = Math.max(1, ...levels.map(l=>Math.max(byLevel[l].target, byLevel[l].draft+byLevel[l].inReview+(byLevel[l].reviewed||0)+byLevel[l].done)));
   const groupW = chartW / levels.length;
   const barW = Math.min(64, groupW*0.5);
   let bars = "";
   levels.forEach((l,i)=>{
     const s = byLevel[l];
     const x = padL + i*groupW + (groupW-barW)/2;
-    const total = s.draft + s.inReview + s.done;
+    const total = s.draft + s.inReview + (s.reviewed||0) + s.done;
     const remaining = Math.max(0, s.target - total);
     const segs = [
-      {v:s.done, cls:"bar-done"}, {v:s.inReview, cls:"bar-inreview"},
+      {v:s.done, cls:"bar-done"}, {v:s.reviewed||0, cls:"bar-reviewed"}, {v:s.inReview, cls:"bar-inreview"},
       {v:s.draft, cls:"bar-draft"}, {v:remaining, cls:"bar-remaining"},
     ];
     let y = padT + chartH;
@@ -3007,7 +3023,8 @@ function barChartSvg(levels, byLevel){
     // draft+in-review work that hadn't been locked yet. The segments above
     // still show that other work's color-coded breakdown; only the number
     // changes to match what "/target" means everywhere else.
-    bars += `<text x="${x+barW/2}" y="${(y-8).toFixed(1)}" text-anchor="middle" class="mono chart-value-label">${s.done}/${s.target}</text>`;
+    const isComplete = s.target>0 && s.done>=s.target;
+    bars += `<text x="${x+barW/2}" y="${(y-8).toFixed(1)}" text-anchor="middle" class="mono chart-value-label" ${isComplete?'style="fill:var(--accent); font-weight:700;"':""}>${s.done}/${s.target}${isComplete?" ✓":""}</text>`;
     bars += `<text x="${x+barW/2}" y="${H-6}" text-anchor="middle" class="chart-axis-label">${escapeHtml(l)}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by contest level">${bars}</svg>`;
@@ -3050,15 +3067,15 @@ function donutChartSvg(segments, total, label="done"){
 function hBarChartSvg(rows, labelW=108, W=540, padR=74){
   const rowH = 24, gap = 12, padT = 6;
   const chartW = W - labelW - padR;
-  const maxVal = Math.max(1, ...rows.map(s=>Math.max(s.target, s.draft+s.inReview+s.done)));
+  const maxVal = Math.max(1, ...rows.map(s=>Math.max(s.target, s.draft+s.inReview+(s.reviewed||0)+s.done)));
   const H = rows.length * (rowH+gap) + padT;
   let out = "";
   rows.forEach((s,i)=>{
     const y = padT + i*(rowH+gap);
-    const total = s.draft + s.inReview + s.done;
+    const total = s.draft + s.inReview + (s.reviewed||0) + s.done;
     const remaining = Math.max(0, s.target - total);
     const segs = [
-      {v:s.done, cls:"bar-done"}, {v:s.inReview, cls:"bar-inreview"},
+      {v:s.done, cls:"bar-done"}, {v:s.reviewed||0, cls:"bar-reviewed"}, {v:s.inReview, cls:"bar-inreview"},
       {v:s.draft, cls:"bar-draft"}, {v:remaining, cls:"bar-remaining"},
     ];
     let x = labelW;
@@ -3115,13 +3132,13 @@ function renderWorkload(){
       html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)} ${a.dueDate?" · "+dueDateLabel(a.dueDate):""}</p>`;
       Object.entries(a.quotas[currentUser.email]).forEach(([unit,target])=>{
         const c = countByStatus(currentUser.email, a.contestLevel, unit);
-        html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.finalized} locked/uploaded`);
+        html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.reviewed} reviewed (awaiting lock) · ${c.finalized} locked`);
       });
     });
   }
   if(isAdminUser){
     const byLevel = {};
-    LEVELS.forEach(l=>{ byLevel[l] = { teacherSet:new Set(), chapterSet:new Set(), target:0, draft:0, inReview:0, done:0 }; });
+    LEVELS.forEach(l=>{ byLevel[l] = { teacherSet:new Set(), chapterSet:new Set(), target:0, draft:0, inReview:0, reviewed:0, done:0 }; });
     assignments.forEach(a=>{
       const lvl = byLevel[a.contestLevel]; if(!lvl) return;
       Object.entries(a.quotas||{}).forEach(([email,units])=>{
@@ -3130,17 +3147,17 @@ function renderWorkload(){
           lvl.chapterSet.add(unit);
           lvl.target += target;
           const c = countByStatus(email, a.contestLevel, unit);
-          lvl.draft += c.draft; lvl.inReview += c.inReview; lvl.done += c.finalized;
+          lvl.draft += c.draft; lvl.inReview += c.inReview; lvl.reviewed += c.reviewed; lvl.done += c.finalized;
         });
       });
     });
     const totalTeachers = new Set();
-    let totalTarget=0, totalDraft=0, totalInReview=0, totalDone=0, totalChapters=0;
+    let totalTarget=0, totalDraft=0, totalInReview=0, totalReviewed=0, totalDone=0, totalChapters=0;
     LEVELS.forEach(l=>{
       byLevel[l].teacherSet.forEach(t=>totalTeachers.add(t));
       totalChapters += byLevel[l].chapterSet.size;
       totalTarget += byLevel[l].target; totalDraft += byLevel[l].draft;
-      totalInReview += byLevel[l].inReview; totalDone += byLevel[l].done;
+      totalInReview += byLevel[l].inReview; totalReviewed += byLevel[l].reviewed; totalDone += byLevel[l].done;
     });
     const overallPct = totalTarget>0 ? Math.round(totalDone/totalTarget*100) : 0;
 
@@ -3159,7 +3176,8 @@ function renderWorkload(){
             <b>Progress by level</b>
             ${barChartSvg(LEVELS, byLevel)}
             <div class="chart-legend">
-              <span><span class="swatch bar-done"></span>Locked/uploaded</span>
+              <span><span class="swatch bar-done"></span>Locked</span>
+              <span><span class="swatch bar-reviewed"></span>Reviewed (awaiting lock)</span>
               <span><span class="swatch bar-inreview"></span>In review</span>
               <span><span class="swatch bar-draft"></span>Draft</span>
               <span><span class="swatch bar-remaining"></span>Not started</span>
@@ -3168,8 +3186,14 @@ function renderWorkload(){
           <div class="dash-chart-card dash-chart-card-donut">
             <b>Overall status</b>
             ${donutChartSvg([
-              {value:totalDone, cls:"bar-done"}, {value:totalInReview, cls:"bar-inreview"}, {value:totalDraft, cls:"bar-draft"},
-            ], totalTarget)}
+              {value:totalDone, cls:"bar-done"}, {value:totalReviewed, cls:"bar-reviewed"}, {value:totalInReview, cls:"bar-inreview"}, {value:totalDraft, cls:"bar-draft"},
+            ], totalTarget, "locked")}
+            <div class="chart-legend">
+              <span><span class="swatch bar-done"></span>Locked ${totalDone}</span>
+              <span><span class="swatch bar-reviewed"></span>Reviewed ${totalReviewed}</span>
+              <span><span class="swatch bar-inreview"></span>In review ${totalInReview}</span>
+              <span><span class="swatch bar-draft"></span>Draft ${totalDraft}</span>
+            </div>
           </div>
         </div>
         <div class="section-label" style="margin-top:22px;">By contest level <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">— click a level to see who's working on it</span></div>
@@ -3177,10 +3201,12 @@ function renderWorkload(){
           ${LEVELS.map(l=>{
             const s = byLevel[l];
             const pct = s.target>0 ? Math.round(s.done/s.target*100) : 0;
-            return `<button type="button" class="level-card ${workloadExpandedLevel===l?"active":""}" data-level-card="${l}">
-              <div class="level-card-head">${l}</div>
+            const isComplete = s.target>0 && s.done>=s.target;
+            return `<button type="button" class="level-card ${workloadExpandedLevel===l?"active":""}" data-level-card="${l}" style="${isComplete?"border-color:var(--accent);":""}">
+              <div class="level-card-head">${l}${isComplete?` <span class="pill status-uploaded" style="font-size:9.5px;">Complete</span>`:""}</div>
               <div class="progress-bar" style="margin:8px 0 6px;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
-              <div class="hint">${s.teacherSet.size} teacher${s.teacherSet.size===1?"":"s"} &middot; ${pct}% done</div>
+              <div class="hint">${s.teacherSet.size} teacher${s.teacherSet.size===1?"":"s"} &middot; ${s.done}/${s.target} locked (${pct}%)</div>
+              <div class="hint">${s.draft} draft &middot; ${s.inReview} in review &middot; ${s.reviewed||0} reviewed</div>
             </button>`;
           }).join("")}
         </div>
@@ -3240,10 +3266,12 @@ function renderLevelRoster(){
   const merged = {};
   assignments.filter(a=>a.contestLevel===level).forEach(a=>{
     Object.entries(a.quotas||{}).forEach(([email,units])=>{
-      merged[email] = merged[email] || {email, target:0, done:0};
+      merged[email] = merged[email] || {email, target:0, draft:0, inReview:0, reviewed:0, done:0};
       Object.entries(units).forEach(([unit,target])=>{
         merged[email].target += target;
-        merged[email].done += countByStatus(email, level, unit).finalized;
+        const c = countByStatus(email, level, unit);
+        merged[email].draft += c.draft; merged[email].inReview += c.inReview;
+        merged[email].reviewed += c.reviewed; merged[email].done += c.finalized;
       });
     });
   });
@@ -3254,11 +3282,15 @@ function renderLevelRoster(){
       ${rows.map(r=>{
         const t = allTeachers.find(x=>x.email===r.email);
         const pct = r.target>0 ? Math.round(r.done/r.target*100) : 0;
-        return `<button type="button" class="teacher-roster-row" data-teacher-detail="${r.email}" data-teacher-level="${level}">
-          <span class="teacher-roster-name">${escapeHtml(t?.name||r.email)}</span>
-          <div class="progress-bar" style="flex:1; margin:0 12px;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
-          <span class="hint mono">${r.done}/${r.target}</span>
-        </button>`;
+        const complete = r.target>0 && r.done>=r.target;
+        return `<div>
+          <button type="button" class="teacher-roster-row" data-teacher-detail="${r.email}" data-teacher-level="${level}">
+            <span class="teacher-roster-name">${escapeHtml(t?.name||r.email)}</span>
+            <div class="progress-bar" style="flex:1; margin:0 12px;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
+            <span class="hint mono">${r.done}/${r.target}${complete?" ✓":""}</span>
+          </button>
+          <div class="hint" style="margin:2px 0 8px 2px;">${r.draft} draft &middot; ${r.inReview} in review &middot; ${r.reviewed} reviewed${complete?` &middot; <b style="color:var(--accent);">Complete</b>`:""}</div>
+        </div>`;
       }).join("")}
     </div>`;
   animateProgressBars();
@@ -3278,7 +3310,7 @@ function openTeacherWorkloadDetail(email, level){
     <div class="drawer-head"><h2>${escapeHtml(t?.name||email)} — ${escapeHtml(level)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
     <p class="hint" style="margin:0 0 14px;">${escapeHtml(email)}</p>
     ${rows.length===0 ? emptyState("No chapters assigned for this level.") : rows.map(r=>
-      progressCard(`${r.unit} — ${chapterByCode(r.unit)?.title||""}`, r.c.finalized, r.target, `${r.c.draft} draft &middot; ${r.c.inReview} in review &middot; ${r.c.finalized} locked/uploaded`)
+      progressCard(`${r.unit} — ${chapterByCode(r.unit)?.title||""}`, r.c.finalized, r.target, `${r.c.draft} draft &middot; ${r.c.inReview} in review &middot; ${r.c.reviewed} reviewed (awaiting lock) &middot; ${r.c.finalized} locked`)
     ).join("")}
   </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
@@ -3636,12 +3668,21 @@ function renderAdmin(){
   }
   const byStatus = {}; STATUSES.forEach(s=>byStatus[s.v]=0);
   questions.forEach(q=>{ byStatus[q.status] = (byStatus[q.status]||0)+1; });
+  // "In Review" alone conflates two different states -- split out whichever
+  // of those have already been peer-reviewed and agreed (just waiting on a
+  // QB Lead to lock them) from the ones still actually being worked on.
+  const reviewedCount = questions.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
+  const inReviewCount = byStatus.in_review - reviewedCount;
   const teamRows = teacherComparisonData();
   main.innerHTML = `
     <div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
     <p class="desc">Enter post-test performance per question to compute p-value and discrimination index (Teacher Guide §10).</p>
     <div class="admin-grid">
-      ${STATUSES.map(s=>`<div class="stat-tile"><div class="num">${byStatus[s.v]||0}</div><div class="lbl">${s.l}</div></div>`).join("")}
+      <div class="stat-tile"><div class="num">${byStatus.draft||0}</div><div class="lbl">Draft</div></div>
+      <div class="stat-tile"><div class="num">${inReviewCount}</div><div class="lbl">In Review</div></div>
+      <div class="stat-tile"><div class="num">${reviewedCount}</div><div class="lbl">Reviewed (awaiting lock)</div></div>
+      <div class="stat-tile"><div class="num">${byStatus.finalized||0}</div><div class="lbl">Locked</div></div>
+      <div class="stat-tile"><div class="num">${byStatus.uploaded||0}</div><div class="lbl">Uploaded</div></div>
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
     <div class="section-label">Team comparison</div>
@@ -3652,7 +3693,8 @@ function renderAdmin(){
           <b>By teacher</b>
           ${hBarChartSvg(teamRows)}
           <div class="chart-legend">
-            <span><span class="swatch bar-done"></span>Locked/uploaded</span>
+            <span><span class="swatch bar-done"></span>Locked</span>
+            <span><span class="swatch bar-reviewed"></span>Reviewed (awaiting lock)</span>
             <span><span class="swatch bar-inreview"></span>In review</span>
             <span><span class="swatch bar-draft"></span>Draft</span>
             <span><span class="swatch bar-remaining"></span>Not started (if assigned)</span>
@@ -3662,9 +3704,16 @@ function renderAdmin(){
           <b>All questions, by status</b>
           ${donutChartSvg([
             {value:byStatus.finalized+byStatus.uploaded, cls:"bar-done"},
-            {value:byStatus.in_review, cls:"bar-inreview"},
+            {value:reviewedCount, cls:"bar-reviewed"},
+            {value:inReviewCount, cls:"bar-inreview"},
             {value:byStatus.draft, cls:"bar-draft"},
           ], questions.length, "locked")}
+          <div class="chart-legend">
+            <span><span class="swatch bar-done"></span>Locked ${byStatus.finalized+byStatus.uploaded}</span>
+            <span><span class="swatch bar-reviewed"></span>Reviewed ${reviewedCount}</span>
+            <span><span class="swatch bar-inreview"></span>In review ${inReviewCount}</span>
+            <span><span class="swatch bar-draft"></span>Draft ${byStatus.draft}</span>
+          </div>
         </div>
       </div>
     `}

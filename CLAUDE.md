@@ -176,6 +176,25 @@ Difficulty balance (Oct 2026, no new doc -- derived from assignments.quotas):
   shows this live (updateDifficultyBalanceHint(), triggered on chapter/
   level/difficulty change) before the teacher ever tries to save.
 
+Progress breakdown (Oct 2026, no new field -- derived from status +
+peerReview.outcome): countByStatus() returns FOUR mutually-exclusive,
+sum-to-total buckets, not the 3 raw status values -- {draft, inReview,
+reviewed, finalized, total}. "reviewed" is status==="in_review" AND
+peerReview.outcome==="agree" (peer-reviewed and agreed, just waiting on a
+QB Lead to click Lock); "inReview" is status==="in_review" with any other
+peerReview state (still being worked, or disagreed). This split exists
+because a real report showed the Workload tab's "Progress by level" chart
+reading "8/180" while the roster directly below it read "0/45" for every
+teacher -- the chart's number meant draft+inReview+done combined, not done,
+against a target that means "locked" everywhere else. Every progress
+display now shows locked/target as the headline number, with draft/
+in-review/reviewed broken out explicitly alongside it (never silently
+folded into one ambiguous total), and a "Complete" badge/checkmark appears
+anywhere actual>=target>0 (progressCard(), the per-chapter/per-teacher
+roster rows, the Workload level cards, the rail's assignment bars). A new
+bar-reviewed CSS class (violet) renders this as a 4th stacked-bar segment
+in barChartSvg()/hBarChartSvg(), between "locked" and "in review".
+
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
   -- append-only (rules block update/delete entirely); any signed-in teacher
