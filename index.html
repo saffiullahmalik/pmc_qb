@@ -2964,7 +2964,17 @@ function dueDateLabel(dueDate){
    Status colors are fixed and reused app-wide (draft=blue, in review=gold,
    locked/uploaded=accent, not-started=border-gray), never reassigned by
    filter, and every segment carries a direct value label rather than
-   relying on color alone. ---------------------------------------------- */
+   relying on color alone.
+   Numeric label rule (fixed Oct 2026 after a real report: a level's bar
+   read "8/180" while every teacher under it read "0/45", because the bar
+   labeled draft+inReview+done combined, not done, against a target that
+   specifically means "locked"): whenever a number is shown as X/target,
+   X must be s.done (locked/uploaded) -- never draft+inReview+done combined
+   -- so it always matches what every other "X/target" readout in the app
+   means (the roster rows, progressCard, the rail's assignment bars, the
+   gamify bar). Only when there's no target at all (self-initiated work,
+   no quota) does a bare total-output number stand alone, since there's
+   nothing it could misrepresent progress against. ---------------------- */
 function barChartSvg(levels, byLevel){
   const W = 520, H = 190, padL = 6, padR = 6, padT = 22, padB = 24;
   const chartW = W - padL - padR, chartH = H - padT - padB;
@@ -2988,7 +2998,16 @@ function barChartSvg(levels, byLevel){
       y -= h;
       bars += `<rect x="${x}" y="${y.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" class="${seg.cls}" rx="3"/>`;
     });
-    bars += `<text x="${x+barW/2}" y="${(y-8).toFixed(1)}" text-anchor="middle" class="mono chart-value-label">${total}/${s.target}</text>`;
+    // Labeled with s.done (locked/uploaded), not `total` (draft+inReview+
+    // done combined) -- `target` specifically means "locked" everywhere
+    // else in the app (the roster rows right below this chart, every
+    // progressCard, the rail's assignment bars), so showing anything else
+    // against it here read as a contradiction: this bar could say "8/180"
+    // while every teacher's own row said "0/45", because 8 counted
+    // draft+in-review work that hadn't been locked yet. The segments above
+    // still show that other work's color-coded breakdown; only the number
+    // changes to match what "/target" means everywhere else.
+    bars += `<text x="${x+barW/2}" y="${(y-8).toFixed(1)}" text-anchor="middle" class="mono chart-value-label">${s.done}/${s.target}</text>`;
     bars += `<text x="${x+barW/2}" y="${H-6}" text-anchor="middle" class="chart-axis-label">${escapeHtml(l)}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by contest level">${bars}</svg>`;
@@ -3052,7 +3071,13 @@ function hBarChartSvg(rows, labelW=108, W=540, padR=74){
     });
     out += `<text x="${labelW-8}" y="${(y+rowH/2+4).toFixed(1)}" text-anchor="end" class="chart-axis-label" style="font-size:11px; ${s.isMe?"font-weight:800; fill:var(--ink);":""}">${escapeHtml(s.label)}${s.fullName?`<title>${escapeHtml(s.fullName)}</title>`:""}</text>`;
     out += segsSvg;
-    out += `<text x="${(x+6).toFixed(1)}" y="${(y+rowH/2+4).toFixed(1)}" class="mono chart-value-label">${total}${s.target?"/"+s.target:""}${s.reviewsDone?" · "+s.reviewsDone+"r":""}</text>`;
+    // Same fix as barChartSvg: against a target, the number must mean
+    // "locked" (s.done) -- not `total` (draft+inReview+done) -- since
+    // that's what "/target" means everywhere else in the app. With no
+    // target (self-initiated work, no formal quota), there's nothing to
+    // misrepresent progress against, so `total` ("how much have they made
+    // at all") stays the more useful number there.
+    out += `<text x="${(x+6).toFixed(1)}" y="${(y+rowH/2+4).toFixed(1)}" class="mono chart-value-label">${s.target ? `${s.done}/${s.target}` : `${total}`}${s.reviewsDone?" · "+s.reviewsDone+"r":""}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by teacher">${out}</svg>`;
 }
