@@ -107,6 +107,16 @@ questions/{questionId}
     -- already lets any teacher write to a non-finalized question
     -- regardless of authorship, which is exactly what a reviewer updating
     -- someone else's question needs.
+    -- Admin -> Admin & Analytics -> "Pending reviews" (added Oct 2026)
+    -- lists every question with peerReview.outcome==="pending" across the
+    -- whole bank in one table (not one-at-a-time from inside each
+    -- question), with a per-row dropdown (eligibleReviewerCandidates()) to
+    -- reassign to a specific person, or a "Take back" button that sets
+    -- peerReview to null entirely -- the question sits unassigned (status
+    -- stays "in_review") until an admin reassigns it from here, or anyone
+    -- re-clicks the drawer's "In Review" status button, which re-triggers
+    -- pickReviewer() the same way it does for a question that's never had
+    -- a reviewer at all.
   status (draft|in_review|finalized|uploaded),
   authorName, authorEmail, createdAt, updatedAt,
   editHistory: [{ts, by, note}, ...]

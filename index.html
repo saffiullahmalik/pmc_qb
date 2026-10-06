@@ -3072,21 +3072,26 @@ function teacherComparisonData(){
 // the fewest reviews currently sitting in their "pending" queue, then pick
 // randomly among that tied-least-loaded set -- spreads load evenly without
 // being predictable about who gets what.
-function pickReviewer(authorEmail, excludeAlso){
-  // Allowlist (role==="teacher"||"qb_lead"), not a denylist -- external
-  // reviewers, uploaders, and admins are never eligible, and a new role
-  // added later is excluded by default instead of needing to be
-  // remembered here. Further restricted to teachers who actually have an
-  // assigned chapter quota somewhere -- by request, someone with no
-  // assignment at all isn't part of the content-creation pool this
-  // balanced rotation distributes review work across.
+// Allowlist (role==="teacher"||"qb_lead"), not a denylist -- external
+// reviewers, uploaders, and admins are never eligible, and a new role
+// added later is excluded by default instead of needing to be remembered
+// here. Further restricted to teachers who actually have an assigned
+// chapter quota somewhere -- by request, someone with no assignment at
+// all isn't part of the content-creation pool review work distributes
+// across. Shared by pickReviewer() (balanced-random auto-assign) and the
+// Admin tab's "Pending reviews" reassign dropdown (every eligible name,
+// admin picks).
+function eligibleReviewerCandidates(authorEmail, excludeAlso){
   const assignedEmails = new Set();
   assignments.forEach(a=>Object.keys(a.quotas||{}).forEach(email=>assignedEmails.add(email)));
-  const candidates = allTeachers.filter(t=>
+  return allTeachers.filter(t=>
     t.email!==authorEmail && t.email!==excludeAlso &&
     (t.role==="teacher" || t.role==="qb_lead") &&
     assignedEmails.has(t.email)
   );
+}
+function pickReviewer(authorEmail, excludeAlso){
+  const candidates = eligibleReviewerCandidates(authorEmail, excludeAlso);
   if(candidates.length===0) return null;
   const load = {};
   candidates.forEach(t=>load[t.email]=0);
@@ -3838,6 +3843,8 @@ function renderAdmin(){
   const reviewedCount = questions.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
   const inReviewCount = byStatus.in_review - reviewedCount;
   const teamRows = teacherComparisonData();
+  const pendingReviews = questions.filter(q=>q.peerReview?.outcome==="pending")
+    .sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
   main.innerHTML = `
     <div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
     <p class="desc">Enter post-test performance per question to compute p-value and discrimination index (Teacher Guide §10).</p>
@@ -3881,6 +3888,30 @@ function renderAdmin(){
         </div>
       </div>
     `}
+    <div class="section-label">Pending reviews (${pendingReviews.length})</div>
+    <p class="desc">Every question currently awaiting a peer review, with who it's assigned to and when. Reassign to a specific person, or take it back (unassign) if a reviewer's gone quiet — both work on any pending review, not just one at a time from inside the question itself.</p>
+    ${pendingReviews.length===0 ? emptyState("Nothing awaiting review right now.") : `
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Question</th><th>Author</th><th>Reviewer</th><th>Assigned</th><th></th></tr></thead>
+      <tbody>
+        ${pendingReviews.map(q=>{
+          const candidates = eligibleReviewerCandidates(q.authorEmail, q.peerReview.reviewerEmail);
+          return `<tr>
+            <td><button type="button" class="link-btn" data-goto-question="${q.id}" style="text-align:left;">${escapeHtml(q.titleEn||"Untitled")}</button></td>
+            <td>${escapeHtml(q.authorName||"—")}</td>
+            <td>${escapeHtml(q.peerReview.reviewerName)}</td>
+            <td class="mono">${fmtDate(q.peerReview.assignedAt)}</td>
+            <td style="white-space:nowrap; display:flex; gap:6px; align-items:center;">
+              <select data-reassign-to="${q.id}" style="padding:4px 6px; font-size:12px;" ${candidates.length===0?"disabled":""}>
+                <option value="">${candidates.length===0?"No one else eligible":"Reassign to…"}</option>
+                ${candidates.map(t=>`<option value="${escapeHtml(t.email)}">${escapeHtml(t.name||t.email)}</option>`).join("")}
+              </select>
+              <button class="btn small" data-unassign="${q.id}" title="Clear this assignment without picking someone new yet">Take back</button>
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>`}
     <div class="section-label">Daily limits</div>
     <p class="desc">Caps how many questions a teacher can create, and how many peer reviews they can submit, per day — keeps quality up by preventing a rush of low-effort questions. The 15/20 split is just the suggested target shown on each teacher's dashboard (hit 15 to keep a streak); the cap below is the hard stop.</p>
     <div class="filters" style="align-items:flex-end;">
@@ -3974,6 +4005,29 @@ function renderAdmin(){
   });
   loadAllStats();
   subscribeActivityLog();
+  document.querySelectorAll("[data-goto-question]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.gotoQuestion)));
+  document.querySelectorAll("[data-reassign-to]").forEach(sel=>sel.addEventListener("change", async ()=>{
+    const q = questions.find(x=>x.id===sel.dataset.reassignTo);
+    const newEmail = sel.value;
+    if(!q || !newEmail) return;
+    const t = allTeachers.find(x=>x.email===newEmail);
+    if(!(await confirmDialog(`Reassign "${q.titleEn||"this question"}" from ${q.peerReview.reviewerName} to ${t?.name||newEmail}? Their in-progress review (if any) will be discarded.`))) { sel.value=""; return; }
+    try{
+      await updateDoc(doc(db,"questions",q.id), {peerReview: freshPeerReview(t||{email:newEmail})});
+      logActivity("review_assigned", `Reassigned "${q.titleEn||"Untitled"}" from ${q.peerReview.reviewerName} to ${t?.name||newEmail} for review`, q.id);
+      toast("Reassigned");
+    }catch(err){ console.error(err); toast("Couldn't reassign"); sel.value=""; }
+  }));
+  document.querySelectorAll("[data-unassign]").forEach(b=>b.addEventListener("click", async ()=>{
+    const q = questions.find(x=>x.id===b.dataset.unassign);
+    if(!q) return;
+    if(!(await confirmDialog(`Take this review back from ${q.peerReview.reviewerName}? "${q.titleEn||"This question"}" will sit unassigned until someone reassigns it.`, {danger:true}))) return;
+    try{
+      await updateDoc(doc(db,"questions",q.id), {peerReview: null});
+      logActivity("review_assigned", `Took back the review of "${q.titleEn||"Untitled"}" from ${q.peerReview.reviewerName} — now unassigned`, q.id);
+      toast("Taken back — now unassigned");
+    }catch(err){ console.error(err); toast("Couldn't update"); }
+  }));
   document.getElementById("export-data").addEventListener("click", exportAllData);
   document.getElementById("save-limits").addEventListener("click", async ()=>{
     const dailyCreationTarget = parseInt(document.getElementById("limit-target").value,10)||15;
