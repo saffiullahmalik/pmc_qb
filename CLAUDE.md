@@ -88,7 +88,14 @@ questions/{questionId}
   -- categorize problems for this age band) unioned with every skill
   -- already used across questions (allSkills() in index.html) -- any
   -- teacher can add a new one from the editor, no admin step, no separate
-  -- Firestore collection.
+  -- Firestore collection. Editor UI (Oct 2026): switched from a flat wall
+  -- of click-to-toggle chips over every skill in the system to a
+  -- dropdown-to-add pattern -- the chip row now shows only what's already
+  -- selected on this question (each removable via its own ×), and the
+  -- <select> only lists skills not yet selected (populateSkillSelect() in
+  -- openForm(), called after every add/remove) -- the flat wall stopped
+  -- being readable once the skill list grew past the DEFAULT_SKILLS seed.
+  -- The free-text "type a new skill" input is unchanged.
   usedIn: [contest name, ...],   -- NOTE: `uploadedToQuilgo` (bool) is deprecated/removed
   -- from the UI — Quilgo upload status now lives on contests/{id}.uploadStatus
   -- instead (see below), since "uploaded" only makes sense per contest paper.

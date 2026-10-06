@@ -1668,10 +1668,13 @@ function openForm(existing){
             </div>
             <div id="off-task-warning"></div>
             <div class="field">
-              <label>Skills tested <span class="hint">(the problem-solving technique this question exercises — click to tag, or add a new one)</span></label>
+              <label>Skills tested <span class="hint">(the problem-solving technique this question exercises — pick from the dropdown, or add a new one)</span></label>
               <div id="skills-chip-wrap" class="skills-chip-wrap"></div>
               <div style="display:flex; gap:6px; margin-top:8px;">
-                <input type="text" id="skill-new-input" placeholder="Type a new skill…" style="flex:1;" />
+                <select id="skill-select" style="flex:1;"><option value="">+ Choose a skill…</option></select>
+              </div>
+              <div style="display:flex; gap:6px; margin-top:8px;">
+                <input type="text" id="skill-new-input" placeholder="Or type a new skill…" style="flex:1;" />
                 <button type="button" class="btn small" id="skill-add-btn">+ Add</button>
               </div>
             </div>
@@ -1983,16 +1986,34 @@ function openForm(existing){
   document.getElementById("f-difficulty").addEventListener("change", ()=>{ updateDifficultyCallout(); updateDifficultyBalanceHint(); });
   formEl.querySelectorAll('input[name="level"]').forEach(el=>el.addEventListener("change", updateDifficultyBalanceHint));
 
+  // The skill list has grown past what a flat click-to-tag chip wall can show
+  // cleanly -- Oct 2026, switched to a dropdown-to-add pattern: the chip wrap
+  // now only shows what's already SELECTED (each removable via its own ×),
+  // and the <select> only lists what's NOT selected yet, so neither list
+  // grows unbounded with every skill in the system at once.
   function renderSkillsChips(){
     const wrap = document.getElementById("skills-chip-wrap");
-    wrap.innerHTML = allSkills().map(s=>`<button type="button" class="pill skill-chip ${skillsState.includes(s)?"on":""}" data-skill="${escapeHtml(s)}">${escapeHtml(s)}</button>`).join("");
+    wrap.innerHTML = skillsState.length===0
+      ? `<span class="hint">No skills tagged yet.</span>`
+      : skillsState.map(s=>`<button type="button" class="pill skill-chip on" data-skill="${escapeHtml(s)}" title="Remove">${escapeHtml(s)} ×</button>`).join("");
     wrap.querySelectorAll("[data-skill]").forEach(b=>b.addEventListener("click", ()=>{
-      const s = b.dataset.skill;
-      skillsState = skillsState.includes(s) ? skillsState.filter(x=>x!==s) : [...skillsState, s];
+      skillsState = skillsState.filter(x=>x!==b.dataset.skill);
       renderSkillsChips();
     }));
+    populateSkillSelect();
+  }
+  function populateSkillSelect(){
+    const sel = document.getElementById("skill-select");
+    const remaining = allSkills().filter(s=>!skillsState.includes(s));
+    sel.innerHTML = `<option value="">+ Choose a skill…</option>` + remaining.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
   }
   renderSkillsChips();
+  document.getElementById("skill-select").addEventListener("change", e=>{
+    const s = e.target.value;
+    if(!s) return;
+    if(!skillsState.includes(s)) skillsState = [...skillsState, s];
+    renderSkillsChips();
+  });
   const addSkill = ()=>{
     const input = document.getElementById("skill-new-input");
     const s = input.value.trim();
