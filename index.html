@@ -26,7 +26,7 @@
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&family=Noto+Naskh+Arabic:wght@400;600&display=swap');
 
   :root{
     --bg:#f7f4ec; --surface:#fffdf8; --surface-2:#eee8da; --border:#e0d8c4; --ink:#221e17; --ink-dim:#6b6355;
@@ -530,6 +530,22 @@ const QTYPES = [
 const DIFFS = [
   {v:"medium", l:"Medium"}, {v:"hard", l:"Hard"}, {v:"very_hard", l:"Very Hard"}
 ];
+// Whole-box font choices (not inline tokens like bold/italic -- picking a
+// different typeface mid-sentence doesn't make sense the way bold does).
+// First entry in each list is the existing default, so old saved questions
+// with no fontFamilyEn/Ur field fall back to exactly what they already render as.
+const FONT_LIBRARY = {
+  en: [
+    {v:"'Public Sans', system-ui, sans-serif", l:"Public Sans (default)"},
+    {v:"'Lexend', system-ui, sans-serif", l:"Lexend"},
+    {v:"Georgia, serif", l:"Georgia"},
+    {v:"Arial, system-ui, sans-serif", l:"Arial"},
+  ],
+  ur: [
+    {v:"'Noto Nastaliq Urdu', serif", l:"Noto Nastaliq (default)"},
+    {v:"'Noto Naskh Arabic', serif", l:"Noto Naskh"},
+  ],
+};
 const DIFF_DOTS = {medium:1, hard:2, very_hard:3};
 function difficultyDots(v){
   const filled = DIFF_DOTS[v]||0;
@@ -1575,6 +1591,8 @@ function openForm(existing){
   let skillsState = existing?.skills ? [...existing.skills] : [];
   let previewEnSize = existing?.fontSizeEn || 15, previewUrSize = existing?.fontSizeUr || 14;
   let previewEnLineHeight = existing?.lineHeightEn || 1.5, previewUrLineHeight = existing?.lineHeightUr || 1.5;
+  let previewEnFont = existing?.fontFamilyEn || FONT_LIBRARY.en[0].v, previewUrFont = existing?.fontFamilyUr || FONT_LIBRARY.ur[0].v;
+  let previewEnAlign = existing?.textAlignEn || "left", previewUrAlign = existing?.textAlignUr || "right";
   let step = 1;
   const totalSteps = 4;
   // Firestore hard-caps a document at 1MiB; a question can carry a figure
@@ -1743,6 +1761,22 @@ function openForm(existing){
               <span class="hint">Urdu line height:</span>
               <button type="button" class="btn small" id="preview-ur-lh-shrink" aria-label="Tighten Urdu line height">−</button>
               <button type="button" class="btn small" id="preview-ur-lh-grow" aria-label="Loosen Urdu line height">+</button>
+            </div>
+            <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+              <span class="hint">English font:</span>
+              <select id="preview-en-font">${FONT_LIBRARY.en.map(f=>`<option value="${escapeHtml(f.v)}" ${previewEnFont===f.v?"selected":""}>${f.l}</option>`).join("")}</select>
+              <span class="hint">Align:</span>
+              <button type="button" class="btn small ${previewEnAlign==="left"?"primary":""}" data-en-align="left" aria-label="Align English left">L</button>
+              <button type="button" class="btn small ${previewEnAlign==="center"?"primary":""}" data-en-align="center" aria-label="Align English center">C</button>
+              <button type="button" class="btn small ${previewEnAlign==="right"?"primary":""}" data-en-align="right" aria-label="Align English right">R</button>
+            </div>
+            <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+              <span class="hint">Urdu font:</span>
+              <select id="preview-ur-font">${FONT_LIBRARY.ur.map(f=>`<option value="${escapeHtml(f.v)}" ${previewUrFont===f.v?"selected":""}>${f.l}</option>`).join("")}</select>
+              <span class="hint">Align:</span>
+              <button type="button" class="btn small ${previewUrAlign==="left"?"primary":""}" data-ur-align="left" aria-label="Align Urdu left">L</button>
+              <button type="button" class="btn small ${previewUrAlign==="center"?"primary":""}" data-ur-align="center" aria-label="Align Urdu center">C</button>
+              <button type="button" class="btn small ${previewUrAlign==="right"?"primary":""}" data-ur-align="right" aria-label="Align Urdu right">R</button>
             </div>
             <div id="live-preview"></div>
           </div>
@@ -2042,11 +2076,11 @@ function openForm(existing){
     pane.innerHTML = `
       <div class="question-container">
         <div class="q-text-row">
-          <div class="q-lang-box english" style="font-size:${previewEnSize}px; line-height:${previewEnLineHeight};">
+          <div class="q-lang-box english" style="font-size:${previewEnSize}px; line-height:${previewEnLineHeight}; font-family:${previewEnFont}; text-align:${previewEnAlign};">
             <span class="box-label">Question</span>
             <p>${renderRichText(escapeHtml(promptEn))||`<span class="hint">English prompt will appear here…</span>`}</p>
           </div>
-          <div class="q-lang-box urdu" style="font-size:${previewUrSize}px; line-height:${previewUrLineHeight};">
+          <div class="q-lang-box urdu" style="font-size:${previewUrSize}px; line-height:${previewUrLineHeight}; font-family:${previewUrFont}; text-align:${previewUrAlign};">
             <span class="box-label">سوال</span>
             <p>${renderRichText(escapeHtml(promptUr))||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
@@ -2087,6 +2121,10 @@ function openForm(existing){
   document.getElementById("preview-en-lh-grow").addEventListener("click", ()=>{ previewEnLineHeight = Math.min(3.0, +(previewEnLineHeight+0.1).toFixed(1)); renderLivePreview(); });
   document.getElementById("preview-ur-lh-shrink").addEventListener("click", ()=>{ previewUrLineHeight = Math.max(1.0, +(previewUrLineHeight-0.1).toFixed(1)); renderLivePreview(); });
   document.getElementById("preview-ur-lh-grow").addEventListener("click", ()=>{ previewUrLineHeight = Math.min(3.0, +(previewUrLineHeight+0.1).toFixed(1)); renderLivePreview(); });
+  document.getElementById("preview-en-font").addEventListener("change", e=>{ previewEnFont = e.target.value; renderLivePreview(); });
+  document.getElementById("preview-ur-font").addEventListener("change", e=>{ previewUrFont = e.target.value; renderLivePreview(); });
+  document.querySelectorAll("[data-en-align]").forEach(b=>b.addEventListener("click", ()=>{ previewEnAlign = b.dataset.enAlign; document.querySelectorAll("[data-en-align]").forEach(x=>x.classList.toggle("primary", x===b)); renderLivePreview(); }));
+  document.querySelectorAll("[data-ur-align]").forEach(b=>b.addEventListener("click", ()=>{ previewUrAlign = b.dataset.urAlign; document.querySelectorAll("[data-ur-align]").forEach(x=>x.classList.toggle("primary", x===b)); renderLivePreview(); }));
   document.getElementById("editor-steps").addEventListener("click", e=>{
     const b = e.target.closest("[data-step]"); if(!b) return;
     showStep(parseInt(b.dataset.step,10));
@@ -2112,6 +2150,8 @@ function openForm(existing){
       commonEquation: fd.get("commonEquation").trim(),
       fontSizeEn: previewEnSize, fontSizeUr: previewUrSize,
       lineHeightEn: previewEnLineHeight, lineHeightUr: previewUrLineHeight,
+      fontFamilyEn: previewEnFont, fontFamilyUr: previewUrFont,
+      textAlignEn: previewEnAlign, textAlignUr: previewUrAlign,
       status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
@@ -2411,8 +2451,8 @@ function questionPreviewHtml(q, config={}){
     ${includeQuestion ? `
     <div class="question-container">
       <div class="q-text-row">
-        <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5};"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
-        <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5};"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
+        <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5}; font-family:${q.fontFamilyEn||FONT_LIBRARY.en[0].v}; text-align:${q.textAlignEn||"left"};"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
+        <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5}; font-family:${q.fontFamilyUr||FONT_LIBRARY.ur[0].v}; text-align:${q.textAlignUr||"right"};"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
       </div>
       ${commonEquationHtml(q.commonEquation)}
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
@@ -2841,7 +2881,25 @@ function openContestForm(existing){
         <div class="row2" style="align-items:start;">
           <div>
             <div class="section-label" style="margin-top:0;">Select questions <span class="hint" id="picker-count"></span></div>
-            <div id="q-picker" style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;"></div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+              <input type="text" id="qp-search" placeholder="Search question text…" style="flex:2; min-width:180px;" />
+              <select id="qp-unit" style="flex:1; min-width:150px;"><option value="">All chapters</option></select>
+              <select id="qp-diff" style="flex:1; min-width:120px;"><option value="">All difficulties</option>${DIFFS.map(d=>`<option value="${d.v}">${d.l}</option>`).join("")}</select>
+              <select id="qp-skill" style="flex:1; min-width:140px;"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}</select>
+              <select id="qp-author" style="flex:1; min-width:140px;"><option value="">All authors</option>${allAuthors().map(([email,name])=>`<option value="${escapeHtml(email)}">${escapeHtml(name)}</option>`).join("")}</select>
+              <select id="qp-sort" style="flex:1; min-width:150px;">
+                <option value="unit">Sort: Chapter</option>
+                <option value="difficulty">Sort: Difficulty</option>
+                <option value="newest">Sort: Newest first</option>
+                <option value="author">Sort: Author</option>
+              </select>
+              <label style="display:flex; align-items:center; gap:5px; font-size:12px; white-space:nowrap;"><input type="checkbox" id="qp-hide-used" checked/> Hide already-used</label>
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <button type="button" class="btn small" id="qp-select-all">Select all filtered</button>
+              <button type="button" class="btn small ghost" id="qp-clear">Clear selection</button>
+            </div>
+            <div id="q-picker" style="max-height:420px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; padding:8px;"></div>
           </div>
           <div>
             <div class="section-label" style="margin-top:0;">Selected order <span class="hint">(drag to reorder — this is the paper order)</span></div>
@@ -2858,20 +2916,55 @@ function openContestForm(existing){
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
 
   if(!isEdit){
+    // Filters live here (not in a module-level object) since they only
+    // matter for the lifetime of this picker -- reset every time the modal
+    // opens fresh, same scoping as selectedOrder above.
+    const pickerFilters = {search:"", unit:"", diff:"", skill:"", author:"", sort:"unit", hideUsed:true};
+    const SORTERS = {
+      unit: (a,b)=> (a.unit||"").localeCompare(b.unit||"") || (DIFF_DOTS[a.difficulty]||0)-(DIFF_DOTS[b.difficulty]||0),
+      difficulty: (a,b)=> (DIFF_DOTS[a.difficulty]||0)-(DIFF_DOTS[b.difficulty]||0),
+      newest: (a,b)=> new Date(b.createdAt||0) - new Date(a.createdAt||0),
+      author: (a,b)=> (a.authorName||a.authorEmail||"").localeCompare(b.authorName||b.authorEmail||""),
+    };
+    function levelEligible(){
+      const level = document.getElementById("cf-level").value;
+      return eligible.filter(q=>(q.level||[]).includes(level));
+    }
+    function filteredPickerList(){
+      let list = levelEligible();
+      if(pickerFilters.hideUsed) list = list.filter(q=>!(q.usedIn||[]).length);
+      if(pickerFilters.unit) list = list.filter(q=>q.unit===pickerFilters.unit);
+      if(pickerFilters.diff) list = list.filter(q=>q.difficulty===pickerFilters.diff);
+      if(pickerFilters.skill) list = list.filter(q=>(q.skills||[]).includes(pickerFilters.skill));
+      if(pickerFilters.author) list = list.filter(q=>q.authorEmail===pickerFilters.author);
+      const needle = pickerFilters.search.trim().toLowerCase();
+      if(needle) list = list.filter(q=>(q.titleEn||"").toLowerCase().includes(needle) || (q.promptEn||"").toLowerCase().includes(needle));
+      return list.slice().sort(SORTERS[pickerFilters.sort] || SORTERS.unit);
+    }
+    // Chapters depend on the chosen category, so this list is rebuilt only
+    // when the category changes -- rebuilding it on every keystroke/filter
+    // change would blow away whatever chapter the admin had picked.
+    function populateUnitFilterOptions(){
+      const level = document.getElementById("cf-level").value;
+      const sel = document.getElementById("qp-unit");
+      sel.innerHTML = `<option value="">All chapters</option>` + chaptersForLevel(level).map(c=>`<option value="${escapeHtml(c.code)}">${escapeHtml(chapterLabel(c.code))}</option>`).join("");
+      sel.value = "";
+      pickerFilters.unit = "";
+    }
     function renderPicker(){
       const level = document.getElementById("cf-level").value;
-      const list = eligible.filter(q=>(q.level||[]).includes(level));
-      document.getElementById("picker-count").textContent = `(${list.length} locked/uploaded for ${level})`;
+      const list = filteredPickerList();
+      document.getElementById("picker-count").textContent = `(${list.length} of ${levelEligible().length} locked/uploaded for ${level})`;
       const picker = document.getElementById("q-picker");
-      picker.innerHTML = list.length===0 ? `<div class="empty">No locked or uploaded questions for ${level} yet.</div>` : list.map(q=>{
+      picker.innerHTML = list.length===0 ? `<div class="empty">No locked or uploaded questions match these filters.</div>` : list.map(q=>{
         const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
         return `
-        <label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+        <label style="display:flex; align-items:flex-start; gap:8px; padding:9px 6px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
           <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
           <span style="flex:1; min-width:0;">
-            <b>${escapeHtml(q.titleEn||"Untitled")}</b>
-            <div class="tags" style="margin:3px 0;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span></div>
-            <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
+            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span></div>
+            <div style="white-space:pre-wrap;">${escapeHtml(q.promptEn||"")}</div>
+            <div class="hint" style="margin-top:4px;">by ${escapeHtml(q.authorName||q.authorEmail||"—")}${(q.skills||[]).length?" · "+q.skills.map(escapeHtml).join(", "):""}</div>
             ${(q.usedIn||[]).length ? `<div class="hint" style="color:var(--gold);">⚠ Already used in: ${(q.usedIn||[]).map(escapeHtml).join(", ")}</div>` : ""}
           </span>
         </label>`;
@@ -2882,7 +2975,19 @@ function openContestForm(existing){
         renderOrderList();
       }));
     }
-    document.getElementById("cf-level").addEventListener("change", renderPicker);
+    document.getElementById("cf-level").addEventListener("change", ()=>{ populateUnitFilterOptions(); renderPicker(); });
+    document.getElementById("qp-search").addEventListener("input", e=>{ pickerFilters.search = e.target.value; renderPicker(); });
+    document.getElementById("qp-unit").addEventListener("change", e=>{ pickerFilters.unit = e.target.value; renderPicker(); });
+    document.getElementById("qp-diff").addEventListener("change", e=>{ pickerFilters.diff = e.target.value; renderPicker(); });
+    document.getElementById("qp-skill").addEventListener("change", e=>{ pickerFilters.skill = e.target.value; renderPicker(); });
+    document.getElementById("qp-author").addEventListener("change", e=>{ pickerFilters.author = e.target.value; renderPicker(); });
+    document.getElementById("qp-sort").addEventListener("change", e=>{ pickerFilters.sort = e.target.value; renderPicker(); });
+    document.getElementById("qp-hide-used").addEventListener("change", e=>{ pickerFilters.hideUsed = e.target.checked; renderPicker(); });
+    document.getElementById("qp-select-all").addEventListener("click", ()=>{
+      filteredPickerList().forEach(q=>{ if(!selectedOrder.includes(q.id)) selectedOrder.push(q.id); });
+      renderPicker(); renderOrderList();
+    });
+    document.getElementById("qp-clear").addEventListener("click", ()=>{ selectedOrder = []; renderPicker(); renderOrderList(); });
 
     function renderOrderList(){
       const list = document.getElementById("order-list");
@@ -2909,6 +3014,7 @@ function openContestForm(existing){
         });
       });
     }
+    populateUnitFilterOptions();
     renderPicker();
     renderOrderList();
   }
@@ -2991,11 +3097,11 @@ function renderPrintView(contestId, opts){
         ${qs.map((q,i)=>`
         <div class="question-container">
           <div class="q-text-row">
-            <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5};">
+            <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5}; font-family:${q.fontFamilyEn||FONT_LIBRARY.en[0].v}; text-align:${q.textAlignEn||"left"};">
               <span class="box-label">Question ${i+1}</span>
               <p>${renderRichText(escapeHtml(q.promptEn||""))}</p>
             </div>
-            <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5};">
+            <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5}; font-family:${q.fontFamilyUr||FONT_LIBRARY.ur[0].v}; text-align:${q.textAlignUr||"right"};">
               <span class="box-label">سوال ${i+1}</span>
               <p>${renderRichText(escapeHtml(q.promptUr||""))}</p>
             </div>

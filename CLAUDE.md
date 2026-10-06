@@ -66,6 +66,17 @@ questions/{questionId}
   -- live preview and never actually saved, so the chosen size/line-height
   -- never showed up in View, the downloaded image, or the print view --
   -- now persisted here and read with the same defaults by all three.
+  fontFamilyEn/fontFamilyUr (CSS font stack string, default FONT_LIBRARY.en[0]/
+  -- .ur[0] = Public Sans/Noto Nastaliq), textAlignEn/textAlignUr (left|center|
+  -- right, default "left"/"right") -- Oct 2026, same pattern as fontSize/
+  -- lineHeight above: a whole-box setting (not an inline wrapSelection()
+  -- token like bold/italic/underline/color, since switching typeface
+  -- mid-sentence doesn't make sense the way bold does), picked via a
+  -- <select> + L/C/R buttons next to the existing live-preview steppers,
+  -- read with the same ||default fallback at all three render sites.
+  -- FONT_LIBRARY (top-level const) is the curated list each <select> offers;
+  -- adding a font means adding one entry there (plus a Google Fonts @import
+  -- for a non-web-safe face) -- nothing else needs to change.
   solutionEn (free text, feeds the print engine's Solution Manual -- REQUIRED,
   -- enforced client-side in openForm()'s save validation as of Sept 2026),
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
@@ -152,6 +163,21 @@ contests/{contestId}
     -- existing paper is deliberately not supported, since a paper may
     -- already be partway through upload).
   questionIds: [id, ...]   -- order here is the paper's printed order (drag-and-drop set in the UI)
+    -- The create-contest question picker (openContestForm's !isEdit branch)
+    -- got a real filter/sort toolbar in Oct 2026 -- search text, chapter,
+    -- difficulty, skill, author selects, a sort dropdown (chapter/difficulty/
+    -- newest/author), and a "Hide already-used" checkbox (on by default) --
+    -- plus "Select all filtered"/"Clear selection" buttons, because picking
+    -- from thousands of locked questions by scrolling a single unfiltered
+    -- list with 90-char-truncated prompts was unworkable at this project's
+    -- real scale. Each row now shows the FULL question text (no truncation)
+    -- plus unit/difficulty/author/skills tags, so a question can be
+    -- evaluated without opening it. Filter state (pickerFilters) and the
+    -- SORTERS map are scoped inside openContestForm(), reset fresh every
+    -- time the modal opens. The chapter filter's options are rebuilt only
+    -- on a category change (populateUnitFilterOptions()), not on every
+    -- keystroke, since chapters are category-dependent and rebuilding the
+    -- <select> on every filter change would blow away the chosen chapter.
   uploadStatus: { [questionId]: {uploadedBy, uploadedByName, uploadedAt} }
     -- Upload tracking lives HERE, not on the question doc, because
     -- "uploaded" only makes sense in the context of a specific contest paper.
