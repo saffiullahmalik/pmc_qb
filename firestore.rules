@@ -50,13 +50,21 @@ service cloud.firestore {
       allow read: if isTeacher();
       allow create, update: if isAdmin() &&
         email == email.lower() &&
-        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer"];
+        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer", "uploader"];
       allow delete: if isAdmin();
     }
 
     match /contests/{contestId} {
       allow read: if isTeacher();
-      allow create, update: if isContentTeacher();
+      // "uploader" (view-only, Upload-tab-only role) can mark questions
+      // uploaded / a paper's upload work complete -- that's specifically
+      // an update touching only uploadStatus/quilgoComplete, never contest
+      // create or any other field (name/level/day/slot/questionIds).
+      function isUploadOnlyChange() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(["uploadStatus", "quilgoComplete"]);
+      }
+      allow create: if isContentTeacher();
+      allow update: if isContentTeacher() || (isTeacher() && isUploadOnlyChange());
       allow delete: if isAdmin();
     }
 

@@ -26,7 +26,7 @@ The portal's design follows an official school SOP ("Preparation, Review, Admini
 
 ## Access control model (important — don't weaken this without discussion)
 
-A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of four roles: `teacher` | `qb_lead` | `admin` | `external_reviewer`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
+A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of five roles: `teacher` | `qb_lead` | `admin` | `external_reviewer` | `uploader`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
 
 - `qb_lead` ("QB Lead" — was called "Head Teacher" until this rename) additionally unlocks setting a question's status to `finalized` — a plain `teacher` cannot finalize, and once finalized, further edits also require `qb_lead`/`admin` (enforced by `isQBLeadOrAdmin()` in `firestore.rules`, not just hidden client-side).
 - `role: "admin"` additionally unlocks:
@@ -35,6 +35,7 @@ A signed-in user can read/write question data **only if** a document exists at `
   - Deleting/updating others' comments
   - Managing workload `assignments` (the Assignment tab)
 - `role: "external_reviewer"` (added Oct 2026) is a read-and-comment-only role for an outside reviewer who spot-checks questions — including **locked** ones — and leaves feedback for an admin to act on. They see the *same* Bank tab every teacher does -- full filters, search, and every question regardless of status (`renderBank()` branches on `isExternalReviewerUser` only to hide the "+ New Question" button, the "Only mine" filter, and each card's Edit/Locked button, not to replace the view) -- so they pick a question to review themselves, the same way a teacher picks one to read, rather than through a separate restricted screen. Every other nav tab is hidden for them client-side (an earlier version of this role had its own single "pick a random question" screen instead; that was replaced after feedback that reviewers need the normal filtered browsing experience, not a narrower one). In `renderDrawerBody()`, the Status section and Edit/Delete buttons are replaced with just a "Download as image…" button for this role, but the preview, peer-review section, and comment thread all render normally. Enforcement is server-side too, via a new `isContentTeacher()` function in `firestore.rules` (role in `["teacher","qb_lead","admin"]`) required for creating/editing questions and contests — `isTeacher()` (any of the four roles, including this one) still gates reads and comment-creation, since reading everything and commenting on anything (even locked) is exactly what this role is for. They're excluded from `pickReviewer()`'s balanced peer-review rotation and from the team comparison/leaderboard charts (`teacherComparisonData()`) — they don't author content or carry a quota. A comment from this role gets an "External Reviewer" badge in the thread (`reviewerBadge()` in `renderDrawerBody()`), and an admin viewing a **locked** question with such a comment sees an explicit callout prompting them to unlock it to act on the feedback.
+- `role: "uploader"` (added Oct 2026) can only ever see the Upload tab — every other nav tab (including Bank) is hidden for them client-side, and `checkTeacherStatus()` forces `currentTab = "quilgo"` on sign-in since Bank, the app's normal default landing tab, isn't reachable for this role at all. Within Upload they can do everything the tab already offered any teacher — browse by category/day/slot, download a question's image, mark it uploaded/undo — no new UI was needed for that, since those actions were never `isAdminUser`-gated to begin with. Only "Mark this contest's upload complete" stays admin-only. Server-side, a new `isUploadOnlyChange()` in `firestore.rules`' `contests` match block allows any approved teacher (this role included) to update *just* `uploadStatus`/`quilgoComplete` on a contest, while creating a contest or changing any other field still requires `isContentTeacher()`. Excluded from `pickReviewer()` (allowlisted by role, not denylisted — see below) and from the team comparison/leaderboard charts, same reasoning as `external_reviewer`.
 
 All of this is enforced in `firestore.rules`, not in client-side JS — the client UI hides admin controls from non-admins, but the real enforcement is server-side. Emails are lowercased on both sides (client lookup and rules) specifically because Firestore document IDs are case-sensitive and admins type them by hand — this was a real bug caught during setup and fixed.
 
@@ -88,10 +89,13 @@ questions/{questionId}
     reviewerOptionId, reviewerNote, reviewTimeMinutes, outcome } | null,
     -- added Oct 2026. Auto-assigned (pickReviewer() -- random among
     -- whoever has the fewest currently-"pending" reviews, i.e. balanced
-    -- load, not round-robin; excludes "admin" and "external_reviewer" roles
-    -- by request, so review work distributes only among teacher/qb_lead
-    -- accounts, not the admin account itself) the moment status is set to
-    -- "in_review" and no peerReview exists yet. outcome is "pending" until the reviewer
+    -- load, not round-robin) the moment status is set to "in_review" and no
+    -- peerReview exists yet. Candidates are allowlisted by role (teacher or
+    -- qb_lead only -- never admin/external_reviewer/uploader, and any
+    -- future role is excluded by default instead of needing to be added to
+    -- a denylist), AND must already have an assigned chapter quota
+    -- somewhere (assignments.quotas) -- by request, someone with no
+    -- assignment at all isn't part of this rotation. outcome is "pending" until the reviewer
     -- submits (openReviewForm()), then "agree" (their answer matched
     -- correctOptionId) or "disagree" (it didn't -- also auto-posts an
     -- explanatory comment). allowedStatusOptions() removes "finalized"

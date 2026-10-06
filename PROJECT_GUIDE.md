@@ -20,12 +20,13 @@ This portal is where a team of teachers collaboratively **write, tag, peer-revie
 
 ## Who can do what
 
-Every person who can sign in has one of four roles, set by an admin:
+Every person who can sign in has one of five roles, set by an admin:
 
 - **Teacher** — can write, edit, and comment on any question; can rate and like questions; can be assigned chapters or peer reviews.
 - **QB Lead** — everything a teacher can, plus can lock a question (once peer review agrees with it) and unlock one back to "In Review."
 - **Admin** — everything above, plus: create/remove teacher accounts, delete questions, manage workload assignments, set daily limits, add curriculum, and see the full activity log.
 - **External Reviewer** — a separate, read-and-comment-only account for an outside spot-checker. They see the normal Question Bank tab — same filters, same search, every question regardless of status — so they can browse and pick whatever they want to check, exactly like everyone else; they just don't get a "+ New Question" button, and can't edit, delete, or change a question's status once they open one, including already-locked ones. Their comments carry a purple "External Reviewer" tag so they stand out in the thread, and if they comment on a locked question, the admin viewing it sees an explicit prompt to unlock it and apply the fix.
+- **Uploader** — can only see the Upload tab, nothing else. Within it they can do everything a teacher could there: browse a paper by category/day/slot, download each question's image, and mark it uploaded (or undo). They can't mark a whole paper's upload work complete — that stays admin-only.
 
 There's no public sign-up — an admin creates every login from **Admin → Manage teachers**.
 
@@ -65,7 +66,7 @@ Each assigned chapter's target splits evenly across the three difficulties — a
 
 ## Peer review, in detail
 
-- **Assignment is random but balanced** — when a question goes "In Review," the portal looks at every other teacher's currently-pending review queue and picks randomly among whoever has the fewest pending reviews right now. No one teacher gets buried while another coasts.
+- **Assignment is random but balanced** — when a question goes "In Review," the portal looks at every other teacher/QB Lead *who has an assigned chapter* and picks randomly among whoever has the fewest pending reviews right now. No one teacher gets buried while another coasts. Admins, External Reviewers, Uploaders, and anyone with no assignment at all are never picked.
 - **The reviewer solves it blind** — the review screen hides which option is marked correct. They pick their own answer, write their solution, and log their time, same as if they were a student doing the real exam.
 - **A disagreement is a real signal**, not just an opinion — it usually means the question is ambiguous, has a typo, or the wrong option was marked. That's exactly what this step exists to catch before a question reaches a live contest.
 - Your "to review" queue shows up on the Question Bank tab's dashboard and the Activity feed, with a **Solve now** button.
