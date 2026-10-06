@@ -14,7 +14,16 @@
     options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] }
   };
 </script>
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<!-- SVG output (not the default CHTML combo), fixed Oct 2026: html2canvas
+     ghosted/doubled every equation it captured regardless of scale/option
+     tweaks (confirmed: the live page rendered perfectly, only the
+     html2canvas-captured canvas was corrupted) -- a known html2canvas
+     incompatibility with MathJax's deeply-nested inline layout, CHTML or
+     SVG output alike. The real fix is flattenMathToImages() in
+     downloadQuestionImage() converting rendered math to plain <img>
+     elements before capture, which needs actual <svg> elements to
+     serialize -- CHTML's font-glyph output has no equivalent. -->
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&display=swap');
@@ -727,6 +736,18 @@ let quilgoLevel = "", quilgoDay = "", quilgoSlot = "";
 function escapeHtml(s){
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
+// Fixed Oct 2026: a multi-line commonEquation (a teacher pressing Enter
+// between several equations, e.g. a system of equations) used to get
+// wrapped as ONE $$...$$ block -- MathJax has no concept of a bare newline
+// as a line break in math mode, so it just ran every line together with no
+// separation, visually colliding into illegible, garbled-looking text.
+// Splitting on newlines and giving each non-empty line its own $$...$$
+// block (joined with <br>) renders each equation cleanly on its own line.
+function commonEquationHtml(raw){
+  const lines = String(raw||"").split("\n").map(l=>l.trim()).filter(Boolean);
+  if(lines.length===0) return "";
+  return `<div class="common-equation">${lines.map(l=>`$$${escapeHtml(l)}$$`).join("<br>")}</div>`;
+}
 // Converts our own safe formatting tokens into styling tags. Always called
 // on text that has ALREADY been through escapeHtml() -- these tokens use
 // characters escapeHtml doesn't touch, and this function never introduces
@@ -1406,7 +1427,7 @@ function openForm(existing){
   let graphicPositionState = existing?.graphicPosition || "center";
   let optionsLayoutState = existing?.optionsLayout || 2;
   let skillsState = existing?.skills ? [...existing.skills] : [];
-  let previewEnSize = existing?.fontSizeEn || 15, previewUrSize = existing?.fontSizeUr || 17;
+  let previewEnSize = existing?.fontSizeEn || 15, previewUrSize = existing?.fontSizeUr || 14;
   let previewEnLineHeight = existing?.lineHeightEn || 1.5, previewUrLineHeight = existing?.lineHeightUr || 1.5;
   let step = 1;
   const totalSteps = 4;
@@ -1849,7 +1870,7 @@ function openForm(existing){
             <p>${renderRichText(escapeHtml(promptUr))||`<span class="hint">اردو یہاں نظر آئے گا…</span>`}</p>
           </div>
         </div>
-        ${commonEquation.trim() ? `<div class="common-equation">$$${escapeHtml(commonEquation.trim())}$$</div>` : ""}
+        ${commonEquationHtml(commonEquation)}
         ${graphicImageState ? `<div class="print-graphic" style="text-align:${graphicPositionState};"><img src="${graphicImageState}" alt="Question figure" style="width:${graphicImageWidthState}px; max-width:100%; border-radius:6px;" />${graphicCaption?`<div class="hint" style="margin-top:4px;">${escapeHtml(graphicCaption)}</div>`:""}</div>` : ""}
       </div>
       <div class="question-container">
@@ -1877,14 +1898,14 @@ function openForm(existing){
     document.getElementById("editor-progress-fill").style.width = (n/totalSteps*100)+"%";
     if(n===totalSteps) renderLivePreview();
   }
-  document.getElementById("preview-en-shrink").addEventListener("click", ()=>{ previewEnSize = Math.max(11, previewEnSize-1); renderLivePreview(); });
-  document.getElementById("preview-en-grow").addEventListener("click", ()=>{ previewEnSize = Math.min(28, previewEnSize+1); renderLivePreview(); });
-  document.getElementById("preview-ur-shrink").addEventListener("click", ()=>{ previewUrSize = Math.max(12, previewUrSize-1); renderLivePreview(); });
-  document.getElementById("preview-ur-grow").addEventListener("click", ()=>{ previewUrSize = Math.min(32, previewUrSize+1); renderLivePreview(); });
-  document.getElementById("preview-en-lh-shrink").addEventListener("click", ()=>{ previewEnLineHeight = Math.max(1.1, +(previewEnLineHeight-0.1).toFixed(1)); renderLivePreview(); });
-  document.getElementById("preview-en-lh-grow").addEventListener("click", ()=>{ previewEnLineHeight = Math.min(2.2, +(previewEnLineHeight+0.1).toFixed(1)); renderLivePreview(); });
-  document.getElementById("preview-ur-lh-shrink").addEventListener("click", ()=>{ previewUrLineHeight = Math.max(1.1, +(previewUrLineHeight-0.1).toFixed(1)); renderLivePreview(); });
-  document.getElementById("preview-ur-lh-grow").addEventListener("click", ()=>{ previewUrLineHeight = Math.min(2.2, +(previewUrLineHeight+0.1).toFixed(1)); renderLivePreview(); });
+  document.getElementById("preview-en-shrink").addEventListener("click", ()=>{ previewEnSize = Math.max(9, previewEnSize-1); renderLivePreview(); });
+  document.getElementById("preview-en-grow").addEventListener("click", ()=>{ previewEnSize = Math.min(36, previewEnSize+1); renderLivePreview(); });
+  document.getElementById("preview-ur-shrink").addEventListener("click", ()=>{ previewUrSize = Math.max(9, previewUrSize-1); renderLivePreview(); });
+  document.getElementById("preview-ur-grow").addEventListener("click", ()=>{ previewUrSize = Math.min(40, previewUrSize+1); renderLivePreview(); });
+  document.getElementById("preview-en-lh-shrink").addEventListener("click", ()=>{ previewEnLineHeight = Math.max(1.0, +(previewEnLineHeight-0.1).toFixed(1)); renderLivePreview(); });
+  document.getElementById("preview-en-lh-grow").addEventListener("click", ()=>{ previewEnLineHeight = Math.min(3.0, +(previewEnLineHeight+0.1).toFixed(1)); renderLivePreview(); });
+  document.getElementById("preview-ur-lh-shrink").addEventListener("click", ()=>{ previewUrLineHeight = Math.max(1.0, +(previewUrLineHeight-0.1).toFixed(1)); renderLivePreview(); });
+  document.getElementById("preview-ur-lh-grow").addEventListener("click", ()=>{ previewUrLineHeight = Math.min(3.0, +(previewUrLineHeight+0.1).toFixed(1)); renderLivePreview(); });
   document.getElementById("editor-steps").addEventListener("click", e=>{
     const b = e.target.closest("[data-step]"); if(!b) return;
     showStep(parseInt(b.dataset.step,10));
@@ -2210,9 +2231,9 @@ function questionPreviewHtml(q, config={}){
     <div class="question-container">
       <div class="q-text-row">
         <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5};"><span class="box-label">Question</span><p>${renderRichText(escapeHtml(q.promptEn||""))}</p></div>
-        <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||17}px; line-height:${q.lineHeightUr||1.5};"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
+        <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5};"><span class="box-label">سوال</span><p>${renderRichText(escapeHtml(q.promptUr||""))}</p></div>
       </div>
-      ${q.commonEquation ? `<div class="common-equation">$$${escapeHtml(q.commonEquation)}$$</div>` : ""}
+      ${commonEquationHtml(q.commonEquation)}
       ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
     </div>` : ""}
     ${includeOptions ? `
@@ -2262,6 +2283,34 @@ function openDownloadOptionsPopup(q, {showAnswerOption=true}={}){
     downloadQuestionImage(q, {includeQuestion, includeOptions, includeAnswer});
   });
 }
+// html2canvas cannot be trusted to capture MathJax's rendered output
+// directly -- confirmed by testing (the live page renders perfectly, only
+// an html2canvas-captured canvas ghosts/doubles every equation, regardless
+// of scale or html2canvas options). The fix: once MathJax has typeset,
+// replace each rendered <mjx-container><svg>...</svg></mjx-container>
+// with a plain <img> of that same SVG serialized to a data URL --
+// html2canvas draws a plain image via drawImage(), sidestepping its
+// fragile interpretation of MathJax's deeply-nested inline layout
+// entirely, instead of trying (and failing) to re-lay it out itself.
+function flattenMathToImages(root){
+  const imgs = [];
+  root.querySelectorAll("mjx-container svg").forEach(svg=>{
+    const container = svg.closest("mjx-container");
+    const rect = svg.getBoundingClientRect();
+    if(rect.width<=0 || rect.height<=0) return;
+    const svgClone = svg.cloneNode(true);
+    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const svgStr = new XMLSerializer().serializeToString(svgClone);
+    const img = document.createElement("img");
+    img.src = "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svgStr);
+    img.style.width = rect.width+"px";
+    img.style.height = rect.height+"px";
+    img.style.verticalAlign = getComputedStyle(container).verticalAlign;
+    container.replaceWith(img);
+    imgs.push(img);
+  });
+  return Promise.all(imgs.map(img=>img.decode().catch(()=>{})));
+}
 async function downloadQuestionImage(q, config={includeQuestion:true, includeOptions:true, includeAnswer:false}){
   if(!window.html2canvas){ toast("Still loading — try again in a second"); return; }
   const node = document.createElement("div");
@@ -2269,6 +2318,7 @@ async function downloadQuestionImage(q, config={includeQuestion:true, includeOpt
   node.innerHTML = questionPreviewHtml(q, config);
   document.body.appendChild(node);
   if(window.MathJax?.typesetPromise) await window.MathJax.typesetPromise([node]).catch(()=>{});
+  await flattenMathToImages(node);
   try{
     const canvas = await window.html2canvas(node, {scale:2, backgroundColor:"#ffffff"});
     // Suffix the filename with what's actually in it -- downloading the
@@ -2361,8 +2411,7 @@ function renderDrawerBody(){
   body.innerHTML = `
     <div class="drawer-head">
       <div>
-        <h2>${escapeHtml(q.titleEn||"Untitled")}</h2>
-        <div class="tags" style="margin-top:6px;">
+        <div class="tags">
           ${(q.level||[]).map(l=>`<span class="pill level">${l}${isAdminUser?` <span data-remove-level="${l}" style="cursor:pointer; font-weight:700;" title="Remove this level tag">×</span>`:""}</span>`).join("")}
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
@@ -2765,12 +2814,12 @@ function renderPrintView(contestId, opts){
               <span class="box-label">Question ${i+1}</span>
               <p>${renderRichText(escapeHtml(q.promptEn||""))}</p>
             </div>
-            <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||17}px; line-height:${q.lineHeightUr||1.5};">
+            <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5};">
               <span class="box-label">سوال ${i+1}</span>
               <p>${renderRichText(escapeHtml(q.promptUr||""))}</p>
             </div>
           </div>
-          ${q.commonEquation ? `<div class="common-equation">$$${escapeHtml(q.commonEquation)}$$</div>` : ""}
+          ${commonEquationHtml(q.commonEquation)}
           ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
           <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
             ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}

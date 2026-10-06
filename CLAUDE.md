@@ -52,9 +52,15 @@ questions/{questionId}
   -- in $$...$$ at render time), shown once below both English and Urdu,
   -- the same "shared, not per-language" slot the figure already occupies.
   -- Rendered in the editor's live preview, the drawer/download's shared
-  -- questionPreviewHtml(), and the Contests print view.
-  fontSizeEn/fontSizeUr (px, default 15/17), lineHeightEn/lineHeightUr
-  -- (default 1.5/1.5) -- set via the editor's live-preview +/- controls.
+  -- questionPreviewHtml(), and the Contests print view, all three now via
+  -- the shared commonEquationHtml() helper (see below).
+  fontSizeEn/fontSizeUr (px, default 15/14 -- Ur default lowered from 17 Oct
+  -- 2026, Nastaliq script reads visually larger than Latin at the same
+  -- px size; sliders now range 9-36px/9-40px, widened from 11-28/12-32),
+  -- lineHeightEn/lineHeightUr (default 1.5/1.5, sliders now 1.0-3.0,
+  -- widened from 1.1-2.2) -- set via the editor's live-preview +/-
+  -- controls (previewEnSize/previewUrSize/previewEnLineHeight/
+  -- previewUrLineHeight in openForm()).
   -- Fixed Oct 2026: these were only ever applied inside the editor's own
   -- live preview and never actually saved, so the chosen size/line-height
   -- never showed up in View, the downloaded image, or the print view --
@@ -208,6 +214,8 @@ activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
 Filtering in the UI (level, type, difficulty, status, unit, search) is done **client-side** over the full `questions` collection (subscribed via `onSnapshot`, ordered by `createdAt desc`, capped at 500) — deliberately not server-side compound queries, since the dataset is small (a school's worth of exam questions, not a large-scale product).
 
 Images (question figure + per-option images) are stored **inline on the Firestore document as compressed JPEG data-URLs**, not in Firebase Storage — a deliberate choice to stay on the free Spark plan (Storage now requires Blaze billing even for free-tier usage). `fileToCompressedDataUrl()` in `index.html` resizes/compresses client-side before writing, with a soft ~250KB-per-image budget so a question with several option images stays under Firestore's 1MB/doc cap. The Print/Export view can also shuffle each question's option order per printout (anti-copying) — grading stays correct either way because correctness is tracked by `correctOptionId`, never by array position.
+
+**MathJax output mode is SVG (`tex-svg.js`), not the CHTML combo (`tex-mml-chtml.js`) — do not switch this back.** Fixed Oct 2026 after a real bug report of equations rendering garbled/doubled in downloaded images: html2canvas cannot reliably capture MathJax's rendered output directly (confirmed by testing — the live on-page rendering was pixel-perfect; only an html2canvas-captured canvas ghosted every equation, with CHTML and SVG output alike, regardless of `scale`/`letterRendering`/`foreignObjectRendering` options). The actual fix is `flattenMathToImages()` in `index.html`, called in `downloadQuestionImage()` right after `MathJax.typesetPromise()` and before `html2canvas()`: it walks every rendered `mjx-container svg`, serializes it to a data-URL, and replaces the container with a plain `<img>` — html2canvas draws a plain image via `drawImage()` instead of trying (and failing) to re-interpret MathJax's deeply-nested inline layout itself. This needs real `<svg>` elements to serialize, which is why the output mode had to move off CHTML (font-glyph-based, no equivalent `<svg>` per expression) to SVG. Separately, a multi-line `commonEquation` (a teacher pressing Enter between several equations) used to get wrapped as one `$$...$$` block — MathJax has no concept of a bare newline as a line break in math mode, so every line ran together with no separation, compounding the garbled look. `commonEquationHtml()` now splits on newlines and gives each non-empty line its own `$$...$$` block; use it (not a raw `$$${commonEquation}$$` wrap) at all three render sites (editor live preview, `questionPreviewHtml()`, Contests print view) if this is ever touched again.
 
 ## Files in this repo
 
