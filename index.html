@@ -1169,7 +1169,7 @@ function renderInsightsRail(){
     ${leaderboard.length ? `
     <div class="dash-chart-card">
       <b>Team</b>
-      ${hBarChartSvg(leaderboard, 28, 340, 82)}
+      ${hBarChartSvg(leaderboard, 34, 260, 102, 30)}
     </div>` : ""}
     <div class="dash-chart-card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; width:100%;">
@@ -3131,9 +3131,16 @@ function donutChartSvg(segments, total, label="done"){
 // looking once scaled down to the container's actual width -- a smaller W
 // for the same rowH renders proportionally thicker in a narrow container
 // (e.g. the insights-rail's ~270px-wide cards vs the Admin tab's ~550px one).
-function hBarChartSvg(rows, labelW=108, W=540, padR=74){
-  const rowH = 24, gap = 12, padT = 6;
+function hBarChartSvg(rows, labelW=108, W=540, padR=74, rowH=24){
+  const gap = 12, padT = 6;
   const chartW = W - labelW - padR;
+  // Label/value font-size scales with rowH (rather than a fixed 11px) so a
+  // caller asking for thicker bars (the rail's "Team" leaderboard, which
+  // was reported as too small/hard to read at the original fixed size)
+  // gets bigger, more legible text along with them, not just a taller bar.
+  const labelFontSize = Math.max(11, Math.round(rowH*0.46));
+  const valueFontSize = Math.max(10.5, Math.round(rowH*0.42));
+  const textY = y=>(y+rowH/2+rowH*0.17).toFixed(1);
   const maxVal = Math.max(1, ...rows.map(s=>Math.max(s.target, s.draft+s.inReview+(s.reviewed||0)+s.done)));
   const H = rows.length * (rowH+gap) + padT;
   let out = "";
@@ -3153,7 +3160,7 @@ function hBarChartSvg(rows, labelW=108, W=540, padR=74){
       segsSvg += `<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${rowH}" class="${seg.cls}" rx="3"/>`;
       x += w;
     });
-    out += `<text x="${labelW-8}" y="${(y+rowH/2+4).toFixed(1)}" text-anchor="end" class="chart-axis-label" style="font-size:11px; ${s.isMe?"font-weight:800; fill:var(--ink);":""}">${escapeHtml(s.label)}${s.fullName?`<title>${escapeHtml(s.fullName)}</title>`:""}</text>`;
+    out += `<text x="${labelW-8}" y="${textY(y)}" text-anchor="end" class="chart-axis-label" style="font-size:${labelFontSize}px; ${s.isMe?"font-weight:800; fill:var(--ink);":""}">${escapeHtml(s.label)}${s.fullName?`<title>${escapeHtml(s.fullName)}</title>`:""}</text>`;
     out += segsSvg;
     // Same fix as barChartSvg: against a target, the number must mean
     // "locked" (s.done) -- not `total` (draft+inReview+done) -- since
@@ -3161,7 +3168,7 @@ function hBarChartSvg(rows, labelW=108, W=540, padR=74){
     // target (self-initiated work, no formal quota), there's nothing to
     // misrepresent progress against, so `total` ("how much have they made
     // at all") stays the more useful number there.
-    out += `<text x="${(x+6).toFixed(1)}" y="${(y+rowH/2+4).toFixed(1)}" class="mono chart-value-label">${s.target ? `${s.done}/${s.target}` : `${total}`}${s.reviewsDone?" · "+s.reviewsDone+"r":""}</text>`;
+    out += `<text x="${(x+6).toFixed(1)}" y="${textY(y)}" class="mono chart-value-label" style="font-size:${valueFontSize}px;">${s.target ? `${s.done}/${s.target}` : `${total}`}${s.reviewsDone?" · "+s.reviewsDone+"r":""}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by teacher">${out}</svg>`;
 }
