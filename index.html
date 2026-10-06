@@ -277,6 +277,11 @@
   .q-row-thumb{ flex:0 0 auto; width:56px; height:56px; border-radius:8px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; overflow:hidden; color:var(--ink-dim); opacity:.6; }
   .q-row-thumb img{ width:100%; height:100%; object-fit:cover; opacity:1; }
   .q-row-body{ flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+  .card-engagement:empty{ display:none; }
+  .card-comment-list{ display:flex; flex-direction:column; gap:3px; margin-top:4px; }
+  .card-comment{ font-size:11.5px; color:var(--ink-dim); line-height:1.4; background:var(--surface-2); border-radius:6px; padding:5px 8px; }
+  .card-comment b{ color:var(--ink); font-weight:600; }
+  .card-engagement .link-btn{ font-size:11px; margin-top:3px; }
   .q-row-actions{ flex:0 0 auto; display:flex; flex-direction:column; gap:5px; align-items:stretch; justify-content:center; }
   .q-row-actions .btn{ white-space:nowrap; }
   @media (max-width:640px){ .q-row{ flex-wrap:wrap; } .q-row-actions{ flex-direction:row; flex-basis:100%; } }
@@ -293,7 +298,7 @@
   .card .tags{ display:flex; flex-wrap:wrap; gap:5px; }
   .card .qtitle{ font-family:'Lexend'; font-weight:600; font-size:14px; line-height:1.35; }
   .card .qprompt{ font-size:12.5px; color:var(--ink-dim); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .card .meta{ display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--ink-dim); margin-top:auto; padding-top:8px; border-top:1px solid var(--border); }
+  .card .meta, .q-row-body .meta{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:11.5px; color:var(--ink-dim); margin-top:auto; padding-top:8px; border-top:1px solid var(--border); }
   .empty{ padding:40px 20px; text-align:center; color:var(--ink-dim); border:1px dashed var(--border); border-radius:11px; }
   .state-block{ display:flex; flex-direction:column; align-items:center; gap:10px; }
   .state-icon{ color:var(--accent); opacity:.5; }
@@ -551,6 +556,15 @@ function allSkills(){
   questions.forEach(q=>(q.skills||[]).forEach(s=>used.add(s)));
   return Array.from(new Set([...DEFAULT_SKILLS, ...used])).sort((a,b)=>a.localeCompare(b));
 }
+// Every distinct author actually present in the bank, for the "Author"
+// filter -- not allTeachers, since that would also list people who have
+// never posted a question (nothing to filter by) and wouldn't label an
+// old post by someone since removed from the roster.
+function allAuthors(){
+  const seen = new Map();
+  questions.forEach(q=>{ if(q.authorEmail && !seen.has(q.authorEmail)) seen.set(q.authorEmail, q.authorName||q.authorEmail); });
+  return Array.from(seen.entries()).sort((a,b)=>a[1].localeCompare(b[1]));
+}
 // Which status values a role may pick in the editor. The question's current
 // value is always included even if not normally pickable by this role, so
 // re-saving never silently downgrades a status someone else set.
@@ -728,8 +742,17 @@ let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
-let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"" };
+let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"" };
 let bankVisibleCount = 30;
+// One-shot (not live) per-question {comments, avgStars, ratingCount} cache
+// for the Bank tab's inline comments/ratings preview -- a getDocs() per
+// visible card, not an onSnapshot(), since a list view doesn't need to
+// update in real time the way the drawer's open question does, and 30
+// live listeners per page would be wasteful. Cleared on sign-out only;
+// commentCardExpanded tracks which cards have been expanded past the
+// first 5 comments shown by default.
+let cardEngagementCache = {};
+let commentCardExpanded = new Set();
 let quilgoContestId = "";
 let workloadExpandedLevel = null;
 let railExpandedLevel = null;
@@ -1207,7 +1230,18 @@ function filteredQuestions(){
     if(filters.status && q.status!==filters.status) return false;
     if(filters.unit && q.unit!==filters.unit) return false;
     if(filters.mine && q.authorEmail!==currentUser.email) return false;
+    if(filters.author && q.authorEmail!==filters.author) return false;
     if(filters.skill && !(Array.isArray(q.skills) && q.skills.includes(filters.skill))) return false;
+    // Dates compare on the local calendar day, not a raw ISO-string prefix
+    // match, so "before/after" reads naturally regardless of time-of-day.
+    if(filters.dateFrom){
+      const d = new Date(q.createdAt);
+      if(isNaN(d) || d < new Date(filters.dateFrom+"T00:00:00")) return false;
+    }
+    if(filters.dateTo){
+      const d = new Date(q.createdAt);
+      if(isNaN(d) || d > new Date(filters.dateTo+"T23:59:59")) return false;
+    }
     if(filters.q){
       const hay = ((q.titleEn||"")+" "+(q.promptEn||"")+" "+(q.subtopic||"")).toLowerCase();
       if(!hay.includes(filters.q.toLowerCase())) return false;
@@ -1238,6 +1272,9 @@ function activeFilterChips(){
   if(filters.unit) chips.push({k:"unit", l:`Chapter: ${chapterLabel(filters.unit)}`});
   if(filters.mine) chips.push({k:"mine", l:"Only mine"});
   if(filters.skill) chips.push({k:"skill", l:`Skill: ${filters.skill}`});
+  if(filters.author) chips.push({k:"author", l:`Author: ${allAuthors().find(([e])=>e===filters.author)?.[1]||filters.author}`});
+  if(filters.dateFrom) chips.push({k:"dateFrom", l:`After ${fmtDateOnly(filters.dateFrom)}`});
+  if(filters.dateTo) chips.push({k:"dateTo", l:`Before ${fmtDateOnly(filters.dateTo)}`});
   if(filters.q) chips.push({k:"q", l:`Search: "${filters.q}"`});
   return chips;
 }
@@ -1259,6 +1296,9 @@ function renderBank(){
       <select id="f-unit">${chapterSelectOptions(filters.book, filters.unit, true)}</select>
       <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-skill"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}" ${filters.skill===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
+      <select id="f-author"><option value="">All authors</option>${allAuthors().map(([email,name])=>`<option value="${escapeHtml(email)}" ${filters.author===email?"selected":""}>${escapeHtml(name)}</option>`).join("")}</select>
+      <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">Made after <input type="date" id="f-date-from" value="${escapeHtml(filters.dateFrom)}" style="padding:6px 8px;" /></label>
+      <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">before <input type="date" id="f-date-to" value="${escapeHtml(filters.dateTo)}" style="padding:6px 8px;" /></label>
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
       ${isExternalReviewerUser ? "" : `<label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;"><input type="checkbox" id="f-mine" ${filters.mine?"checked":""}/> Only mine</label>`}
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
@@ -1270,25 +1310,28 @@ function renderBank(){
     ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div><div id="load-more-wrap"></div>`}
   `;
   document.getElementById("new-q")?.addEventListener("click", ()=>openForm(null));
-  ["level","type","diff","status","unit","sort","skill"].forEach(k=>{
+  ["level","type","diff","status","unit","sort","skill","author"].forEach(k=>{
     document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
   document.getElementById("f-book").addEventListener("change", e=>{ filters.book = e.target.value; filters.unit = ""; bankVisibleCount = 30; renderBank(); });
   document.getElementById("f-q").addEventListener("input", e=>{ filters.q = e.target.value; bankVisibleCount = 30; renderBank(); });
   document.getElementById("f-mine")?.addEventListener("change", e=>{ filters.mine = e.target.checked; bankVisibleCount = 30; renderBank(); });
+  document.getElementById("f-date-from").addEventListener("change", e=>{ filters.dateFrom = e.target.value; bankVisibleCount = 30; renderBank(); });
+  document.getElementById("f-date-to").addEventListener("change", e=>{ filters.dateTo = e.target.value; bankVisibleCount = 30; renderBank(); });
   document.querySelectorAll("[data-clear-chip]").forEach(b=>b.addEventListener("click", ()=>{
     const k = b.dataset.clearChip;
     filters[k] = (k==="mine") ? false : "";
     bankVisibleCount = 30; renderBank();
   }));
   document.getElementById("clear-all-filters")?.addEventListener("click", ()=>{
-    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false, skill:"" };
+    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false, skill:"", author:"", dateFrom:"", dateTo:"" };
     bankVisibleCount = 30; renderBank();
   });
   if(list.length){
     const grid = document.getElementById("q-grid");
     const visible = list.slice(0, bankVisibleCount);
     grid.innerHTML = visible.map(cardHtml).join("");
+    loadCardEngagement(visible);
     document.getElementById("load-more-wrap").innerHTML = list.length>visible.length
       ? `<button type="button" class="btn" id="load-more" style="width:100%; justify-content:center; margin-top:10px;">Load more (${list.length-visible.length} remaining)</button>` : "";
     document.getElementById("load-more")?.addEventListener("click", ()=>{ bankVisibleCount += 30; renderBank(); });
@@ -1392,6 +1435,52 @@ function firstIncompleteAssignedUnit(){
   const pending = myAssignedChapters().find(m=>countByStatus(currentUser.email, m.contestLevel, m.unit).finalized < m.target);
   return pending?.unit || null;
 }
+async function loadCardEngagement(visible){
+  const toFetch = visible.filter(q=>!cardEngagementCache[q.id]);
+  await Promise.all(toFetch.map(async q=>{
+    try{
+      const [commentsSnap, ratingsSnap] = await Promise.all([
+        getDocs(query(collection(db,"questions",q.id,"comments"), orderBy("createdAt","asc"))),
+        getDocs(collection(db,"questions",q.id,"ratings")),
+      ]);
+      const comments = commentsSnap.docs.map(d=>({id:d.id, ...d.data()}));
+      const ratings = ratingsSnap.docs.map(d=>d.data());
+      const avgStars = ratings.length ? ratings.reduce((s,r)=>s+(r.stars||0),0)/ratings.length : null;
+      cardEngagementCache[q.id] = {comments, avgStars, ratingCount:ratings.length};
+    }catch(err){ console.error(err); cardEngagementCache[q.id] = {comments:[], avgStars:null, ratingCount:0}; }
+    renderCardEngagement(q.id);
+  }));
+  // Cards already cached from an earlier render (e.g. flipping a filter
+  // back and forth) still need their placeholder filled in immediately,
+  // not just ones that triggered a fresh fetch this time.
+  visible.filter(q=>cardEngagementCache[q.id]).forEach(q=>renderCardEngagement(q.id));
+}
+// Patches one card's engagement placeholder in place -- never re-renders
+// the whole grid, so expanding one card's comments or a fetch landing
+// doesn't disturb scroll position or any other card.
+function renderCardEngagement(id){
+  const el = document.getElementById("card-eng-"+id);
+  const data = cardEngagementCache[id];
+  if(!el || !data) return;
+  const {comments, avgStars, ratingCount} = data;
+  if(comments.length===0 && ratingCount===0){ el.innerHTML = ""; return; }
+  const expanded = commentCardExpanded.has(id);
+  const visibleComments = expanded ? comments : comments.slice(0,5);
+  const overflow = comments.length - 5;
+  el.innerHTML = `
+    ${ratingCount>0 ? `<div class="hint" style="margin-top:4px;">★ ${avgStars.toFixed(1)} avg (${ratingCount} rating${ratingCount===1?"":"s"})</div>` : ""}
+    ${comments.length>0 ? `
+    <div class="card-comment-list">
+      ${visibleComments.map(c=>`<div class="card-comment"><b>${escapeHtml(c.authorName||"—")}:</b> ${escapeHtml(c.text)}</div>`).join("")}
+    </div>
+    ${overflow>0 ? `<button type="button" class="link-btn" data-toggle-comments="${id}">${expanded?"Show fewer":`+${overflow} more comment${overflow===1?"":"s"}`}</button>` : ""}` : ""}
+  `;
+  el.querySelector("[data-toggle-comments]")?.addEventListener("click", e=>{
+    e.stopPropagation();
+    if(commentCardExpanded.has(id)) commentCardExpanded.delete(id); else commentCardExpanded.add(id);
+    renderCardEngagement(id);
+  });
+}
 
 function cardHtml(q){
   const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
@@ -1412,6 +1501,7 @@ function cardHtml(q){
         <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
         <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
         <div class="meta"><span>${escapeHtml(q.authorName||"—")} · <button type="button" class="link-quickfilter" data-quickfilter-unit="${q.unit}" title="Filter by chapter">${escapeHtml(chapterLabel(q.unit))}</button> · <span class="mono">♥ ${(q.likes||[]).length}</span></span><span>${fmtDate(q.updatedAt||q.createdAt)}</span></div>
+        <div class="card-engagement" id="card-eng-${q.id}"></div>
       </div>
       <div class="q-row-actions">
         <button class="btn small" data-view="${q.id}" title="View" aria-label="View question">👁 View</button>

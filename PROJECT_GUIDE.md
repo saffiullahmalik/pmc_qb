@@ -88,7 +88,7 @@ A thin strip at the top of every tab shows your current streak, today's progress
 
 ## Every tab, in one line each
 
-- **Question Bank** — the full list of questions, with filters, sort, and your personal dashboard at the top.
+- **Question Bank** — the full list of questions, with filters (including author and "made before/after a date"), sort, and your personal dashboard at the top. Each card shows its comments and rating inline (collapsed past 5 comments, with a "+N more" link) so you can see the conversation without opening it.
 - **Activity** — the 30 most recently posted questions across the whole team, so everyone knows what's new and needs a comment.
 - **Contests** — assemble locked questions into a paper (tagged by category/day/slot), print a bilingual exam + answer key + solution manual.
 - **Upload** — pick a paper by category → day → slot, download each question as an image, mark it uploaded, with a record of who uploaded what and when.
