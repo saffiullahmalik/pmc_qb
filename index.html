@@ -340,6 +340,10 @@
   .curr-table tr:hover td{ background:var(--surface-2); }
   .unit-chip{ font-family:'IBM Plex Mono'; font-weight:600; font-size:12px; background:var(--surface-2); padding:2px 7px; border-radius:5px; }
   .level-block{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); overflow-x:auto; }
+  .sop-body p{ margin:0 0 10px; }
+  .sop-body ul{ margin:0 0 10px; padding-left:22px; }
+  .sop-body li{ margin-bottom:4px; }
+  .sop-body p:last-child, .sop-body ul:last-child{ margin-bottom:0; }
   .level-block h3{ margin:0 0 2px; font-size:15px; }
   .level-block .sub{ font-size:12px; color:var(--ink-dim); margin-bottom:10px; }
   .stat-tile{ background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:14px 16px; box-shadow:var(--shadow); }
@@ -643,6 +647,13 @@ let curriculumExtra = [];
 // here match what a brand-new install sees before the doc is ever written,
 // so the app works sensibly even before an admin opens the settings form.
 let dailyLimits = { dailyCreationLimit:20, dailyCreationTarget:15, dailyReviewLimit:20 };
+// Admin-editable SOP content (settings/sop) -- null until that doc is ever
+// written, in which case renderSOP() falls back to the hardcoded SOP_TEXT
+// below at a sensible default font-size/line-height, so the tab works
+// correctly on a brand-new install with zero setup, same pattern as
+// dailyLimits above.
+let sopData = null;
+let sopEditing = false;
 function allCurriculum(){
   const merged = CURRICULUM.map(b=>({...b, chapters:[...b.chapters]}));
   // Two passes, not one -- curriculumExtra comes from an unordered
@@ -750,7 +761,7 @@ let allTeachers = [];
 let activityLogEntries = [];
 let currentTab = "bank";
 let openQuestionId = null;
-let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null, unsubSop = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"" };
@@ -797,6 +808,25 @@ function renderRichText(escaped){
     .replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>')
     .replace(/__([\s\S]+?)__/g, '<u>$1</u>')
     .replace(/\*([\s\S]+?)\*/g, '<i>$1</i>');
+}
+// Block-level formatting (paragraphs + bullet lists) on top of
+// renderRichText()'s inline tokens (bold/italic/underline/color) -- used
+// for the SOP tab's admin-editable body text, which needs real paragraph
+// breaks and bullets, unlike a question prompt's single inline block.
+// Convention: a blank line starts a new paragraph; consecutive lines each
+// starting with "- " become one <ul>. Safe the same way renderRichText
+// is -- every line is escapeHtml()'d before any token substitution, so
+// this never introduces raw HTML from admin input.
+function renderSOPBody(text){
+  const blocks = String(text||"").split(/\n\s*\n/);
+  return blocks.map(block=>{
+    const lines = block.split("\n").map(l=>l.trim()).filter(Boolean);
+    if(lines.length===0) return "";
+    if(lines.every(l=>l.startsWith("- "))){
+      return `<ul>${lines.map(l=>`<li>${renderRichText(escapeHtml(l.slice(2)))}</li>`).join("")}</ul>`;
+    }
+    return `<p>${renderRichText(escapeHtml(block.trim())).replace(/\n/g,"<br>")}</p>`;
+  }).join("");
 }
 function optionsLayoutClass(n){ return n===1?"cols-1":n===3?"cols-3":n===4?"cols-4":""; }
 const ICON_EMPTY = `<svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h13l6 6v26a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M24 4v6h6"/><path d="M14 22h12M14 27h8"/></svg>`;
@@ -1014,6 +1044,7 @@ onAuthStateChanged(auth, user=>{
   if(unsubCurriculumExtra){ unsubCurriculumExtra(); unsubCurriculumExtra=null; }
   if(unsubActivityLog){ unsubActivityLog(); unsubActivityLog=null; }
   if(unsubSettings){ unsubSettings(); unsubSettings=null; }
+  if(unsubSop){ unsubSop(); unsubSop=null; }
   if(unsubComments){ unsubComments(); unsubComments=null; }
   if(unsubRatings){ unsubRatings(); unsubRatings=null; }
   dataReady = { questions:false, contests:false, assignments:false };
@@ -1079,6 +1110,10 @@ function startDataSubscriptions(){
     renderGamifyBar();
     renderInsightsRail();
     if(currentTab==="admin") renderTab();
+  }, err=>console.error(err));
+  unsubSop = onSnapshot(doc(db,"settings","sop"), snap=>{
+    sopData = snap.exists() ? snap.data() : null;
+    if(currentTab==="sop") renderTab();
   }, err=>console.error(err));
   unsubCurriculumExtra = onSnapshot(collection(db,"curriculumExtra"), snap=>{
     curriculumExtra = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -3831,18 +3866,107 @@ function renderCurriculum(){
 }
 
 /* ================= SOP TAB ================= */
+// sopData is null until an admin has ever saved an edit -- falls back to
+// the hardcoded SOP_TEXT (converted to the same {heading, body} shape,
+// body joined with blank lines so renderSOPBody() treats each original
+// paragraph correctly) at sensible default formatting.
+function effectiveSopSections(){
+  if(sopData?.sections) return sopData.sections;
+  return SOP_TEXT.map(s=>({heading:s.heading, body:s.body.join("\n\n")}));
+}
+function effectiveSopStyle(){
+  return {fontSize: sopData?.fontSize || 13.5, lineHeight: sopData?.lineHeight || 1.65};
+}
+let sopDraftSections = [];
+let sopDraftStyle = {fontSize:13.5, lineHeight:1.65};
 function renderSOP(){
   const main = document.getElementById("main");
+  if(sopEditing && isAdminUser){
+    main.innerHTML = sopEditFormHtml();
+    wireSOPEditForm();
+    return;
+  }
+  const sections = effectiveSopSections();
+  const style = effectiveSopStyle();
   main.innerHTML = `
-    <div class="pagehead"><h1>PMC Examination SOP</h1></div>
+    <div class="pagehead"><h1>PMC Examination SOP</h1>${isAdminUser?`<button class="btn" id="sop-edit-btn">✎ Edit</button>`:""}</div>
     <p class="desc">Preparation, Review, Administration, and Publication of PMC Examination Papers — Sundar STEM School.</p>
-    ${SOP_TEXT.map(s=>`
+    ${sections.map(s=>`
       <div class="level-block">
         <h3>${escapeHtml(s.heading)}</h3>
-        ${s.body.map(p=>`<p style="font-size:13.5px; line-height:1.65; margin:0 0 10px;">${escapeHtml(p)}</p>`).join("")}
+        <div class="sop-body" style="font-size:${style.fontSize}px; line-height:${style.lineHeight};">${renderSOPBody(s.body)}</div>
       </div>`).join("")}
-    <p class="note">Source: PMC_Examination_SOP_v2.pdf.</p>
+    <p class="note">Source: PMC_Examination_SOP_v2.pdf.${sopData?.updatedAt ? ` Last edited ${fmtDate(sopData.updatedAt)}${sopData.updatedByName?" by "+escapeHtml(sopData.updatedByName):""}.` : ""}</p>
   `;
+  document.getElementById("sop-edit-btn")?.addEventListener("click", ()=>{
+    sopDraftSections = effectiveSopSections().map(s=>({...s}));
+    sopDraftStyle = {...effectiveSopStyle()};
+    sopEditing = true;
+    renderTab();
+  });
+}
+// Reads whatever's currently in the heading/body/format inputs back into
+// the draft arrays before a re-render (add/remove section) or save, so an
+// in-progress edit to one section isn't lost by an action on another.
+function syncSopDraftFromDom(){
+  document.querySelectorAll("[data-sop-heading]").forEach((el,i)=>{ if(sopDraftSections[i]) sopDraftSections[i].heading = el.value; });
+  document.querySelectorAll("[data-sop-body]").forEach((el,i)=>{ if(sopDraftSections[i]) sopDraftSections[i].body = el.value; });
+  const fs = document.getElementById("sop-fontsize"); if(fs && fs.value) sopDraftStyle.fontSize = parseFloat(fs.value)||13.5;
+  const lh = document.getElementById("sop-lineheight"); if(lh && lh.value) sopDraftStyle.lineHeight = parseFloat(lh.value)||1.65;
+}
+function sopEditFormHtml(){
+  return `
+    <div class="pagehead"><h1>Edit SOP</h1></div>
+    <div class="filters" style="align-items:flex-end;">
+      <div class="field" style="margin:0;"><label>Font size (px)</label><input type="number" id="sop-fontsize" min="10" max="24" step="0.5" value="${sopDraftStyle.fontSize}" style="width:90px;" /></div>
+      <div class="field" style="margin:0;"><label>Line height</label><input type="number" id="sop-lineheight" min="1.0" max="2.5" step="0.05" value="${sopDraftStyle.lineHeight}" style="width:90px;" /></div>
+    </div>
+    <p class="hint" style="margin:8px 0 16px;">A blank line starts a new paragraph. A line starting with "- " becomes a bullet point. **bold**, *italic*, and __underline__ still work inside the text.</p>
+    ${sopDraftSections.map((s,i)=>`
+      <div class="level-block">
+        <div class="field"><label>Heading</label><input type="text" data-sop-heading value="${escapeHtml(s.heading)}" /></div>
+        <div class="field"><label>Body</label><textarea data-sop-body rows="6">${escapeHtml(s.body)}</textarea></div>
+        <button type="button" class="btn small" style="color:var(--red);" data-remove-section="${i}">Remove this section</button>
+      </div>`).join("")}
+    <button type="button" class="btn" id="sop-add-section">+ Add section</button>
+    <div style="display:flex; gap:8px; margin-top:16px;">
+      <button type="button" class="btn ghost" id="sop-cancel">Cancel</button>
+      <button type="button" class="btn primary" id="sop-save">Save</button>
+    </div>
+  `;
+}
+function wireSOPEditForm(){
+  document.getElementById("sop-add-section").addEventListener("click", ()=>{
+    syncSopDraftFromDom();
+    sopDraftSections.push({heading:"New section", body:""});
+    renderTab();
+  });
+  document.querySelectorAll("[data-remove-section]").forEach(b=>b.addEventListener("click", ()=>{
+    syncSopDraftFromDom();
+    sopDraftSections.splice(parseInt(b.dataset.removeSection,10),1);
+    renderTab();
+  }));
+  document.getElementById("sop-cancel").addEventListener("click", ()=>{ sopEditing = false; renderTab(); });
+  document.getElementById("sop-save").addEventListener("click", async ()=>{
+    syncSopDraftFromDom();
+    if(sopDraftSections.length===0){ toast("Add at least one section"); return; }
+    if(sopDraftSections.some(s=>!s.heading.trim())){ toast("Every section needs a heading"); return; }
+    try{
+      await setDoc(doc(db,"settings","sop"), {
+        sections: sopDraftSections.map(s=>({heading:s.heading.trim(), body:s.body})),
+        fontSize: sopDraftStyle.fontSize, lineHeight: sopDraftStyle.lineHeight,
+        updatedAt: new Date().toISOString(), updatedByName: currentUser.displayName||currentUser.email,
+      });
+      logActivity("sop_updated", "Updated the PMC Examination SOP", null);
+      sopEditing = false;
+      // Don't rely on the settings/sop onSnapshot to leave edit mode --
+      // its optimistic local update can fire while still mid-await above
+      // (before sopEditing is set to false), leaving nothing to trigger a
+      // second render afterward. Render explicitly instead.
+      renderTab();
+      toast("SOP saved");
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
+  });
 }
 
 /* ================= ADMIN TAB ================= */
@@ -4206,7 +4330,7 @@ const ACTIVITY_ICON = {
   assignment_created:"📋", assignment_updated:"📋", assignment_deleted:"🗑",
   curriculum_added:"📚", curriculum_removed:"📚",
   contest_created:"🏆", contest_updated:"🏆", contest_deleted:"🗑", contest_quilgo_complete:"✅",
-  review_assigned:"🔍", review_submitted:"✔️", limits_updated:"⚙️",
+  review_assigned:"🔍", review_submitted:"✔️", limits_updated:"⚙️", sop_updated:"📄",
 };
 function subscribeActivityLog(){
   if(unsubActivityLog) return;

@@ -196,6 +196,25 @@ curriculumExtra/{entryId}    -- admin-added books/chapters PLUS (Oct 2026)
   -- would silently orphan those questions' chapter tag the same way
   -- deleting the entry does.
 
+settings/sop    -- single doc, added Oct 2026 (SOP tab's admin-only Edit)
+  sections: [{heading, body}, ...] -- body is raw text, not an array of
+  -- paragraphs like the hardcoded SOP_TEXT it supersedes once saved: a
+  -- blank line starts a new paragraph, a run of lines each starting with
+  -- "- " becomes one bullet list (renderSOPBody() in index.html), and
+  -- renderRichText()'s existing inline tokens (**bold**, *italic*,
+  -- __underline__) still work inside the text. No raw HTML is ever
+  -- accepted -- every line is escapeHtml()'d before token substitution,
+  -- same safety approach as question text.
+  fontSize (px, default 13.5), lineHeight (default 1.65) -- one global
+  -- setting for the whole tab, not per-section.
+  updatedAt, updatedByName
+  -- Until this doc is ever written, renderSOP() falls back to the
+  -- hardcoded SOP_TEXT constant (converted to the same {heading, body}
+  -- shape) at the same default formatting, so the tab works correctly on
+  -- a brand-new install with zero setup -- same pattern as settings/limits
+  -- below. The hardcoded SOP_TEXT itself is never edited by this feature,
+  -- only superseded once an admin saves their first edit.
+
 settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
   dailyCreationTarget (default 15), dailyCreationLimit (default 20),
   dailyReviewLimit (default 20)
