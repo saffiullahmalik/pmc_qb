@@ -661,6 +661,17 @@ function allCurriculum(){
       if(b) b.chapters.push({code:doc.code, title:doc.title, subtopics:doc.subtopics||[], custom:true});
     }
   });
+  // Third pass: a "subtopic" extra appends one subtopic to an EXISTING
+  // chapter (hardcoded Beast Academy or custom) -- any content-teacher can
+  // create these (see firestore.rules), not just admins, so a chapter's
+  // subtopic list can grow collaboratively without ever touching the
+  // hardcoded CURRICULUM data itself.
+  curriculumExtra.forEach(doc=>{
+    if(doc.type==="subtopic"){
+      const c = merged.flatMap(b=>b.chapters).find(x=>x.code===doc.chapterCode);
+      if(c && !c.subtopics.includes(doc.subtopic)) c.subtopics.push(doc.subtopic);
+    }
+  });
   return merged;
 }
 function allChapters(){ return allCurriculum().flatMap(b=>b.chapters); }
@@ -1591,7 +1602,16 @@ function openForm(existing){
               <div class="field"><label>Book</label><select id="f-book">${bookSelectOptions((existing?.unit||suggestedUnit) ? bookIdForChapterCode(existing?.unit||suggestedUnit) : "")}</select></div>
               <div class="field"><label>Chapter</label><select name="unit" id="f-chapter"></select></div>
             </div>
-            <div class="field"><label>Subtopic</label><select name="subtopic" id="f-subtopic"></select></div>
+            <div class="field"><label>Subtopic</label>
+              <div style="display:flex; gap:6px;">
+                <select name="subtopic" id="f-subtopic" style="flex:1;"></select>
+                <button type="button" class="btn small" id="add-subtopic-btn" title="Add a new subtopic to this chapter">+ New</button>
+              </div>
+              <div id="add-subtopic-row" hidden style="display:flex; gap:6px; margin-top:6px;">
+                <input type="text" id="new-subtopic-input" placeholder="e.g. Plotting points" style="flex:1;" />
+                <button type="button" class="btn small primary" id="save-subtopic-btn">Save</button>
+              </div>
+            </div>
             <div id="off-task-warning"></div>
             <div class="field">
               <label>Skills tested <span class="hint">(the problem-solving technique this question exercises — click to tag, or add a new one)</span></label>
@@ -1946,6 +1966,32 @@ function openForm(existing){
   populateChapters(true);
   document.getElementById("f-book").addEventListener("change", ()=>populateChapters(false));
   document.getElementById("f-chapter").addEventListener("change", ()=>{ populateSubtopics(); updateOffTaskWarning(); updateDifficultyBalanceHint(); });
+  document.getElementById("add-subtopic-btn").addEventListener("click", ()=>{
+    const row = document.getElementById("add-subtopic-row");
+    row.hidden = !row.hidden;
+    if(!row.hidden) document.getElementById("new-subtopic-input").focus();
+  });
+  document.getElementById("save-subtopic-btn").addEventListener("click", async ()=>{
+    const chapterCode = document.getElementById("f-chapter").value;
+    const chapter = chapterByCode(chapterCode);
+    if(!chapter){ toast("Pick a chapter first"); return; }
+    const text = document.getElementById("new-subtopic-input").value.trim();
+    if(!text){ toast("Type a subtopic name"); return; }
+    if(chapter.subtopics.includes(text)){ toast("That subtopic already exists"); return; }
+    const bookId = bookIdForChapterCode(chapterCode);
+    try{
+      await addDoc(collection(db,"curriculumExtra"), {type:"subtopic", bookId, chapterCode, subtopic:text, createdAt:new Date().toISOString(), createdBy:currentUser.email});
+      logActivity("curriculum_added", `Added subtopic "${text}" to ${chapterCode}`, null);
+      // Optimistic local update -- don't wait on the subscription
+      // round-trip to see the new subtopic in THIS open editor's dropdown.
+      curriculumExtra.push({type:"subtopic", bookId, chapterCode, subtopic:text});
+      document.getElementById("new-subtopic-input").value = "";
+      document.getElementById("add-subtopic-row").hidden = true;
+      populateSubtopics();
+      document.getElementById("f-subtopic").value = text;
+      toast("Subtopic added");
+    }catch(err){ console.error(err); toast("Couldn't add subtopic ("+err.code+")"); }
+  });
 
   function renderLivePreview(){
     const pane = document.getElementById("live-preview");
@@ -3828,6 +3874,59 @@ async function exportAllData(){
   finally{ if(btn) btn.disabled = false; }
 }
 
+// Admin-only editing of an existing curriculumExtra entry (book/chapter/
+// subtopic) -- the hardcoded Beast Academy CURRICULUM itself is never
+// editable from the UI, only admin-added entries. Each type edits its own
+// relevant fields; the write stays a plain updateDoc of the same doc, so
+// its id/type/bookId/chapterCode never change, only the human-facing text.
+function openCurriculumEditForm(entry){
+  const root = document.getElementById("modal-root");
+  const fields = entry.type==="book"
+    ? `<div class="field"><label>Book name</label><input type="text" id="cx-edit-name" value="${escapeHtml(entry.bookName)}" /></div>
+       <div class="field"><label>Applies to level(s)</label>
+         <div style="display:flex; gap:10px; flex-wrap:wrap;">${LEVELS.map(l=>`<label style="display:flex; align-items:center; gap:4px; font-weight:400; font-size:12.5px;"><input type="checkbox" class="cx-edit-level" value="${l}" ${(entry.levels||[]).includes(l)?"checked":""}/> ${l}</label>`).join("")}</div>
+       </div>`
+    : entry.type==="chapter"
+    ? `<div class="row2">
+         <div class="field"><label>Chapter code <span class="hint">(fixed — existing questions reference it)</span></label><input type="text" value="${escapeHtml(entry.code)}" disabled /></div>
+         <div class="field"><label>Chapter title</label><input type="text" id="cx-edit-title" value="${escapeHtml(entry.title)}" /></div>
+       </div>
+       <div class="field"><label>Subtopics <span class="hint">(comma-separated)</span></label><input type="text" id="cx-edit-subtopics" value="${escapeHtml((entry.subtopics||[]).join(", "))}" /></div>`
+    : `<div class="field"><label>Subtopic</label><input type="text" id="cx-edit-subtopic" value="${escapeHtml(entry.subtopic)}" /></div>`;
+  root.innerHTML = `<div class="overlay" id="ov"><div class="drawer" style="width:min(480px,100vw);">
+    <div class="drawer-head"><h2>Edit ${entry.type}</h2><button class="btn ghost small" id="close-form">Close</button></div>
+    ${fields}
+    <button class="btn primary" id="cx-edit-save" style="width:100%; justify-content:center; margin-top:10px;">Save</button>
+  </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  document.getElementById("cx-edit-save").addEventListener("click", async ()=>{
+    let body = {};
+    if(entry.type==="book"){
+      const bookName = document.getElementById("cx-edit-name").value.trim();
+      const levels = Array.from(document.querySelectorAll(".cx-edit-level:checked")).map(el=>el.value);
+      if(!bookName){ toast("Enter a book name"); return; }
+      if(levels.length===0){ toast("Pick at least one level"); return; }
+      body = {bookName, levels};
+    } else if(entry.type==="chapter"){
+      const title = document.getElementById("cx-edit-title").value.trim();
+      const subtopics = document.getElementById("cx-edit-subtopics").value.split(",").map(s=>s.trim()).filter(Boolean);
+      if(!title){ toast("Enter a chapter title"); return; }
+      body = {title, subtopics};
+    } else {
+      const subtopic = document.getElementById("cx-edit-subtopic").value.trim();
+      if(!subtopic){ toast("Enter a subtopic name"); return; }
+      body = {subtopic};
+    }
+    try{
+      await updateDoc(doc(db,"curriculumExtra",entry.id), body);
+      logActivity("curriculum_added", `Edited a curriculum ${entry.type}`, entry.id);
+      toast("Saved");
+      closeModal();
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
+  });
+}
+
 function renderAdmin(){
   const main = document.getElementById("main");
   if(!isAdminUser){
@@ -3924,7 +4023,7 @@ function renderAdmin(){
     <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
     <button class="btn" id="export-data">⬇ Export all data as JSON</button>
     <div class="section-label">Curriculum</div>
-    <p class="desc">Add extra chapters to an existing book, or a whole new book, if the Beast Academy list doesn't cover something you need to tag.</p>
+    <p class="desc">Add extra chapters to an existing book, or a whole new book, if the Beast Academy list doesn't cover something you need to tag. Any teacher can add (or fix the wording of) a subtopic from the question editor — this is where you manage everything they've added, plus edit or remove any book/chapter/subtopic. The official Beast Academy list itself is never editable here.</p>
     <div class="row2">
       <div class="level-block">
         <b style="font-size:12.5px;">Add a chapter to an existing book</b>
@@ -3947,10 +4046,15 @@ function renderAdmin(){
     </div>
     ${curriculumExtra.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Type</th><th>Where</th><th>Added</th><th></th></tr></thead><tbody>
       ${curriculumExtra.map(e=>`<tr>
-        <td>${e.type==="book"?"Book":"Chapter"}</td>
-        <td>${e.type==="book"?escapeHtml(e.bookName):escapeHtml(e.code)+" — "+escapeHtml(e.title)+" (in "+escapeHtml(allCurriculum().find(b=>b.bookId===e.bookId)?.book||e.bookId)+")"}</td>
+        <td>${e.type==="book"?"Book":e.type==="chapter"?"Chapter":"Subtopic"}</td>
+        <td>${e.type==="book" ? escapeHtml(e.bookName)
+          : e.type==="chapter" ? escapeHtml(e.code)+" — "+escapeHtml(e.title)+" (in "+escapeHtml(allCurriculum().find(b=>b.bookId===e.bookId)?.book||e.bookId)+")"
+          : escapeHtml(e.subtopic)+" (in "+escapeHtml(chapterLabel(e.chapterCode))+")"}</td>
         <td class="mono">${fmtDate(e.createdAt)}</td>
-        <td><button class="btn small" style="color:var(--red);" data-delete-curriculum="${e.id}">Remove</button></td>
+        <td style="white-space:nowrap;">
+          <button class="btn small" data-edit-curriculum="${e.id}">Edit</button>
+          <button class="btn small" style="color:var(--red);" data-delete-curriculum="${e.id}">Remove</button>
+        </td>
       </tr>`).join("")}
     </tbody></table></div>` : ""}
     <div class="section-label">Manage teachers</div>
@@ -4070,6 +4174,10 @@ function renderAdmin(){
       logActivity("curriculum_removed", `Removed a curriculum entry`, b.dataset.deleteCurriculum);
       toast("Removed");
     }catch(err){ toast("Couldn't remove entry"); }
+  }));
+  document.querySelectorAll("[data-edit-curriculum]").forEach(b=>b.addEventListener("click", ()=>{
+    const entry = curriculumExtra.find(e=>e.id===b.dataset.editCurriculum);
+    if(entry) openCurriculumEditForm(entry);
   }));
   document.getElementById("add-teacher-btn").addEventListener("click", addTeacher);
   document.getElementById("gen-password-btn").addEventListener("click", ()=>{

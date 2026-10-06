@@ -77,9 +77,15 @@ service cloud.firestore {
 
     // Admin-added books/chapters, merged with the hardcoded curriculum at
     // read time in the app — additive only, never edits the built-in data.
+    // "subtopic" entries are the one exception to admin-only create/update:
+    // any content-teacher can add a new subtopic to a chapter, or fix the
+    // wording of one they (or anyone) added this way -- but never a book
+    // or chapter, and never delete, which stay admin-only.
     match /curriculumExtra/{entryId} {
       allow read: if isTeacher();
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() || (isContentTeacher() && request.resource.data.type == "subtopic");
+      allow update: if isAdmin() || (isContentTeacher() && resource.data.type == "subtopic" && request.resource.data.type == "subtopic");
+      allow delete: if isAdmin();
     }
 
     // Admin-adjustable daily creation/review caps (Admin tab's "Daily

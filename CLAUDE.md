@@ -172,7 +172,29 @@ assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   -- assigning the same chapter to two teachers is structurally impossible.
 
 teachers/{email, lowercase}
-  role: "teacher" | "qb_lead" | "admin" | "external_reviewer"
+  role: "teacher" | "qb_lead" | "admin" | "external_reviewer" | "uploader"
+
+curriculumExtra/{entryId}    -- admin-added books/chapters PLUS (Oct 2026)
+  teacher-added subtopics, merged into allCurriculum() at read time with
+  the hardcoded CURRICULUM constant -- additive only, the hardcoded data
+  itself is never edited from the UI.
+  type: "book"     -- {bookId, bookName, levels[], age, chapters:[]}
+  type: "chapter"  -- {bookId, code, title, subtopics[]}
+  type: "subtopic" -- {bookId, chapterCode, subtopic} -- appends one
+    subtopic string to an existing chapter's `.subtopics` array (hardcoded
+    or custom) without ever touching the chapter's own doc/data. The only
+    type any content-teacher (not just admin) can create or update --
+    firestore.rules checks `request.resource.data.type == "subtopic"` --
+    so subtopics can grow collaboratively while books/chapters, and
+    deletes of anything, stay admin-only.
+  createdAt, createdBy
+  -- Admin & Analytics -> Curriculum lists every entry with Edit/Remove;
+  -- openCurriculumEditForm() in index.html edits the human-facing text
+  -- only -- a chapter's `code` is deliberately NOT editable there (shown
+  -- disabled, with an explanatory hint) since existing questions
+  -- reference it directly via `unit`; renaming it out from under them
+  -- would silently orphan those questions' chapter tag the same way
+  -- deleting the entry does.
 
 settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
   dailyCreationTarget (default 15), dailyCreationLimit (default 20),

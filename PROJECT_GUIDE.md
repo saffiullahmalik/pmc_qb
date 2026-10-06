@@ -93,7 +93,7 @@ A thin strip at the top of every tab shows your current streak, today's progress
 - **Contests** — assemble locked questions into a paper (tagged by category/day/slot), print a bilingual exam + answer key + solution manual.
 - **Upload** — pick a paper by category → day → slot, download each question as an image, mark it uploaded, with a record of who uploaded what and when.
 - **Assignment** — a drag-and-drop board for admins to hand out chapters (or custom tracks like IQ/Logic reasoning — if none exists yet, a link right there points to where to add one) to teachers, plus a dashboard of who's assigned what and a team comparison chart.
-- **Curriculum Map** — the full Beast Academy chapter reference, plus any custom books/chapters an admin has added (this is also how a cross-cutting track like "IQ & Logic Reasoning" gets added — it doesn't have to belong to just one PMC level).
+- **Curriculum Map** — the full Beast Academy chapter reference, plus any custom books/chapters an admin has added (this is also how a cross-cutting track like "IQ & Logic Reasoning" gets added — it doesn't have to belong to just one PMC level). Any teacher can add a new subtopic to a chapter right from the question editor (a "+ New" button next to the Subtopic field); an admin can edit or remove anything added this way — or any admin-added book/chapter — from Admin → Curriculum. The official Beast Academy list itself is never editable.
 - **SOP** — the official school procedure document, for reference inside the app.
 - **Admin & Analytics** — teacher accounts, daily limits, curriculum additions, backups, post-test statistics, and the activity log (admin-only).
 
