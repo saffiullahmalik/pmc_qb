@@ -4,16 +4,41 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Question Bank — Offline Backup Viewer</title>
+<script>
+  // Same config as index.html, required before the MathJax script loads --
+  // MathJax v3 doesn't recognize single-$ inline math by default (only
+  // \(...\)), and every question in this app is written as $x^2$-style.
+  window.MathJax = {
+    tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$'], ['\\[','\\]']] },
+    options: { skipHtmlTags: ['script','noscript','style','textarea','pre'] }
+  };
+</script>
+<!--
+  MathJax + html2canvas, same pinned versions/URLs as index.html -- loaded
+  only so the "Download image…" button under Upload status can render a
+  question to a PNG exactly like the live app does, for the one real
+  scenario this file exists for: Firestore/the live site is unreachable,
+  but a locked question still needs to go up to Quilgo. This is the only
+  network access anywhere in this file -- no backup data, question text,
+  or images are ever sent anywhere; both libraries just render entirely
+  inside your own browser. If you have no internet at all, every other tab
+  (Questions, Contests, Teachers, etc.) still works with zero network
+  access -- only the image download needs these two scripts to have loaded.
+-->
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@600;700&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&family=Noto+Nastaliq+Urdu:wght@400;600&family=Noto+Naskh+Arabic:wght@400;600&display=swap');
   :root{
     --bg:#f7f4ec; --surface:#fffdf8; --surface-2:#eee8da; --border:#e0d8c4; --ink:#221e17; --ink-dim:#6b6355;
     --accent:#0f6b5c; --accent-ink:#ffffff; --accent-soft:#e2efe9; --red:#a4372b; --red-soft:#f7e3df;
+    --gold:#b5791f; --gold-soft:#f6ecd9; --blue:#2f5f8a; --blue-soft:#e4edf5; --violet:#6a5a9e; --violet-soft:#e9e5f3;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --bg:#161c15; --surface:#1c231b; --surface-2:#232d24; --border:#333f34; --ink:#e9efe9; --ink-dim:#9db0a5;
       --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --red:#e07463; --red-soft:#3a1f1a;
+      --gold:#d9a34a; --gold-soft:#332711; --blue:#7fb0dd; --blue-soft:#1c2c39; --violet:#b3a3e0; --violet-soft:#2a2440;
     }
   }
   *{ box-sizing:border-box; }
@@ -41,14 +66,52 @@
   .row .title{ font-weight:600; font-size:13.5px; }
   .row .body{ font-size:13px; color:var(--ink-dim); margin-top:3px; white-space:pre-wrap; }
   .pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; font-weight:600; background:var(--accent-soft); color:var(--accent); margin-right:4px; }
+  .pill.status-draft{ background:var(--blue-soft); color:var(--blue); }
+  .pill.status-in_review{ background:var(--gold-soft); color:var(--gold); }
+  .pill.status-reviewed{ background:var(--violet-soft); color:var(--violet); }
+  .pill.status-finalized{ background:var(--accent-soft); color:var(--accent); }
+  .pill.status-uploaded{ background:var(--accent-soft); color:var(--accent); }
   .empty{ padding:30px; text-align:center; color:var(--ink-dim); border:1px dashed var(--border); border-radius:9px; }
   [hidden]{ display:none !important; }
+
+  /* Buttons + the Upload status tab's contest cards / question rows */
+  .btn{ font-family:inherit; font-size:12.5px; font-weight:600; padding:7px 12px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color:var(--ink); cursor:pointer; }
+  .btn:hover{ border-color:var(--accent); }
+  .btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .btn:disabled{ opacity:.5; cursor:default; }
+  .contest-card{ background:var(--surface); border:1px solid var(--border); border-radius:11px; margin-bottom:10px; overflow:hidden; }
+  .contest-card summary{ cursor:pointer; list-style:none; padding:12px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .contest-card summary::-webkit-details-marker{ display:none; }
+  .contest-card summary::before{ content:"▸"; color:var(--ink-dim); flex:0 0 auto; }
+  .contest-card[open] summary::before{ content:"▾"; }
+  .contest-card .ctitle{ font-weight:600; font-size:13.5px; }
+  .contest-card .cbody{ padding:0 14px 14px; }
+  .upload-row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid var(--border); }
+  .upload-row:first-child{ border-top:none; }
+  .upload-row .uq{ flex:1; min-width:0; }
+  .upload-row .uq .t{ font-weight:600; font-size:13px; }
+  .upload-row .uq .s{ font-size:11.5px; color:var(--ink-dim); }
+  /* Question-preview styling -- copied from index.html so a downloaded
+     image matches the live app's exam output exactly (same classes). */
+  .question-container{ border:0.75pt solid #333; border-radius:8px; padding:14px 16px; margin-bottom:16px; background:#fff; color:#161b19; }
+  .q-text-row{ display:flex; align-items:stretch; gap:12px; }
+  .q-lang-box{ flex:1 1 50%; min-width:0; }
+  .q-lang-box.urdu{ font-family:'Noto Nastaliq Urdu', serif; direction:rtl; text-align:right; font-size:1.05rem; }
+  .q-lang-box .box-label{ display:block; font-size:11px; font-weight:700; color:#0f6b5c; margin-bottom:4px; }
+  .print-graphic{ text-align:center; margin:10px 0; }
+  .common-equation{ text-align:center; margin:10px 0; font-size:1.15em; }
+  .print-options-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin-top:8px; }
+  .print-options-grid.cols-1{ grid-template-columns:1fr; }
+  .print-options-grid.cols-3{ grid-template-columns:repeat(3,1fr); }
+  .print-options-grid.cols-4{ grid-template-columns:repeat(4,1fr); }
+  .print-opt-item{ display:flex; align-items:center; gap:7px; font-size:13.5px; padding:3px 0; }
+  .print-opt-item .k{ font-weight:700; width:20px; height:20px; border-radius:50%; background:#eef1ee; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; font-size:11px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="masthead"><div class="mark">QB</div><h1>Offline Backup Viewer</h1></div>
-  <p class="note">Read-only. Nothing here ever leaves your computer — no network requests, no login. Load a backup JSON file (from the app's Admin tab → "Export all data as JSON") to browse it if the live site is ever unreachable. Just double-click this file to open it in a browser — no server or install needed.</p>
+  <p class="note">Read-only — browsing a backup never sends your data anywhere, and nothing here ever writes back to the live app (so "mark uploaded" isn't available offline). Load a backup JSON file (from the app's Admin tab → "Export all data as JSON") if the live site/Firestore is ever unreachable. Just double-click this file to open it in a browser — no server or install needed. The <b>Upload status</b> tab additionally needs internet access (to load MathJax/html2canvas from a CDN) so its "Download image…" button works — every other tab works fully offline.</p>
 
   <div class="loader" id="loader">
     <p style="margin:0 0 10px;">Choose a backup JSON file to browse</p>
@@ -62,15 +125,24 @@
     <div class="tabs" id="tabs">
       <button data-tab="questions" class="active">Questions</button>
       <button data-tab="contests">Contests</button>
+      <button data-tab="upload">Upload status</button>
       <button data-tab="assignments">Assignments</button>
       <button data-tab="teachers">Teachers</button>
       <button data-tab="curriculum">Curriculum</button>
     </div>
     <input type="search" class="search" id="search" placeholder="Search…" />
     <div id="list"></div>
+    <div id="upload-status" hidden></div>
     <p class="note" style="margin-top:20px;"><button id="load-another" style="font:inherit; background:none; border:1px solid var(--border); border-radius:7px; padding:6px 12px; cursor:pointer; color:var(--ink);">Load a different file</button></p>
   </div>
 </div>
+
+<!-- Offscreen render target for the "Download image…" pipeline -- same
+     approach as index.html's downloadQuestionImage(): build the real
+     preview markup off-screen, let MathJax typeset it, flatten the
+     rendered math to plain <img>s (html2canvas can't capture MathJax's
+     own DOM reliably), then html2canvas the node into a PNG. -->
+<div id="dl-sandbox" style="position:fixed; left:-9999px; top:0; width:800px; background:#fff; color:#161b19; padding:16px;"></div>
 
 <script>
 let data = null;
@@ -78,6 +150,94 @@ let currentTab = "questions";
 
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function fmtDate(iso){ if(!iso) return "—"; const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}); }
+
+/* ---------------- question preview + image download ----------------
+   Ported from index.html (questionPreviewHtml/flattenMathToImages/
+   downloadQuestionImage) so a question downloaded from this offline
+   viewer looks pixel-identical to one downloaded from the live app --
+   same classes, same revealAnswer:false default (never marks the correct
+   option -- this image is what gets shown to students), same MathJax/
+   html2canvas pipeline. Keep these in sync if the live versions change. */
+const FONT_LIBRARY = {
+  en: [{v:"'Public Sans', system-ui, sans-serif", l:"Public Sans"}, {v:"'Lexend', system-ui, sans-serif", l:"Lexend"}, {v:"Georgia, serif", l:"Georgia"}, {v:"Arial, system-ui, sans-serif", l:"Arial"}],
+  ur: [{v:"'Noto Nastaliq Urdu', serif", l:"Noto Nastaliq"}, {v:"'Noto Naskh Arabic', serif", l:"Noto Naskh"}],
+};
+function renderRichText(escaped){
+  return String(escaped ?? "")
+    .replace(/\{\{color:(#[0-9a-fA-F]{3,6})\}\}([\s\S]*?)\{\{\/color\}\}/g, '<span style="color:$1">$2</span>')
+    .replace(/\{\{size:(\d{1,3})\}\}([\s\S]*?)\{\{\/size\}\}/g, '<span style="font-size:$1px">$2</span>')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>')
+    .replace(/__([\s\S]+?)__/g, '<u>$1</u>')
+    .replace(/\*([\s\S]+?)\*/g, '<i>$1</i>');
+}
+function commonEquationHtml(raw){
+  const lines = String(raw||"").split("\n").map(l=>l.trim()).filter(Boolean);
+  if(lines.length===0) return "";
+  return `<div class="common-equation">${lines.map(l=>`$$${esc(l)}$$`).join("<br>")}</div>`;
+}
+function optionsLayoutClass(n){ return n===1?"cols-1":n===3?"cols-3":n===4?"cols-4":""; }
+function getQuestionOptions(q){
+  if(Array.isArray(q.options) && q.options.length) return q.options;
+  return (q.optionsEn||[]).map((t,i)=>({id:"legacy-"+i, text:t, image:null}));
+}
+function getCorrectOptionId(q){
+  if(q.correctOptionId) return q.correctOptionId;
+  return "legacy-"+(q.correctIndex??0);
+}
+function questionPreviewHtml(q, config={}){
+  const {includeQuestion=true, includeOptions=true} = config;
+  const opts = getQuestionOptions(q);
+  return `
+    ${includeQuestion ? `
+    <div class="question-container">
+      <div class="q-text-row">
+        <div class="q-lang-box english" style="font-size:${q.fontSizeEn||15}px; line-height:${q.lineHeightEn||1.5}; font-family:${q.fontFamilyEn||FONT_LIBRARY.en[0].v}; text-align:${q.textAlignEn||"left"};"><span class="box-label">Question</span><p>${renderRichText(esc(q.promptEn||""))}</p></div>
+        <div class="q-lang-box urdu" style="font-size:${q.fontSizeUr||14}px; line-height:${q.lineHeightUr||1.5}; font-family:${q.fontFamilyUr||FONT_LIBRARY.ur[0].v}; text-align:${q.textAlignUr||"right"};"><span class="box-label">سوال</span><p>${renderRichText(esc(q.promptUr||""))}</p></div>
+      </div>
+      ${commonEquationHtml(q.commonEquation)}
+      ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="note" style="margin-top:4px;">${esc(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
+    </div>` : ""}
+    ${includeOptions ? `
+    <div class="question-container">
+      <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(esc(o.text))}</div>`).join("")}
+      </div>
+    </div>` : ""}`;
+}
+function flattenMathToImages(root){
+  const imgs = [];
+  root.querySelectorAll("mjx-container svg").forEach(svg=>{
+    const container = svg.closest("mjx-container");
+    const rect = svg.getBoundingClientRect();
+    if(rect.width<=0 || rect.height<=0) return;
+    const svgClone = svg.cloneNode(true);
+    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const svgStr = new XMLSerializer().serializeToString(svgClone);
+    const img = document.createElement("img");
+    img.src = "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svgStr);
+    img.style.width = rect.width+"px";
+    img.style.height = rect.height+"px";
+    img.style.verticalAlign = getComputedStyle(container).verticalAlign;
+    container.replaceWith(img);
+    imgs.push(img);
+  });
+  return Promise.all(imgs.map(img=>img.decode().catch(()=>{})));
+}
+async function downloadQuestionImage(q){
+  if(!window.html2canvas){ alert("Still loading the image library — wait a second and try again (needs internet access)."); return; }
+  const node = document.getElementById("dl-sandbox");
+  node.innerHTML = questionPreviewHtml(q, {includeQuestion:true, includeOptions:true});
+  if(window.MathJax?.typesetPromise) await window.MathJax.typesetPromise([node]).catch(()=>{});
+  await flattenMathToImages(node);
+  try{
+    const canvas = await window.html2canvas(node, {scale:2, backgroundColor:"#ffffff"});
+    const a = document.createElement("a");
+    a.download = (q.titleEn||"question").replace(/[^a-z0-9]+/gi,"_").toLowerCase()+".png";
+    a.href = canvas.toDataURL("image/png");
+    a.click();
+  }catch(err){ console.error(err); alert("Couldn't generate the image — see the browser console for details."); }
+  finally{ node.innerHTML = ""; }
+}
 
 document.getElementById("file-input").addEventListener("change", e=>{
   const file = e.target.files[0];
@@ -107,9 +267,26 @@ document.getElementById("tabs").addEventListener("click", e=>{
   currentTab = b.dataset.tab;
   document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("active", x===b));
   document.getElementById("search").value = "";
-  renderList();
+  render();
 });
 document.getElementById("search").addEventListener("input", renderList);
+
+function render(){
+  const isUpload = currentTab==="upload";
+  document.getElementById("search").hidden = isUpload;
+  document.getElementById("list").hidden = isUpload;
+  document.getElementById("upload-status").hidden = !isUpload;
+  if(isUpload) renderUploadStatus(); else renderList();
+}
+
+function totalPendingUploads(){
+  let n = 0;
+  (data.contests||[]).forEach(c=>{
+    const uploadStatus = c.uploadStatus||{};
+    (c.questionIds||[]).forEach(id=>{ if(!uploadStatus[id]) n++; });
+  });
+  return n;
+}
 
 function showContent(){
   document.getElementById("loader").hidden = true;
@@ -120,10 +297,74 @@ function showContent(){
   document.getElementById("stat-tiles").innerHTML = `
     <div class="stat-tile"><div class="num">${(data.questions||[]).length}</div><div class="lbl">Questions</div></div>
     <div class="stat-tile"><div class="num">${(data.contests||[]).length}</div><div class="lbl">Contests</div></div>
+    <div class="stat-tile"><div class="num" style="${totalPendingUploads()>0?"color:var(--red);":""}">${totalPendingUploads()}</div><div class="lbl">Pending upload</div></div>
     <div class="stat-tile"><div class="num">${(data.assignments||[]).length}</div><div class="lbl">Assignments</div></div>
     <div class="stat-tile"><div class="num">${(data.teachers||[]).length}</div><div class="lbl">Teachers</div></div>
     <div class="stat-tile"><div class="num">${(data.curriculumExtra||[]).length}</div><div class="lbl">Custom chapters</div></div>`;
-  renderList();
+  render();
+}
+
+const STATUS_LABEL = {draft:"Draft", in_review:"In Review", finalized:"Locked", uploaded:"Uploaded"};
+// "Reviewed (awaiting lock)" is derived the same way the live app derives
+// it (status still "in_review", but a reviewer already agreed) -- same
+// 4-way breakdown as everywhere else in the app, not just the 3 raw values.
+function questionStatusInfo(x){
+  if(x.status==="in_review" && x.peerReview?.outcome==="agree") return {v:"reviewed", l:"Reviewed (awaiting lock)"};
+  return {v:x.status, l:STATUS_LABEL[x.status]||x.status||"—"};
+}
+
+// Upload status tab -- the actual point of this file update: if Firestore
+// is unreachable, an admin/uploader still needs to know which locked
+// questions are sitting in a contest paper not yet uploaded to Quilgo, and
+// be able to get the exact same exam-ready PNG they'd get from the live
+// app's Upload tab. Mirrors renderQuilgoBody()'s pending/done split per
+// contest, just read entirely from the static backup instead of Firestore.
+function renderUploadStatus(){
+  const wrap = document.getElementById("upload-status");
+  const contests = data.contests||[];
+  if(contests.length===0){ wrap.innerHTML = `<div class="empty">No contests in this backup.</div>`; return; }
+  const byId = {};
+  (data.questions||[]).forEach(x=>byId[x.id]=x);
+  // Contests with something still pending float to the top -- that's
+  // exactly what you'd be hunting for if the live site just went down.
+  const sorted = contests.slice().sort((a,b)=>{
+    const ap = (a.questionIds||[]).filter(id=>!(a.uploadStatus||{})[id]).length;
+    const bp = (b.questionIds||[]).filter(id=>!(b.uploadStatus||{})[id]).length;
+    return bp - ap;
+  });
+  wrap.innerHTML = sorted.map(c=>{
+    const qs = (c.questionIds||[]).map(id=>byId[id]).filter(Boolean);
+    const uploadStatus = c.uploadStatus||{};
+    const pending = qs.filter(x=>!uploadStatus[x.id]);
+    const done = qs.filter(x=>uploadStatus[x.id]);
+    const paperLabel = c.contestLevel ? `${esc(c.contestLevel)} — Day ${esc(c.day)}, Slot ${esc(c.slot)} — ${esc(c.name)}` : esc(c.name||"Untitled contest");
+    const row = (x, uploaded)=>`
+      <div class="upload-row">
+        <div class="uq">
+          <div class="t">${esc(x.titleEn||"Untitled")}</div>
+          <div class="s">${questionStatusInfo(x).l}${uploaded ? ` · uploaded by ${esc(uploadStatus[x.id].uploadedByName||"—")} ${fmtDate(uploadStatus[x.id].uploadedAt)}` : ""}</div>
+        </div>
+        <button type="button" class="btn" data-dl="${esc(x.id)}">Download image…</button>
+      </div>`;
+    return `
+    <details class="contest-card" ${pending.length>0?"open":""}>
+      <summary>
+        <span class="ctitle">${paperLabel}</span>
+        ${pending.length>0 ? `<span class="pill status-draft">${pending.length} pending upload</span>` : `<span class="pill status-finalized">All uploaded</span>`}
+        <span class="note" style="margin:0;">${qs.length} question${qs.length===1?"":"s"} total</span>
+      </summary>
+      <div class="cbody">
+        ${qs.length===0 ? `<p class="note">This contest has no questions.</p>` : `
+          ${pending.length ? pending.map(x=>row(x,false)).join("") : `<p class="note">All questions in this contest are uploaded.</p>`}
+          ${done.length ? `<p class="note" style="margin:10px 0 0;">Already uploaded (${done.length})</p>${done.map(x=>row(x,true)).join("")}` : ""}
+        `}
+      </div>
+    </details>`;
+  }).join("");
+  wrap.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{
+    const x = byId[b.dataset.dl];
+    if(x) downloadQuestionImage(x);
+  }));
 }
 
 function renderList(){
@@ -132,12 +373,15 @@ function renderList(){
   if(currentTab==="questions"){
     let items = data.questions||[];
     if(q) items = items.filter(x => (x.titleEn||"").toLowerCase().includes(q) || (x.promptEn||"").toLowerCase().includes(q) || (x.subtopic||"").toLowerCase().includes(q));
-    list.innerHTML = items.length===0 ? `<div class="empty">No questions match.</div>` : items.map(x=>`
+    list.innerHTML = items.length===0 ? `<div class="empty">No questions match.</div>` : items.map(x=>{
+      const info = questionStatusInfo(x);
+      return `
       <div class="row">
-        <div class="top"><span>${(x.level||[]).map(l=>`<span class="pill">${esc(l)}</span>`).join("")}${esc(x.status||"")}</span><span>${esc(x.unit||"—")} · ${fmtDate(x.updatedAt||x.createdAt)}</span></div>
+        <div class="top"><span>${(x.level||[]).map(l=>`<span class="pill">${esc(l)}</span>`).join("")}<span class="pill status-${info.v}">${esc(info.l)}</span></span><span>${esc(x.unit||"—")} · ${fmtDate(x.updatedAt||x.createdAt)}</span></div>
         <div class="title">${esc(x.titleEn||"Untitled")}</div>
         <div class="body">${esc(x.promptEn||"")}</div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   } else if(currentTab==="contests"){
     let items = data.contests||[];
     if(q) items = items.filter(x => (x.name||"").toLowerCase().includes(q));

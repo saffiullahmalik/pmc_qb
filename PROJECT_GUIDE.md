@@ -107,7 +107,7 @@ A thin strip at the top of every tab shows your current streak, today's progress
 - **How much can be created/reviewed per day** → Admin → Daily limits.
 - **Who has access at all** → Admin → Manage teachers (create, promote/demote, remove) — including setting up an External Reviewer account. Click the ✎ next to anyone's name to fix it if it's showing as their email instead (happens if "Full name" was left blank when the account was created) — it updates everywhere that name is shown (Assignment board, Team chart, reassign menus) right away.
 - **A full audit trail** → Admin → Activity Log (who did what, when — admin-only).
-- **A safety net** → Admin → Export all data as JSON, openable offline with `backup-viewer.html` if the live site or Firestore is ever unreachable.
+- **A safety net** → Admin → Export all data as JSON, openable with `backup-viewer.html` if the live site or Firestore is ever unreachable — just double-click it and load the backup file. Its **Upload status** tab shows every contest's questions still pending upload (and which are already done, by whom and when) with a **Download image…** button that produces the exact same exam-ready image as the live app — so a paper can still get uploaded to Quilgo even while Firestore is down. That one button needs internet access to load the same rendering libraries the live app uses; everything else in this viewer works with no network at all. It can't mark anything as uploaded itself (it can't write anywhere) — do that in the live app once it's back.
 
 ---
 
