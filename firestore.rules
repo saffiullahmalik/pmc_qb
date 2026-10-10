@@ -25,9 +25,16 @@ service cloud.firestore {
     // leaves feedback for an admin to act on) -- isTeacher() stays true for
     // them (so they can read everything and create comments), but content
     // actions (creating/editing questions, contests) require this instead.
+    // "automation" (added Oct 2026) is for non-human service accounts --
+    // e.g. the Apps Script that backs up Firestore to Drive hourly -- that
+    // need the exact same read/write authority a "teacher" has, but under
+    // a different role value so client-side code (teacherComparisonData(),
+    // teamAverageToday()) can tell a real person apart from a script and
+    // leave it out of team/performance charts. Functionally identical to
+    // "teacher" everywhere in these rules.
     function isContentTeacher() {
       return isSignedIn() &&
-        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["teacher", "qb_lead", "admin"];
+        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["teacher", "qb_lead", "admin", "automation"];
     }
 
     function isAdmin() {
@@ -50,7 +57,7 @@ service cloud.firestore {
       allow read: if isTeacher();
       allow create, update: if isAdmin() &&
         email == email.lower() &&
-        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer", "uploader"];
+        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer", "uploader", "automation"];
       allow delete: if isAdmin();
     }
 

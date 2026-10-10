@@ -20,13 +20,14 @@ This portal is where a team of teachers collaboratively **write, tag, peer-revie
 
 ## Who can do what
 
-Every person who can sign in has one of five roles, set by an admin:
+Every person who can sign in has one of six roles, set by an admin:
 
 - **Teacher** — can write, edit, and comment on any question; can rate and like questions; can be assigned chapters or peer reviews.
 - **QB Lead** — everything a teacher can, plus can lock a question (once peer review agrees with it) and unlock one back to "In Review."
 - **Admin** — everything above, plus: create/remove teacher accounts, delete questions, manage workload assignments, set daily limits, add curriculum, and see the full activity log.
 - **External Reviewer** — a separate, read-and-comment-only account for an outside spot-checker. They see the normal Question Bank tab — same filters, same search, every question regardless of status — so they can browse and pick whatever they want to check, exactly like everyone else; they just don't get a "+ New Question" button, and can't edit, delete, or change a question's status once they open one, including already-locked ones. Their comments carry a purple "External Reviewer" tag so they stand out in the thread, and if they comment on a locked question, the admin viewing it sees an explicit prompt to unlock it and apply the fix.
 - **Uploader** — can only see the Upload tab, nothing else. Within it they can do everything a teacher could there: browse a paper by category/day/slot, download each question's image, and mark it uploaded (or undo). They can't mark a whole paper's upload work complete — that stays admin-only.
+- **Automation** — not a person; a role for a service account like the one behind the hourly Drive backup (see SETUP.md). Same read/write access as a Teacher, but left out of the Team/By-teacher charts and the Assignment board's columns so it never shows up as a confusing empty "teacher" next to your real staff.
 
 There's no public sign-up — an admin creates every login from **Admin → Manage teachers**.
 

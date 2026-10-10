@@ -22,9 +22,12 @@
  *
  * 1. Create a DEDICATED backup account in the live app itself:
  *    Admin → Manage teachers → Full name "Backup Bot" (or similar),
- *    any email, role "Teacher" (NOT Admin — a plain teacher account can
- *    already read every collection this script needs; least privilege).
- *    Generate a strong password and keep it for step 3.
+ *    any email, role "Automation" (NOT Admin — this role has the exact
+ *    same read access a Teacher has, which is all this script needs, but
+ *    is excluded from the Team/By-teacher performance charts and the
+ *    Assignment board's columns, so it doesn't show up as an empty
+ *    "teacher" alongside real staff). Generate a strong password and keep
+ *    it for step 3.
  *
  * 2. In Drive, create (or pick) a folder for the backups to land in.
  *    Open it and copy the folder ID from its URL — the part after

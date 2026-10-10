@@ -26,7 +26,7 @@ The portal's design follows an official school SOP ("Preparation, Review, Admini
 
 ## Access control model (important — don't weaken this without discussion)
 
-A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of five roles: `teacher` | `qb_lead` | `admin` | `external_reviewer` | `uploader`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
+A signed-in user can read/write question data **only if** a document exists at `teachers/{their email, lowercase}` in Firestore, with one of six roles: `teacher` | `qb_lead` | `admin` | `external_reviewer` | `uploader` | `automation`. Admins manage that collection — and the underlying login itself — from the app's own **Admin → Manage teachers** section (create/remove teachers, promote/demote), or by hand in the Firebase console as a fallback — there is no self-service approval flow either way, by design (an admin decides who gets in).
 
 - `qb_lead` ("QB Lead" — was called "Head Teacher" until this rename) additionally unlocks setting a question's status to `finalized` — a plain `teacher` cannot finalize, and once finalized, further edits also require `qb_lead`/`admin` (enforced by `isQBLeadOrAdmin()` in `firestore.rules`, not just hidden client-side).
 - `role: "admin"` additionally unlocks:
@@ -36,6 +36,7 @@ A signed-in user can read/write question data **only if** a document exists at `
   - Managing workload `assignments` (the Assignment tab)
 - `role: "external_reviewer"` (added Oct 2026) is a read-and-comment-only role for an outside reviewer who spot-checks questions — including **locked** ones — and leaves feedback for an admin to act on. They see the *same* Bank tab every teacher does -- full filters, search, and every question regardless of status (`renderBank()` branches on `isExternalReviewerUser` only to hide the "+ New Question" button, the "Only mine" filter, and each card's Edit/Locked button, not to replace the view) -- so they pick a question to review themselves, the same way a teacher picks one to read, rather than through a separate restricted screen. Every other nav tab is hidden for them client-side (an earlier version of this role had its own single "pick a random question" screen instead; that was replaced after feedback that reviewers need the normal filtered browsing experience, not a narrower one). In `renderDrawerBody()`, the Status section and Edit/Delete buttons are replaced with just a "Download as image…" button for this role, but the preview, peer-review section, and comment thread all render normally. Enforcement is server-side too, via a new `isContentTeacher()` function in `firestore.rules` (role in `["teacher","qb_lead","admin"]`) required for creating/editing questions and contests — `isTeacher()` (any of the four roles, including this one) still gates reads and comment-creation, since reading everything and commenting on anything (even locked) is exactly what this role is for. They're excluded from `pickReviewer()`'s balanced peer-review rotation and from the team comparison/leaderboard charts (`teacherComparisonData()`) — they don't author content or carry a quota. A comment from this role gets an "External Reviewer" badge in the thread (`reviewerBadge()` in `renderDrawerBody()`), and an admin viewing a **locked** question with such a comment sees an explicit callout prompting them to unlock it to act on the feedback.
 - `role: "uploader"` (added Oct 2026) can only ever see the Upload tab — every other nav tab (including Bank) is hidden for them client-side, and `checkTeacherStatus()` forces `currentTab = "quilgo"` on sign-in since Bank, the app's normal default landing tab, isn't reachable for this role at all. Within Upload they can do everything the tab already offered any teacher — browse by category/day/slot, download a question's image, mark it uploaded/undo — no new UI was needed for that, since those actions were never `isAdminUser`-gated to begin with. Only "Mark this contest's upload complete" stays admin-only. Server-side, a new `isUploadOnlyChange()` in `firestore.rules`' `contests` match block allows any approved teacher (this role included) to update *just* `uploadStatus`/`quilgoComplete` on a contest, while creating a contest or changing any other field still requires `isContentTeacher()`. Excluded from `pickReviewer()` (allowlisted by role, not denylisted — see below) and from the team comparison/leaderboard charts, same reasoning as `external_reviewer`.
+- `role: "automation"` (added Oct 2026) is for non-human service accounts — e.g. `backupFirestoreToDrive.gs`'s dedicated login — that need to read (and, if ever useful, write) exactly like a `teacher` but shouldn't clutter anything that lists "who's actually producing." No client-side UI hides any nav tab for this role (it behaves exactly like a plain `teacher` if anyone ever does sign in with it through the website, which it isn't meant to) — the whole point is server-side-equivalent authority (`isContentTeacher()` in `firestore.rules` includes it alongside `teacher`/`qb_lead`/`admin`) with client-side exclusion from `teacherComparisonData()`/`teamAverageToday()` (now an allowlist, see the data-model section below) and the Assignment tab's Kanban board (filtered out before building columns — nobody should be able to drag a chapter onto a service account). It still appears normally in Admin → Manage teachers.
 
 All of this is enforced in `firestore.rules`, not in client-side JS — the client UI hides admin controls from non-admins, but the real enforcement is server-side. Emails are lowercased on both sides (client lookup and rules) specifically because Firestore document IDs are case-sensitive and admins type them by hand — this was a real bug caught during setup and fixed.
 
@@ -237,7 +238,21 @@ assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   -- assigning the same chapter to two teachers is structurally impossible.
 
 teachers/{email, lowercase}
-  role: "teacher" | "qb_lead" | "admin" | "external_reviewer" | "uploader"
+  role: "teacher" | "qb_lead" | "admin" | "external_reviewer" | "uploader" | "automation"
+  -- "automation" (Oct 2026) is for non-human service accounts -- e.g. the
+  -- backupFirestoreToDrive.gs account -- with the exact same read/write
+  -- authority as "teacher" (isContentTeacher() in firestore.rules treats
+  -- them identically) but excluded from anything that aggregates "who's
+  -- actually producing": teacherComparisonData()/teamAverageToday() (now
+  -- an allowlist -- role is teacher/qb_lead unconditionally, or admin only
+  -- with actual activity/a quota -- so automation and any future
+  -- non-producing role are excluded by default, not via a denylist entry
+  -- that has to be remembered each time) and the Assignment tab's Kanban
+  -- board (allTeachers.filter(t=>t.role!=="automation") before mapping
+  -- columns -- nobody should be able to drag a chapter onto a service
+  -- account). Still shows up normally in Admin -> Manage teachers (an
+  -- admin needs to see/manage the account) and still passes isTeacher()
+  -- for reads everywhere, same as any other role.
 
 curriculumExtra/{entryId}    -- admin-added books/chapters PLUS (Oct 2026)
   teacher-added subtopics, merged into allCurriculum() at read time with
