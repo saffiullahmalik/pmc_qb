@@ -32,6 +32,7 @@
     --bg:#f7f4ec; --surface:#fffdf8; --surface-2:#eee8da; --border:#e0d8c4; --ink:#221e17; --ink-dim:#6b6355;
     --accent:#0f6b5c; --accent-ink:#ffffff; --accent-soft:#e2efe9; --gold:#b5791f; --gold-soft:#f6ecd9;
     --red:#a4372b; --red-soft:#f7e3df; --blue:#2f5f8a; --blue-soft:#e4edf5; --violet:#6a5a9e; --violet-soft:#e9e5f3;
+    --brown:#8a5a2e; --brown-soft:#efe2d0;
     --shadow: 0 1px 2px rgba(20,30,25,0.06), 0 6px 20px -10px rgba(20,30,25,0.18);
     color-scheme: light;
   }
@@ -40,6 +41,7 @@
       --bg:#161c15; --surface:#1c231b; --surface-2:#232d24; --border:#333f34; --ink:#e9efe9; --ink-dim:#9db0a5;
       --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --gold:#d9a34a; --gold-soft:#332711;
       --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39; --violet:#b3a3e0; --violet-soft:#2a2440;
+      --brown:#c99a63; --brown-soft:#3a2d1c;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.55);
       color-scheme: dark;
     }
@@ -48,6 +50,7 @@
     --bg:#161c15; --surface:#1c231b; --surface-2:#232d24; --border:#333f34; --ink:#e9efe9; --ink-dim:#9db0a5;
     --accent:#3fae95; --accent-ink:#0a1512; --accent-soft:#1c3630; --gold:#d9a34a; --gold-soft:#332711;
     --red:#e07463; --red-soft:#3a1f1a; --blue:#7fb0dd; --blue-soft:#1c2c39; --violet:#b3a3e0; --violet-soft:#2a2440;
+    --brown:#c99a63; --brown-soft:#3a2d1c;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.55);
     color-scheme: dark;
   }
@@ -232,12 +235,19 @@
      attribute -- which silently filled the whole donut hole with whichever
      segment was drawn last instead of leaving a clean ring. */
   .chart-svg.donut circle{ fill:none; }
-  .bar-done{ fill:var(--accent); stroke:var(--accent); background:var(--accent); }
-  .bar-inreview{ fill:var(--gold); stroke:var(--gold); background:var(--gold); }
-  .bar-draft{ fill:var(--blue); stroke:var(--blue); background:var(--blue); }
+  /* Oct 2026 recolor: status colors now match what's asked for everywhere
+     this chart appears (legends, the per-teacher grouped bars) -- draft=red,
+     in review=brown, reviewed=green(accent), locked=blue. Swapped from the
+     original draft=blue/in-review=gold/reviewed=violet/locked=accent
+     mapping; violet is now free and reused for the separate "reviews done"
+     (reviewer workload, not authoring status) bar below. */
+  .bar-done{ fill:var(--blue); stroke:var(--blue); background:var(--blue); }
+  .bar-inreview{ fill:var(--brown); stroke:var(--brown); background:var(--brown); }
+  .bar-draft{ fill:var(--red); stroke:var(--red); background:var(--red); }
   .bar-remaining{ fill:var(--border); stroke:var(--border); background:var(--border); }
   .bar-disagree{ fill:var(--red); stroke:var(--red); background:var(--red); }
-  .bar-reviewed{ fill:var(--violet); stroke:var(--violet); background:var(--violet); }
+  .bar-reviewed{ fill:var(--accent); stroke:var(--accent); background:var(--accent); }
+  .bar-reviewsdone{ fill:var(--violet); stroke:var(--violet); background:var(--violet); }
   .chart-value-label{ font-size:10.5px; fill:var(--ink-dim); font-variant-numeric:tabular-nums; }
   .chart-axis-label{ font-size:12px; font-weight:600; fill:var(--ink-dim); }
   .donut-center-value{ font-size:20px; font-weight:600; fill:var(--ink); }
@@ -1286,12 +1296,19 @@ function renderInsightsRail(){
     ${leaderboard.length ? `
     <div class="dash-chart-card">
       <b>Team</b>
-      ${hBarChartSvg(leaderboard, 34, 260, 102, 30)}
+      ${teacherGroupedBarSvg(leaderboard, {W:260, rowH:168, labelFontSize:9.5})}
+      <div class="chart-legend">
+        <span><span class="swatch bar-draft"></span>Draft</span>
+        <span><span class="swatch bar-inreview"></span>In review</span>
+        <span><span class="swatch bar-reviewed"></span>Reviewed</span>
+        <span><span class="swatch bar-done"></span>Locked</span>
+        <span><span class="swatch bar-reviewsdone"></span>Reviews done</span>
+      </div>
     </div>` : ""}
     <div class="dash-chart-card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; width:100%;">
         <b>Reviews</b>
-        ${pending.length ? `<button class="btn small primary" id="dash-review-now">${pending.length} to do</button>` : ""}
+        <button class="btn small ${pending.length?"primary":"ghost"}" id="dash-review-now">${pending.length ? `${pending.length} to do` : "My reviews"}</button>
       </div>
       ${rv.total ? `
         <div style="display:flex; flex-direction:column; align-items:center; text-align:center;">
@@ -1305,10 +1322,7 @@ function renderInsightsRail(){
     </div>
   `;
   document.getElementById("dash-start-now")?.addEventListener("click", ()=>openForm(null));
-  document.getElementById("dash-review-now")?.addEventListener("click", ()=>{
-    const q = pendingReviewsFor(currentUser.email)[0];
-    if(q) openReviewForm(q);
-  });
+  document.getElementById("dash-review-now")?.addEventListener("click", ()=>openMyReviewsPanel());
   rail.querySelectorAll("[data-rail-level]").forEach(b=>b.addEventListener("click", ()=>{
     railExpandedLevel = railExpandedLevel===b.dataset.railLevel ? null : b.dataset.railLevel;
     renderInsightsRail();
@@ -2615,9 +2629,23 @@ function openReviewForm(q){
   const root = document.getElementById("modal-root");
   const opts = getQuestionOptions(q);
   const correctId = getCorrectOptionId(q);
+  // Oct 2026: a teacher with several assigned reviews used to be stuck
+  // doing whichever one "Solve now" happened to hand them, in whatever
+  // order -- no way to see what else was queued or go back. Prev/Next here
+  // walks the SAME queue (oldest-assigned first) the "My reviews" panel
+  // lists, so a reviewer can freely move forward and backward through
+  // everything assigned to them instead of being funneled one at a time.
+  const queue = pendingReviewsFor(currentUser.email).sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
+  const qIdx = queue.findIndex(x=>x.id===q.id);
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>Review this question</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      ${qIdx>=0 && queue.length>1 ? `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <button type="button" class="btn small ghost" id="review-prev" ${qIdx<=0?"disabled":""}>← Previous</button>
+        <span class="hint">Review ${qIdx+1} of ${queue.length} assigned to you</span>
+        <button type="button" class="btn small ghost" id="review-next" ${qIdx>=queue.length-1?"disabled":""} style="margin-left:auto;">Next →</button>
+      </div>` : ""}
       <div class="tags" style="margin-bottom:6px;">
         ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
         <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
@@ -2658,6 +2686,8 @@ function openReviewForm(q){
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  document.getElementById("review-prev")?.addEventListener("click", ()=>{ if(qIdx>0) openReviewForm(queue[qIdx-1]); });
+  document.getElementById("review-next")?.addEventListener("click", ()=>{ if(qIdx<queue.length-1) openReviewForm(queue[qIdx+1]); });
   if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("review-preview"), document.getElementById("review-opts")]).catch(console.error);
 
   let chosenOptionId = null, noteStep1 = "", reviewTimeMinutes = null;
@@ -2712,6 +2742,53 @@ function openReviewForm(q){
       closeModal();
     }catch(err){ console.error(err); toast("Couldn't submit review"); }
   });
+}
+
+// Oct 2026: lets a reviewer pick which of their assigned reviews to do
+// next (instead of always being handed whichever one happened to be
+// first), and separates what's still pending from what they've already
+// reviewed -- a "To review"/"Reviewed" tab toggle, same two buckets
+// myReviewStats() already counts for the donut above it.
+function openMyReviewsPanel(){
+  const root = document.getElementById("modal-root");
+  const email = currentUser.email;
+  let tab = "todo";
+  function render(){
+    const todo = pendingReviewsFor(email).sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
+    const done = questions.filter(q=>q.peerReview?.reviewerEmail===email && q.peerReview.submittedAt)
+      .sort((a,b)=>(b.peerReview.submittedAt||"").localeCompare(a.peerReview.submittedAt||""));
+    const list = tab==="todo" ? todo : done;
+    root.innerHTML = `
+      <div class="overlay" id="ov"><div class="drawer wide">
+        <div class="drawer-head"><h2>My reviews</h2><button class="btn ghost small" id="close-form">Close</button></div>
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+          <button type="button" class="btn small ${tab==="todo"?"primary":""}" data-mr-tab="todo">To review (${todo.length})</button>
+          <button type="button" class="btn small ${tab==="done"?"primary":""}" data-mr-tab="done">Reviewed (${done.length})</button>
+        </div>
+        ${list.length===0 ? `<div class="empty">${tab==="todo"?"Nothing assigned to you right now.":"You haven't submitted any reviews yet."}</div>` : `
+        <table class="data">
+          <thead><tr><th>Question</th><th>Author</th><th>${tab==="todo"?"Assigned":"Reviewed"}</th>${tab==="done"?"<th>Outcome</th>":""}<th></th></tr></thead>
+          <tbody>
+            ${list.map(q=>`<tr>
+              <td>${escapeHtml(q.titleEn||"Untitled")}</td>
+              <td>${escapeHtml(q.authorName||"—")}</td>
+              <td>${fmtDate(tab==="todo"?q.peerReview.assignedAt:q.peerReview.submittedAt)}</td>
+              ${tab==="done" ? `<td>${q.peerReview.outcome==="agree" ? `<span class="pill status-uploaded">OK</span>` : `<span class="pill" style="background:var(--red-soft); color:var(--red);">${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short||"Sent back")}</span>`}</td>` : ""}
+              <td><button type="button" class="btn small ${tab==="todo"?"primary":"ghost"}" data-mr-open="${q.id}">${tab==="todo"?"Review":"View"}</button></td>
+            </tr>`).join("")}
+          </tbody>
+        </table>`}
+      </div></div>`;
+    document.getElementById("close-form").addEventListener("click", closeModal);
+    document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+    document.querySelectorAll("[data-mr-tab]").forEach(b=>b.addEventListener("click", ()=>{ tab=b.dataset.mrTab; render(); }));
+    document.querySelectorAll("[data-mr-open]").forEach(b=>b.addEventListener("click", ()=>{
+      const q2 = questions.find(x=>x.id===b.dataset.mrOpen);
+      if(!q2) return;
+      if(tab==="todo") openReviewForm(q2); else openQuestion(q2.id);
+    }));
+  }
+  render();
 }
 
 function renderDrawer(){
@@ -3510,55 +3587,54 @@ function donutChartSvg(segments, total, label="done"){
     <text x="${cx}" y="${cy+14}" text-anchor="middle" class="donut-center-label">${escapeHtml(label)}</text>
   </svg>`;
 }
-// Horizontal stacked bar, one row per category -- used for the Admin tab's
-// per-teacher comparison, where the category count can grow as staff grows
-// (a vertical bar chart's x-axis labels would get cramped; rows scale better).
-// `rows` is an array (not a label-keyed map) specifically so two teachers
-// who happen to share a display name never collide/overwrite each other.
-// `W` (the viewBox's total width) controls how thick the bars end up
-// looking once scaled down to the container's actual width -- a smaller W
-// for the same rowH renders proportionally thicker in a narrow container
-// (e.g. the insights-rail's ~270px-wide cards vs the Admin tab's ~550px one).
-function hBarChartSvg(rows, labelW=108, W=540, padR=74, rowH=24){
-  const gap = 12, padT = 6;
-  const chartW = W - labelW - padR;
-  // Label/value font-size scales with rowH (rather than a fixed 11px) so a
-  // caller asking for thicker bars (the rail's "Team" leaderboard, which
-  // was reported as too small/hard to read at the original fixed size)
-  // gets bigger, more legible text along with them, not just a taller bar.
-  const labelFontSize = Math.max(11, Math.round(rowH*0.46));
-  const valueFontSize = Math.max(10.5, Math.round(rowH*0.42));
-  const textY = y=>(y+rowH/2+rowH*0.17).toFixed(1);
-  const maxVal = Math.max(1, ...rows.map(s=>Math.max(s.target, s.draft+s.inReview+(s.reviewed||0)+s.done)));
-  const H = rows.length * (rowH+gap) + padT;
+// Vertical GROUPED bar chart, one cluster of separate bars per teacher --
+// Oct 2026, replaced the old hBarChartSvg (one horizontal STACKED bar per
+// teacher, segments concatenated end-to-end) because comparing segment
+// LENGTHS within a stacked bar across different teachers' bars is hard to
+// eyeball; separate bars on a shared height scale let draft/in-review/
+// reviewed/locked counts compare directly at a glance, teacher to teacher.
+// Five bars per cluster: draft (red), in review (brown), reviewed (green),
+// locked (blue), and reviews done (violet) -- that last one is a distinct
+// metric (how much of THIS teacher's reviewING workload is done, not their
+// own questions' status) kept as its own bar rather than folded into the
+// other four, since authoring and reviewing are two different jobs.
+// `rows` is an array (not a label-keyed map) so two teachers sharing a
+// display name never collide. `W`/`rowH` control the viewBox -- same
+// shrink-to-fit-container approach as barChartSvg (bar width shrinks as
+// more teachers are added, rather than the chart overflowing).
+function teacherGroupedBarSvg(rows, opts={}){
+  const { W=540, rowH=190, labelFontSize=11 } = opts;
+  const padL = 8, padR = 8, padT = 18, padB = 36;
+  const chartW = W - padL - padR, chartH = rowH - padT - padB;
+  const metrics = [
+    {k:"draft", cls:"bar-draft"}, {k:"inReview", cls:"bar-inreview"},
+    {k:"reviewed", cls:"bar-reviewed"}, {k:"done", cls:"bar-done"},
+    {k:"reviewsDone", cls:"bar-reviewsdone"},
+  ];
+  const maxVal = Math.max(1, ...rows.flatMap(r=>metrics.map(m=>r[m.k]||0)));
+  const groupW = chartW / Math.max(1,rows.length);
+  const barW = Math.max(3, Math.min(14, (groupW-10)/metrics.length));
+  const clusterW = barW*metrics.length;
+  const valueFontSize = Math.max(7.5, labelFontSize-3);
   let out = "";
-  rows.forEach((s,i)=>{
-    const y = padT + i*(rowH+gap);
-    const total = s.draft + s.inReview + (s.reviewed||0) + s.done;
-    const remaining = Math.max(0, s.target - total);
-    const segs = [
-      {v:s.done, cls:"bar-done"}, {v:s.reviewed||0, cls:"bar-reviewed"}, {v:s.inReview, cls:"bar-inreview"},
-      {v:s.draft, cls:"bar-draft"}, {v:remaining, cls:"bar-remaining"},
-    ];
-    let x = labelW;
-    let segsSvg = "";
-    segs.forEach(seg=>{
-      if(seg.v<=0) return;
-      const w = (seg.v/maxVal)*chartW;
-      segsSvg += `<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${rowH}" class="${seg.cls}" rx="3"/>`;
-      x += w;
+  rows.forEach((r,gi)=>{
+    const gx = padL + gi*groupW + (groupW-clusterW)/2;
+    metrics.forEach((m,mi)=>{
+      const v = r[m.k]||0;
+      if(v<=0) return;
+      const h = Math.max(2, (v/maxVal)*chartH);
+      const x = gx + mi*barW;
+      const y = padT + chartH - h;
+      out += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1,barW-1.5).toFixed(1)}" height="${h.toFixed(1)}" class="${m.cls}" rx="1.5"><title>${escapeHtml(r.fullName||r.label)} — ${m.k}: ${v}</title></rect>`;
     });
-    out += `<text x="${labelW-8}" y="${textY(y)}" text-anchor="end" class="chart-axis-label" style="font-size:${labelFontSize}px; ${s.isMe?"font-weight:800; fill:var(--ink);":""}">${escapeHtml(s.label)}${s.fullName?`<title>${escapeHtml(s.fullName)}</title>`:""}</text>`;
-    out += segsSvg;
-    // Same fix as barChartSvg: against a target, the number must mean
-    // "locked" (s.done) -- not `total` (draft+inReview+done) -- since
-    // that's what "/target" means everywhere else in the app. With no
-    // target (self-initiated work, no formal quota), there's nothing to
-    // misrepresent progress against, so `total` ("how much have they made
-    // at all") stays the more useful number there.
-    out += `<text x="${(x+6).toFixed(1)}" y="${textY(y)}" class="mono chart-value-label" style="font-size:${valueFontSize}px;">${s.target ? `${s.done}/${s.target}` : `${total}`}${s.reviewsDone?" · "+s.reviewsDone+"r":""}</text>`;
+    out += `<text x="${(gx+clusterW/2).toFixed(1)}" y="${rowH-20}" text-anchor="middle" class="chart-axis-label" style="font-size:${labelFontSize}px; ${r.isMe?"font-weight:800; fill:var(--ink);":""}">${escapeHtml(r.label)}${r.fullName?`<title>${escapeHtml(r.fullName)}</title>`:""}</text>`;
+    // Against a target, the number must mean "locked" (r.done) -- not the
+    // sum of all four -- since that's what "/target" means everywhere else
+    // in the app (progressCard, the rail's assignment bars, barChartSvg).
+    const total = (r.draft||0)+(r.inReview||0)+(r.reviewed||0)+(r.done||0);
+    out += `<text x="${(gx+clusterW/2).toFixed(1)}" y="${rowH-7}" text-anchor="middle" class="mono chart-value-label" style="font-size:${valueFontSize}px;">${r.target ? `${r.done}/${r.target}` : `${total}`}</text>`;
   });
-  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="Progress by teacher">${out}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${rowH}" class="chart-svg" role="img" aria-label="Per-teacher status breakdown">${out}</svg>`;
 }
 // Small single-series bar chart (daily trend, "you vs team" comparisons) --
 // no target/breakdown concept, just one bar per label.
@@ -4297,13 +4373,14 @@ function renderAdmin(){
       <div class="dash-charts">
         <div class="dash-chart-card">
           <b>By teacher</b>
-          ${hBarChartSvg(teamRows)}
+          <p class="hint" style="margin:2px 0 6px;">Each teacher's own cluster of bars — same scale across everyone, so heights compare directly.</p>
+          ${teacherGroupedBarSvg(teamRows, {W:540, rowH:200, labelFontSize:11.5})}
           <div class="chart-legend">
-            <span><span class="swatch bar-done"></span>Locked</span>
-            <span><span class="swatch bar-reviewed"></span>Reviewed (awaiting lock)</span>
-            <span><span class="swatch bar-inreview"></span>In review</span>
             <span><span class="swatch bar-draft"></span>Draft</span>
-            <span><span class="swatch bar-remaining"></span>Not started (if assigned)</span>
+            <span><span class="swatch bar-inreview"></span>In review</span>
+            <span><span class="swatch bar-reviewed"></span>Reviewed (awaiting lock)</span>
+            <span><span class="swatch bar-done"></span>Locked</span>
+            <span><span class="swatch bar-reviewsdone"></span>Reviews done (reviewing others)</span>
           </div>
         </div>
         <div class="dash-chart-card dash-chart-card-donut">

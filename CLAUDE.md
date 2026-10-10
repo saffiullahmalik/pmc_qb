@@ -317,9 +317,55 @@ display now shows locked/target as the headline number, with draft/
 in-review/reviewed broken out explicitly alongside it (never silently
 folded into one ambiguous total), and a "Complete" badge/checkmark appears
 anywhere actual>=target>0 (progressCard(), the per-chapter/per-teacher
-roster rows, the Workload level cards, the rail's assignment bars). A new
-bar-reviewed CSS class (violet) renders this as a 4th stacked-bar segment
-in barChartSvg()/hBarChartSvg(), between "locked" and "in review".
+roster rows, the Workload level cards, the rail's assignment bars). In
+barChartSvg() (per-level, still a stacked column chart) a bar-reviewed
+segment (green -- see the recolor note below) renders this as a 4th
+stacked segment, between "locked" and "in review".
+
+Per-teacher comparison chart (Oct 2026 rewrite -- `teacherGroupedBarSvg()`,
+replacing the old `hBarChartSvg()`): was one horizontal STACKED bar per
+teacher (segments concatenated end to end), which made comparing e.g. "how
+many in review" across different teachers require eyeballing segment
+lengths inside each bar. Now each teacher gets a cluster of separate
+vertical bars -- draft/inReview/reviewed/done/reviewsDone -- all on one
+shared height scale (`maxVal` across every teacher and metric), so a bar's
+HEIGHT alone tells you how that teacher compares to everyone else on that
+specific metric, not just within their own cluster. `reviewsDone` (how
+much of a teacher's reviewING workload -- reviewing OTHER people's
+questions -- is done) is its own 5th bar, not folded into the authoring
+breakdown, since authoring and reviewing are different jobs;
+`teacherComparisonData()` already computed this field, just wasn't
+charting it as its own bar before. Used at both call sites: the Bank tab
+rail's "Team" card (narrow, initials-only labels) and the Admin tab's "By
+teacher" card (wide, full names) -- same function, different `{W, rowH,
+labelFontSize}` opts, same shrink-to-fit-container approach as
+`barChartSvg()` (bar width shrinks as teacher count grows, chart never
+overflows its viewBox).
+
+Status bar colors (Oct 2026 recolor, `.bar-*` CSS classes): draft=red,
+in review=brown (new `--brown`/`--brown-soft` theme tokens, both light and
+dark), reviewed=green (`--accent`), locked=blue. This swapped the original
+draft=blue/in-review=gold/reviewed=violet/locked=accent(green) mapping --
+violet is now free and reused for `.bar-reviewsdone` (the reviewing-
+workload bar above), kept visually distinct from the authoring-status
+colors on purpose. Since colors live on the CSS class, not the call site,
+every existing user of these classes (the donuts, `barChartSvg()`,
+`teacherGroupedBarSvg()`) picked up the new colors automatically -- no
+call-site changes needed beyond the two legends that list swatch+label
+pairs by hand.
+
+Peer-review queue navigation (Oct 2026): a reviewer with several pending
+reviews is no longer funneled through them one at a time, always starting
+with whichever `pendingReviewsFor()` happened to return first.
+`openReviewForm(q)` now shows "Review X of N assigned to you" with ←
+Previous/Next → buttons that walk the SAME queue (sorted oldest-assigned-
+first) in either direction. Separately, `openMyReviewsPanel()` (opened via
+the Bank tab rail's "Reviews" card -- button now always present, not just
+when something's pending) lists a reviewer's own two buckets as tabs: "To
+review" (pending, click opens `openReviewForm()`) and "Reviewed" (already
+submitted, click opens the normal drawer via `openQuestion()` so they can
+see it in context) -- same split `myReviewStats()` already counted for the
+donut, now browsable as an actual list instead of only a count.
 
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt

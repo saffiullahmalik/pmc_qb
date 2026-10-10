@@ -71,7 +71,7 @@ Each assigned chapter's target splits evenly across the three difficulties — a
 - **The reviewer sees who made it and what it's for** — before solving anything, the review screen shows the question's level, type, difficulty, skills, author, and when it was posted/last updated, plus its chapter and subtopic, so you know the context before you dig in.
 - **The reviewer solves it blind, first** — the review screen hides which option is marked correct. They pick their own answer; writing up their working and logging their time are both optional.
 - **Then the marked answer and solution are revealed**, side by side with what the reviewer answered, and only then do they make the call: OK and ready to lock, or flagged with a specific reason (ambiguous, wrong answer, multiple solutions possible, or something else) that sends it back to the author with an explanatory comment. That's a real, specific signal — not just "disagree" — and it's exactly what this step exists to catch before a question reaches a live contest.
-- Your "to review" queue shows up on the Question Bank tab's dashboard and the Activity feed, with a **Solve now** button.
+- Your "to review" queue shows up on the Question Bank tab's dashboard (click **My reviews** to see the full list and pick any of them, or go into one and use ← Previous / Next → to move through them in either direction — you're never stuck doing them in a fixed order) and the Activity feed.
 - Separately, an **External Reviewer** account (see "Who can do what") can browse and spot-check any question at any time — including already-locked ones — independent of this balanced rotation.
 
 ---
@@ -83,8 +83,8 @@ A thin strip at the top of every tab shows your current streak, today's progress
 - **Your assignments** — one thin bar per PMC level showing how much of your assigned quota is locked (with a ✓ once a level hits 100%); click a level to expand it into its individual chapters, each showing its own draft/in-review/reviewed breakdown underneath.
 - **Your questions** — a donut of your own draft/in-review/reviewed/locked breakdown. "Reviewed" means a peer already agreed with the answer — it's just waiting on a QB Lead to lock it, which is different from still being actively reviewed.
 - **Last 7 days** — a bar per day of how many questions you created.
-- **Team** — every active teacher as a bar labeled by initials (e.g. "Imdad Hussain" → "IH"), sorted by total output (creating *and* reviewing both count), with your own bar bolded so you can find yourself at a glance — hover any bar for the full name.
-- **Reviews** — your pending review count with a **Solve now** button, plus a donut of how often your completed reviews agreed with the marked answer.
+- **Team** — every active teacher as a small cluster of five separate bars labeled by initials (e.g. "Imdad Hussain" → "IH"), sorted by total output (creating *and* reviewing both count), with your own cluster bolded so you can find yourself at a glance — hover any bar for the full name and exact count. The five bars are draft (red), in review (brown), reviewed (green), locked (blue), and reviews done (violet, i.e. how many of *other people's* questions you've reviewed) — all five sit on the same height scale across every teacher, so you can directly compare, say, how many each person has locked just by eye, not by guessing at segment lengths inside one bar.
+- **Reviews** — a **My reviews** button opens a list of everything assigned to you, split into "To review" and "Reviewed" tabs, so you can see and pick from everything in your queue instead of only ever being handed one at a time; a donut below shows how often your completed reviews came back OK vs. sent back. Inside an actual review, ← Previous / Next → buttons let you move back and forth through everything assigned to you.
 
 ---
 
