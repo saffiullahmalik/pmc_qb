@@ -4637,6 +4637,17 @@ function renderAdmin(){
     document.getElementById("new-teacher-password").value = pw;
   });
   subscribeTeachers();
+  // subscribeTeachers() guards against re-subscribing (the roster is
+  // already being kept live for pickReviewer()/the gamify bar from the
+  // moment of sign-in, well before the Admin tab's own table exists in the
+  // DOM) -- so its onSnapshot callback only actually populates
+  // #teachers-tbody on whichever visit happens to be live when the data
+  // next changes, leaving the table stuck on "Loading…" on every other
+  // visit to this tab until someone adds/edits/removes a teacher. Render
+  // immediately from the already-cached `allTeachers` (kept current by
+  // that same long-running subscription) every time this tab opens, same
+  // as loadAllStats()/subscribeActivityLog() do for their own tables above.
+  renderTeachersTable(allTeachers);
 }
 
 /* ---------------- teacher management (admin) ---------------- */
