@@ -2505,11 +2505,20 @@ function openQuestion(id){
 }
 
 // The one "final preview" box -- question text (English + Urdu), figure,
-// options with the correct one marked -- shared by the drawer's View and
-// the downloaded PNG, so what's on screen is exactly what gets exported.
+// options -- shared by the drawer's View and the downloaded PNG, so what's
+// on screen is exactly what gets exported. revealAnswer defaults to FALSE
+// (fixed Oct 2026 -- was `true`): this box is what actually gets uploaded
+// to Quilgo for the live exam via downloadQuestionImage(), so marking the
+// correct option with a checkmark here leaked the answer key straight into
+// the exam image. A caller that genuinely wants the answer shown inline
+// (none currently do -- the Contests print view's separate Answer Key
+// section and openReviewForm()'s own post-reveal markup cover that need
+// without touching this shared box) can still pass revealAnswer:true
+// explicitly; includeAnswer's separate boxed "Answer" section is unrelated
+// and unaffected by this default.
 // Caller is responsible for a MathJax.typesetPromise() pass afterward.
 function questionPreviewHtml(q, config={}){
-  const {includeQuestion=true, includeOptions=true, includeAnswer=false, revealAnswer=true} = config;
+  const {includeQuestion=true, includeOptions=true, includeAnswer=false, revealAnswer=false} = config;
   const opts = getQuestionOptions(q);
   const correctId = getCorrectOptionId(q);
   const correctIdx = opts.findIndex(o=>o.id===correctId);
