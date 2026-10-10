@@ -557,6 +557,37 @@ const STATUSES = [
   {v:"draft", l:"Draft"}, {v:"in_review", l:"In Review"},
   {v:"finalized", l:"Locked"}, {v:"uploaded", l:"Uploaded"}
 ];
+// Bank tab's status filter (Oct 2026) -- same four raw values PLUS one
+// derived "reviewed" option so admins/QB Leads can isolate the subset of
+// "in_review" questions a reviewer has already agreed with and is just
+// waiting on a lock, without changing what the existing "In Review" option
+// or any status-pill quick-filter matches (both still mean ALL in_review,
+// reviewed-or-not, exactly as before -- this is additive, not a split).
+const BANK_STATUS_FILTERS = [
+  {v:"draft", l:"Draft"}, {v:"in_review", l:"In Review"},
+  {v:"reviewed", l:"Reviewed — ready to lock"},
+  {v:"finalized", l:"Locked"}, {v:"uploaded", l:"Uploaded"}
+];
+function matchesStatusFilter(q, v){
+  if(!v) return true;
+  if(v==="reviewed") return q.status==="in_review" && q.peerReview?.outcome==="agree";
+  return q.status===v;
+}
+// The peer-review "how was it" flags a reviewer picks AFTER seeing the
+// marked answer and solution (openReviewForm(), Oct 2026) -- replaces the
+// old auto-computed agree/disagree-by-matching-option outcome with an
+// explicit, informed call: "ok" is the only flag that unlocks locking
+// (outcome stays "agree"/"disagree" under the hood so every existing
+// lock-gating/progress-counting call site needs no change); every other
+// flag sends it back to the author with a specific reason instead of a
+// generic "disagree", posted as an auto-comment.
+const REVIEW_FLAGS = [
+  {v:"ok", l:"✅ OK — reviewed, ready to lock", short:"OK — reviewed", outcome:"agree"},
+  {v:"ambiguous", l:"⚠️ Ambiguous wording", short:"Ambiguous wording", outcome:"disagree"},
+  {v:"wrong_answer", l:"❌ Wrong answer marked", short:"Wrong answer marked", outcome:"disagree"},
+  {v:"multiple_solutions", l:"🔀 Multiple solutions possible", short:"Multiple solutions possible", outcome:"disagree"},
+  {v:"other", l:"✏️ Other issue", short:"Other issue", outcome:"disagree"},
+];
 // "Skill tested" -- the transferable problem-solving technique a question
 // exercises, independent of which Beast Academy chapter it's filed under
 // (unit/subtopic already cover content topic). Seeded from how AMC 8 /
@@ -1264,10 +1295,10 @@ function renderInsightsRail(){
       </div>
       ${rv.total ? `
         <div style="display:flex; flex-direction:column; align-items:center; text-align:center;">
-          ${donutChartSvg([{value:rv.agree,cls:"bar-done"},{value:rv.disagree,cls:"bar-disagree"}], rv.total, "agreed")}
+          ${donutChartSvg([{value:rv.agree,cls:"bar-done"},{value:rv.disagree,cls:"bar-disagree"}], rv.total, "OK")}
           <div class="chart-legend">
-            <span><span class="swatch bar-done"></span>Agreed ${rv.agree}</span>
-            <span><span class="swatch bar-disagree"></span>Disagreed ${rv.disagree}</span>
+            <span><span class="swatch bar-done"></span>OK ${rv.agree}</span>
+            <span><span class="swatch bar-disagree"></span>Sent back ${rv.disagree}</span>
           </div>
           ${rv.avgTime ? `<p class="hint" style="margin:8px 0 0;">Avg. time per review: ${rv.avgTime} min</p>` : ""}
         </div>` : `<p class="hint" style="margin-top:8px;">No reviews completed yet.</p>`}
@@ -1290,7 +1321,7 @@ function filteredQuestions(){
     if(filters.level && !(Array.isArray(q.level) && q.level.includes(filters.level))) return false;
     if(filters.qtype && q.qType!==filters.qtype) return false;
     if(filters.diff && q.difficulty!==filters.diff) return false;
-    if(filters.status && q.status!==filters.status) return false;
+    if(filters.status && !matchesStatusFilter(q, filters.status)) return false;
     if(filters.unit && q.unit!==filters.unit) return false;
     if(filters.mine && q.authorEmail!==currentUser.email) return false;
     if(filters.author && q.authorEmail!==filters.author) return false;
@@ -1330,7 +1361,7 @@ function activeFilterChips(){
   if(filters.level) chips.push({k:"level", l:`Level: ${filters.level}`});
   if(filters.qtype) chips.push({k:"qtype", l:`Type: ${QTYPES.find(t=>t.v===filters.qtype)?.l||filters.qtype}`});
   if(filters.diff) chips.push({k:"diff", l:`Difficulty: ${DIFFS.find(d=>d.v===filters.diff)?.l||filters.diff}`});
-  if(filters.status) chips.push({k:"status", l:`Status: ${STATUSES.find(s=>s.v===filters.status)?.l||filters.status}`});
+  if(filters.status) chips.push({k:"status", l:`Status: ${BANK_STATUS_FILTERS.find(s=>s.v===filters.status)?.l||filters.status}`});
   if(filters.book) chips.push({k:"book", l:`Book: ${allCurriculum().find(b=>b.bookId===filters.book)?.book||filters.book}`});
   if(filters.unit) chips.push({k:"unit", l:`Chapter: ${chapterLabel(filters.unit)}`});
   if(filters.mine) chips.push({k:"mine", l:"Only mine"});
@@ -1354,7 +1385,7 @@ function renderBank(){
       <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
       <select id="f-diff"><option value="">All difficulty</option>${DIFFS.map(t=>`<option value="${t.v}" ${filters.diff===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
-      <select id="f-status"><option value="">All statuses</option>${STATUSES.map(t=>`<option value="${t.v}" ${filters.status===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+      <select id="f-status"><option value="">All statuses</option>${BANK_STATUS_FILTERS.map(t=>`<option value="${t.v}" ${filters.status===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
       <select id="f-book">${bookSelectOptions(filters.book)}</select>
       <select id="f-unit">${chapterSelectOptions(filters.book, filters.unit, true)}</select>
       <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
@@ -1747,7 +1778,7 @@ function openForm(existing){
           <div class="step-panel" data-step="4" hidden>
             <div class="field"><label>Solution <span class="hint">(required — feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" id="solutionEn-input" rows="3" required placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
             <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status, existing?.peerReview).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select>
-              ${existing?.peerReview?.outcome==="disagree" ? `<div class="callout warn" style="margin-top:6px;">⚠ Reviewer flagged this question — see the comments below, fix it, then save to send it back for another look.</div>` : ""}
+              ${existing?.peerReview?.outcome==="disagree" ? `<div class="callout warn" style="margin-top:6px;">⚠ Reviewer flagged: <b>${escapeHtml(REVIEW_FLAGS.find(f=>f.v===existing.peerReview.issueFlag)?.short || "issue found")}</b> — see the comments below, fix it, then save to send it back to the same reviewer.</div>` : ""}
               ${existing?.peerReview?.outcome==="pending" ? `<div class="hint" style="margin-top:4px;">Awaiting review from ${escapeHtml(existing.peerReview.reviewerName)}.</div>` : ""}
             </div>
             ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
@@ -2583,49 +2614,101 @@ async function downloadQuestionImage(q, config={includeQuestion:true, includeOpt
 function openReviewForm(q){
   const root = document.getElementById("modal-root");
   const opts = getQuestionOptions(q);
+  const correctId = getCorrectOptionId(q);
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>Review this question</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      <p class="hint">Solve it yourself first — this only works if you don't peek at the marked answer beforehand.</p>
-      <div id="review-preview">${questionPreviewHtml(q, {includeOptions:false})}</div>
-      <div class="section-label">Your answer</div>
-      <div id="review-opts">
-        ${opts.map((o,i)=>`<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
-          <input type="radio" name="review-answer" value="${o.id}" style="margin-top:3px;" />
-          <span>${String.fromCharCode(65+i)}. ${o.image?`<img src="${o.image}" alt="Option image" style="height:22px; vertical-align:middle; margin-right:4px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</span>
-        </label>`).join("")}
+      <div class="tags" style="margin-bottom:6px;">
+        ${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}
+        <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
+        <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
+        ${(q.skills||[]).map(s=>`<span class="pill skill-chip">${escapeHtml(s)}</span>`).join("")}
       </div>
-      <div class="field"><label>Your working / solution</label><textarea id="review-note" rows="3" placeholder="Briefly show how you solved it"></textarea></div>
-      <div class="field"><label>Time taken (minutes)</label><input type="number" id="review-time" min="1" placeholder="e.g. 4" /></div>
-      <button class="btn primary" id="review-submit" style="width:100%; justify-content:center; margin-top:10px;">Submit review</button>
+      <div class="hint" style="margin-bottom:12px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
+      <div id="review-step1">
+        <p class="hint">Solve it yourself first — this only works if you don't peek at the marked answer beforehand.</p>
+        <div id="review-preview">${questionPreviewHtml(q, {includeOptions:false})}</div>
+        <div class="section-label">Your answer</div>
+        <div id="review-opts">
+          ${opts.map((o,i)=>`<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
+            <input type="radio" name="review-answer" value="${o.id}" style="margin-top:3px;" />
+            <span>${String.fromCharCode(65+i)}. ${o.image?`<img src="${o.image}" alt="Option image" style="height:22px; vertical-align:middle; margin-right:4px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</span>
+          </label>`).join("")}
+        </div>
+        <div class="field"><label>Your working / solution <span class="hint">(optional)</span></label><textarea id="review-note" rows="3" placeholder="Briefly show how you solved it, if you'd like"></textarea></div>
+        <div class="field"><label>Time taken (minutes) <span class="hint">(optional)</span></label><input type="number" id="review-time" min="1" placeholder="e.g. 4" /></div>
+        <button class="btn primary" id="review-continue" style="width:100%; justify-content:center; margin-top:10px;">Continue — see marked answer →</button>
+      </div>
+      <div id="review-step2" hidden>
+        <div class="section-label" style="margin-top:0;">Marked answer &amp; solution</div>
+        <div id="review-answer-reveal"></div>
+        <div class="section-label">How was it?</div>
+        <div id="review-flags" style="display:flex; flex-direction:column; gap:6px;">
+          ${REVIEW_FLAGS.map(f=>`<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 8px; font-weight:400; font-size:13px; border:1px solid var(--border); border-radius:8px; cursor:pointer;">
+            <input type="radio" name="review-flag" value="${f.v}" style="margin-top:3px;" />
+            <span>${f.l}</span>
+          </label>`).join("")}
+        </div>
+        <div class="field"><label>Note for the author <span class="hint">(optional — required flags still send a comment even if left blank)</span></label><textarea id="review-flag-note" rows="2" placeholder="Explain the issue, if there is one"></textarea></div>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button type="button" class="btn ghost" id="review-back">← Back</button>
+          <button class="btn primary" id="review-submit" style="flex:1; justify-content:center;">Submit review</button>
+        </div>
+      </div>
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
   if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("review-preview"), document.getElementById("review-opts")]).catch(console.error);
-  document.getElementById("review-submit").addEventListener("click", async ()=>{
+
+  let chosenOptionId = null, noteStep1 = "", reviewTimeMinutes = null;
+  document.getElementById("review-continue").addEventListener("click", ()=>{
     const chosen = document.querySelector('input[name="review-answer"]:checked');
     if(!chosen){ toast("Pick the answer you solved it as"); return; }
+    chosenOptionId = chosen.value;
+    noteStep1 = document.getElementById("review-note").value.trim();
+    reviewTimeMinutes = parseInt(document.getElementById("review-time").value,10) || null;
+    document.getElementById("review-step1").hidden = true;
+    const step2 = document.getElementById("review-step2");
+    step2.hidden = false;
+    const correctOpt = opts.find(o=>o.id===correctId);
+    const myOpt = opts.find(o=>o.id===chosenOptionId);
+    const correctIdx = opts.findIndex(o=>o.id===correctId);
+    document.getElementById("review-answer-reveal").innerHTML = `
+      <div class="question-container answer-box">
+        <p><span class="k" style="background:var(--accent); color:var(--accent-ink); display:inline-flex;">${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span> ${correctOpt?renderRichText(escapeHtml(correctOpt.text)):""}</p>
+        ${q.solutionEn ? `<div style="margin-top:6px;">${renderRichText(escapeHtml(q.solutionEn))}</div>` : `<span class="hint">No solution written yet.</span>`}
+      </div>
+      <div class="hint" style="margin-top:8px;">You answered <b>${myOpt?renderRichText(escapeHtml(myOpt.text)):"—"}</b>${chosenOptionId===correctId ? " — matches the marked answer." : " — different from the marked answer."}</div>
+    `;
+    if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([step2]).catch(console.error);
+    step2.scrollIntoView({behavior:"smooth", block:"start"});
+  });
+  document.getElementById("review-back").addEventListener("click", ()=>{
+    document.getElementById("review-step2").hidden = true;
+    document.getElementById("review-step1").hidden = false;
+  });
+  document.getElementById("review-submit").addEventListener("click", async ()=>{
+    const flagEl = document.querySelector('input[name="review-flag"]:checked');
+    if(!flagEl){ toast("Choose how the review went"); return; }
     if(countTodaySubmittedReviews(currentUser.email) >= dailyLimits.dailyReviewLimit){
       toast(`Daily review limit reached — ${dailyLimits.dailyReviewLimit} is the cap for today`); return;
     }
-    const note = document.getElementById("review-note").value.trim();
-    const timeMinutes = parseInt(document.getElementById("review-time").value,10) || null;
-    const correctId = getCorrectOptionId(q);
-    const outcome = chosen.value===correctId ? "agree" : "disagree";
+    const flag = REVIEW_FLAGS.find(f=>f.v===flagEl.value);
+    const issueNote = document.getElementById("review-flag-note").value.trim();
+    const outcome = flag.outcome;
     try{
       await updateDoc(doc(db,"questions",q.id), {
-        peerReview: { ...q.peerReview, submittedAt:new Date().toISOString(), reviewerOptionId:chosen.value, reviewerNote:note, reviewTimeMinutes:timeMinutes, outcome }
+        peerReview: { ...q.peerReview, submittedAt:new Date().toISOString(), reviewerOptionId:chosenOptionId, reviewerNote:noteStep1, reviewTimeMinutes, outcome, issueFlag:flag.v, issueNote }
       });
       if(outcome==="disagree"){
-        const myOpt = opts.find(o=>o.id===chosen.value), correctOpt = opts.find(o=>o.id===correctId);
         await addDoc(collection(db,"questions",q.id,"comments"), {
           authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email,
-          text: `Review: I solved this as "${myOpt?.text||"?"}", but the marked answer is "${correctOpt?.text||"?"}". ${note}`.trim(),
+          text: `Review — ${flag.short}: ${issueNote || "No additional detail provided."}`,
           createdAt: new Date().toISOString(),
         });
       }
-      logActivity("review_submitted", `Reviewed "${q.titleEn||"Untitled"}" — ${outcome}`, q.id);
-      toast(outcome==="agree" ? "Review submitted — you agreed with the marked answer" : "Review submitted — flagged as a disagreement");
+      logActivity("review_submitted", `Reviewed "${q.titleEn||"Untitled"}" — ${flag.short}`, q.id);
+      toast(outcome==="agree" ? "Review submitted — marked OK, ready to lock" : "Review submitted — sent back to the author");
       closeModal();
     }catch(err){ console.error(err); toast("Couldn't submit review"); }
   });
@@ -2676,8 +2759,8 @@ function renderDrawerBody(){
     ${q.peerReview ? `<div class="section-label">Peer review</div>
       <div class="progress-card" style="${q.peerReview.outcome==="disagree"?"border-color:var(--red);":q.peerReview.outcome==="agree"?"border-color:var(--accent);":""}">
         ${q.peerReview.outcome==="pending" ? `Awaiting review from <b>${escapeHtml(q.peerReview.reviewerName)}</b>.` : ""}
-        ${q.peerReview.outcome==="agree" ? `<span class="pill status-uploaded">Agrees</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> solved this and confirmed the marked answer${q.peerReview.reviewTimeMinutes?` in ${q.peerReview.reviewTimeMinutes} min`:""}.` : ""}
-        ${q.peerReview.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);">Disagrees</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> solved this differently${q.peerReview.reviewTimeMinutes?` (${q.peerReview.reviewTimeMinutes} min)`:""} — see comments, fix, and resave to send it back.` : ""}
+        ${q.peerReview.outcome==="agree" ? `<span class="pill status-uploaded">OK — reviewed</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> reviewed this and marked it ready to lock${q.peerReview.reviewTimeMinutes?` (${q.peerReview.reviewTimeMinutes} min)`:""}.` : ""}
+        ${q.peerReview.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);">${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Flagged")}</span> <b>${escapeHtml(q.peerReview.reviewerName)}</b> sent this back${q.peerReview.reviewTimeMinutes?` (${q.peerReview.reviewTimeMinutes} min)`:""} — see comments, fix, and resave to send it back for another look.` : ""}
         ${isAdminUser && q.peerReview.outcome==="pending" ? `<div style="margin-top:8px;"><button class="btn small" id="reassign-review">↻ Reassign to someone else</button></div>` : ""}
       </div>` : (q.status!=="finalized" ? `<div class="section-label">Peer review</div><div class="hint">Not yet reviewed — move to "In Review" to get a reviewer assigned.</div>` : "")}
     ${isExternalReviewerUser ? `
@@ -3317,6 +3400,7 @@ function freshPeerReview(reviewer){
     reviewerEmail: reviewer.email, reviewerName: reviewer.name||reviewer.email,
     assignedAt: new Date().toISOString(), submittedAt: null,
     reviewerOptionId: null, reviewerNote: "", reviewTimeMinutes: null, outcome: "pending",
+    issueFlag: null, issueNote: "",
   };
 }
 

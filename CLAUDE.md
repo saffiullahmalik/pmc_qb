@@ -104,7 +104,8 @@ questions/{questionId}
   -- 5-star rating below; arrayUnion/arrayRemove, allowed even on a locked
   -- question (see isMetadataOnlyChange() in firestore.rules).
   peerReview: { reviewerEmail, reviewerName, assignedAt, submittedAt,
-    reviewerOptionId, reviewerNote, reviewTimeMinutes, outcome } | null,
+    reviewerOptionId, reviewerNote, reviewTimeMinutes, outcome,
+    issueFlag, issueNote } | null,
     -- added Oct 2026. Auto-assigned (pickReviewer() -- random among
     -- whoever has the fewest currently-"pending" reviews, i.e. balanced
     -- load, not round-robin) the moment status is set to "in_review" and no
@@ -114,9 +115,9 @@ questions/{questionId}
     -- a denylist), AND must already have an assigned chapter quota
     -- somewhere (assignments.quotas) -- by request, someone with no
     -- assignment at all isn't part of this rotation. outcome is "pending" until the reviewer
-    -- submits (openReviewForm()), then "agree" (their answer matched
-    -- correctOptionId) or "disagree" (it didn't -- also auto-posts an
-    -- explanatory comment). allowedStatusOptions() removes "finalized"
+    -- submits (openReviewForm()), then "agree" or "disagree" depending on
+    -- which REVIEW_FLAGS entry they pick (see below) -- also auto-posts an
+    -- explanatory comment when the outcome is "disagree". allowedStatusOptions() removes "finalized"
     -- from the status dropdown entirely -- not just a soft warning --
     -- until outcome is "agree", for every role including admin. Editing a
     -- "disagree" question resets peerReview to "pending" for the *same*
@@ -125,6 +126,37 @@ questions/{questionId}
     -- already lets any teacher write to a non-finalized question
     -- regardless of authorship, which is exactly what a reviewer updating
     -- someone else's question needs.
+    -- Review flow (Oct 2026 rewrite): openReviewForm() is now two steps,
+    -- not one blind submit. Step 1 is unchanged in spirit (pick your own
+    -- answer blind, optional working/solution text, optional time) but now
+    -- also shows the question's full context up top -- level/type/
+    -- difficulty/skills tags plus author name, createdAt/updatedAt, and
+    -- chapter/subtopic -- so the reviewer knows what the question is
+    -- actually for before solving it (previously only the bare prompt
+    -- showed, via questionPreviewHtml(q,{includeOptions:false})). "Your
+    -- working/solution" and "Time taken" are explicitly labeled optional
+    -- and were never actually required client-side either, so this is a
+    -- labeling fix, not a validation change. Clicking "Continue" reveals
+    -- step 2: the marked answer + author's solutionEn side by side with
+    -- what the reviewer answered, THEN a REVIEW_FLAGS radio pick (top-level
+    -- const in index.html) -- "✅ OK — reviewed, ready to lock" (outcome
+    -- "agree") or one of four specific issue flags ("Ambiguous wording",
+    -- "Wrong answer marked", "Multiple solutions possible", "Other issue"
+    -- -- all outcome "disagree") plus an optional note. The outcome is now
+    -- the reviewer's own informed call made AFTER seeing the solution, not
+    -- an auto-computed match between reviewerOptionId and correctOptionId
+    -- (a reviewer can still get their own blind answer "wrong" yet
+    -- correctly judge the question itself is fine, or vice versa).
+    -- issueFlag stores which REVIEW_FLAGS.v was picked (null until
+    -- submitted); issueNote is the reviewer's free-text note. The
+    -- auto-posted comment on a "disagree" now reads "Review — <short
+    -- label>: <note>" instead of the old hardcoded "I solved this as X but
+    -- the marked answer is Y" text -- REVIEW_FLAGS.short is the no-emoji
+    -- label used there and in the drawer's peer-review summary card.
+    -- outcome stays binary agree/disagree under the hood specifically so
+    -- every existing lock-gating/progress-counting call site (countByStatus,
+    -- allowedStatusOptions, the status-track's lock button, teacherComparisonData,
+    -- the donut on the Bank tab rail) needed zero changes.
     -- Admin -> Admin & Analytics -> "Pending reviews" (added Oct 2026)
     -- lists every question with peerReview.outcome==="pending" across the
     -- whole bank in one table (not one-at-a-time from inside each
@@ -300,6 +332,10 @@ activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
 ```
 
 Filtering in the UI (level, type, difficulty, status, unit, search) is done **client-side** over the full `questions` collection (subscribed via `onSnapshot`, ordered by `createdAt desc`, capped at 500) — deliberately not server-side compound queries, since the dataset is small (a school's worth of exam questions, not a large-scale product).
+
+The Bank tab's status filter (`#f-status`) is driven by `BANK_STATUS_FILTERS`, not `STATUSES` directly (Oct 2026) — it's the same four raw status values PLUS one derived "Reviewed — ready to lock" option (`matchesStatusFilter(q, "reviewed")` → `q.status==="in_review" && q.peerReview?.outcome==="agree"`), so admins/QB Leads can isolate exactly the subset of in-review questions a reviewer already agreed with and is just waiting on a lock. This is additive: the plain "In Review" filter option and every status-pill quick-filter (clicking a card's own status pill) still match ALL `in_review` questions regardless of review outcome, exactly as before — `STATUSES` itself (used by the editor's actual Status field and card status pills) is untouched.
+
+The `Download as image…` affordance aside, `renderDrawerBody()`'s peer-review summary card and the editor's "disagree" callout both surface the specific `REVIEW_FLAGS` label (e.g. "Ambiguous wording") instead of a generic "Disagrees" — look up `REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short` if touching that copy.
 
 Images (question figure + per-option images) are stored **inline on the Firestore document as compressed JPEG data-URLs**, not in Firebase Storage — a deliberate choice to stay on the free Spark plan (Storage now requires Blaze billing even for free-tier usage). `fileToCompressedDataUrl()` in `index.html` resizes/compresses client-side before writing, with a soft ~250KB-per-image budget so a question with several option images stays under Firestore's 1MB/doc cap. The Print/Export view can also shuffle each question's option order per printout (anti-copying) — grading stays correct either way because correctness is tracked by `correctOptionId`, never by array position.
 
