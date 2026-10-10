@@ -104,6 +104,40 @@ Note: this only automates the *rules*. The `teachers` collection (who's allowed 
 
 If you're working with Claude in Cowork, open this task in the Claude desktop app and choose **"Link to this computer."** Once linked, future sessions can edit files in your actual repo folder and run `git commit`/`git push` directly using your machine's existing GitHub login — skipping the "Upload files" step entirely. GitHub Pages and the Action above then take care of the rest automatically.
 
+## 11. Optional: automatic hourly backups to Google Drive
+
+The Admin tab's "Export all data as JSON" button is great, but only if someone remembers to click it. `backupFirestoreToDrive.gs` (in this repo) is a small Google Apps Script that does the same export automatically, every hour, straight into a Drive folder — so there's never more than about an hour of data to lose track of. Takes about 10 minutes, once.
+
+1. **Create a dedicated backup login.** Sign in to the live site as admin → **Admin & Analytics → Manage teachers**. Create a new account: any full name (e.g. `Backup Bot`), any email (doesn't need to be real/receive mail, just needs to be a valid-looking address, e.g. `backup@yourschool.example`), a strong password, and **role: Teacher** (not Admin — a plain Teacher account can already read everything this backup needs). Write the email and password down somewhere safe — you'll paste them in shortly.
+
+2. **Pick a Drive folder.** In [drive.google.com](https://drive.google.com), create a new folder (e.g. "PMC QB Backups") or use an existing one. Open it and look at the address bar — the folder ID is the long string of letters/numbers after `/folders/`. Copy it.
+
+3. **Create the Apps Script project.**
+   - Go to [script.google.com](https://script.google.com) → **New project**.
+   - Delete the placeholder `function myFunction() {...}` code that's there by default.
+   - Open `backupFirestoreToDrive.gs` from this repo, select all, copy, and paste it into the empty script editor.
+   - Click the project name at the top left (something like "Untitled project") and rename it, e.g. `PMC QB Firestore Backup`.
+
+4. **Set the five Script Properties.** Still in the Apps Script editor: click the **⚙ Project Settings** gear icon on the left sidebar → scroll to **Script Properties** → **Add script property**, and add each of these as its own row (property name on the left, value on the right):
+
+   | Property | Value |
+   |---|---|
+   | `FIREBASE_PROJECT_ID` | `pmc-qb` |
+   | `FIREBASE_API_KEY` | `AIzaSyCmETuuCc7khJuuW8RxxFxuQLPVQ3dZDwg` |
+   | `BACKUP_EMAIL` | the email from step 1 |
+   | `BACKUP_PASSWORD` | the password from step 1 |
+   | `DRIVE_FOLDER_ID` | the folder ID from step 2 |
+
+   (`FIREBASE_PROJECT_ID`/`FIREBASE_API_KEY` are the same values already sitting in `index.html`'s `FIREBASE_CONFIG` — not secrets, just which project to talk to. `MAX_BACKUPS` is an optional sixth row if you ever want to keep more or fewer than the default 72 hourly backups, ~3 days.)
+
+5. **Test it.** Back in the **Editor** tab (left sidebar), use the function dropdown at the top (next to the "Run" button — it may default to `runBackup`) and pick **`testConnection`**, then click **Run**.
+   - The first time, Google will ask you to authorize the script — click **Review permissions**, pick your Google account, click **Advanced → Go to [project name] (unsafe)** (this warning is normal for your own just-written script — Google shows it for anything not yet published to the store), then **Allow**.
+   - Open **View → Logs** (or **Executions** in the left sidebar) and confirm you see `Signed in OK. Found N questions.` If it errors instead, re-check the five properties from step 4 — a typo in the email/password or project ID is the usual cause.
+
+6. **Turn on the hourly automation.** Pick **`installHourlyTrigger`** from the same function dropdown and click **Run** once. That's it — `runBackup` now runs automatically every hour, no further steps. A new file named `pmc-qb-backup-YYYY-MM-DD_HH-mm.json` will appear in your Drive folder each time.
+
+Whenever you need a backup, grab the newest file from that Drive folder and open it with `backup-viewer.html` (just double-click it, load the JSON file). To stop the automation later, run `removeHourlyTrigger` once from the same dropdown.
+
 ## What stayed the same vs. the Claude-hosted version
 
 Same data model, same tagging taxonomy, same p-value/discrimination-index analytics, same UI — the only thing that changed is *where it lives* (your own GitHub Pages URL instead of a claude.ai link) and *how people sign in* (a real email/password login, accounts created only by an admin, enforced server-side by Firestore rules, instead of a typed name).
