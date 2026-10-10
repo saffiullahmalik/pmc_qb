@@ -181,7 +181,7 @@
   .progress-card .row{ display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:6px; }
   .checklist{ display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
   .checklist label{ display:flex; align-items:flex-start; gap:7px; font-weight:400; }
-  .drawer.wide{ width:min(980px, 100vw); }
+  .drawer.wide{ width:min(980px, 94vw); }
   #live-preview{ background:#fff; color:#161b19; border-radius:8px; padding:4px; border:1px solid var(--border); }
   #drawer-preview{ background:#fff; color:#161b19; border-radius:8px; padding:10px; border:1px solid var(--border); }
   #live-preview .hint{ color:#6b7280; }
@@ -314,8 +314,15 @@
   .state-block{ display:flex; flex-direction:column; align-items:center; gap:10px; }
   .state-icon{ color:var(--accent); opacity:.5; }
   .state-icon.spin{ animation:spin 1.1s linear infinite; }
-  .overlay{ position:fixed; top:0; left:216px; right:0; bottom:0; background:rgba(10,14,12,.45); display:flex; justify-content:flex-end; z-index:40; }
-  .drawer{ width:min(560px, 100vw); background:var(--surface); height:100vh; overflow-y:auto; padding:22px 24px 40px; box-shadow:-10px 0 30px rgba(0,0,0,.15); }
+  /* Oct 2026: was a right-edge sliding side panel (justify-content:flex-end,
+     height:100vh) -- switched to a centered modal dialog. A side panel left
+     too little width for the question preview (the whole point of "View" is
+     to show exactly what gets downloaded/exported) to render at a readable
+     size, and confirmDialog() reused this same .overlay for small popups
+     like "Delete this question?", which were getting shoved to the screen's
+     right edge along with it. Centering fixes both at once. */
+  .overlay{ position:fixed; inset:0; background:rgba(10,14,12,.45); display:flex; align-items:center; justify-content:center; z-index:40; padding:24px; }
+  .drawer{ width:min(720px, 94vw); background:var(--surface); max-height:88vh; overflow-y:auto; padding:22px 24px 28px; border-radius:16px; box-shadow:0 24px 60px -18px rgba(0,0,0,.38); }
   .drawer-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:6px; }
   .drawer h2{ font-size:18px; margin:0 0 2px; }
   .section-label{ font-family:'Lexend'; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin:20px 0 8px; }
@@ -393,8 +400,9 @@
     .mobile-tabbar button.active{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
     .main{ padding:18px 16px 50px; }
     .row2{ grid-template-columns:1fr; }
-    .drawer{ width:100vw; }
-    .editor-page, .overlay{ left:0; top:54px; }
+    .drawer{ width:96vw; max-height:92vh; border-radius:12px; }
+    .overlay{ padding:10px; }
+    .editor-page{ left:0; top:54px; }
     .step-panel .opt-row{ padding:8px 0; border-bottom:1px solid var(--border); gap:10px; }
     .step-panel .opt-row .btn.small{ min-height:44px; min-width:44px; }
     .step-panel .opt-row input[type="text"]{ min-height:40px; flex-basis:100%; order:1; }
@@ -4409,30 +4417,32 @@ function renderAdmin(){
         </div>
       </div>
     `}
-    <div class="section-label">Pending reviews (${pendingReviews.length})</div>
-    <p class="desc">Every question currently awaiting a peer review, with who it's assigned to and when. Reassign to a specific person, or take it back (unassign) if a reviewer's gone quiet — both work on any pending review, not just one at a time from inside the question itself.</p>
-    ${pendingReviews.length===0 ? emptyState("Nothing awaiting review right now.") : `
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Question</th><th>Author</th><th>Reviewer</th><th>Assigned</th><th></th></tr></thead>
-      <tbody>
-        ${pendingReviews.map(q=>{
-          const candidates = eligibleReviewerCandidates(q.authorEmail, q.peerReview.reviewerEmail);
-          return `<tr>
-            <td><button type="button" class="link-btn" data-goto-question="${q.id}" style="text-align:left;">${escapeHtml(q.titleEn||"Untitled")}</button></td>
-            <td>${escapeHtml(q.authorName||"—")}</td>
-            <td>${escapeHtml(q.peerReview.reviewerName)}</td>
-            <td class="mono">${fmtDate(q.peerReview.assignedAt)}</td>
-            <td style="white-space:nowrap; display:flex; gap:6px; align-items:center;">
-              <select data-reassign-to="${q.id}" style="padding:4px 6px; font-size:12px;" ${candidates.length===0?"disabled":""}>
-                <option value="">${candidates.length===0?"No one else eligible":"Reassign to…"}</option>
-                ${candidates.map(t=>`<option value="${escapeHtml(t.email)}">${escapeHtml(t.name||t.email)}</option>`).join("")}
-              </select>
-              <button class="btn small" data-unassign="${q.id}" title="Clear this assignment without picking someone new yet">Take back</button>
-            </td>
-          </tr>`;
-        }).join("")}
-      </tbody>
-    </table></div>`}
+    <details class="records-details">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Pending reviews (${pendingReviews.length})</summary>
+      <p class="desc">Every question currently awaiting a peer review, with who it's assigned to and when. Reassign to a specific person, or take it back (unassign) if a reviewer's gone quiet — both work on any pending review, not just one at a time from inside the question itself.</p>
+      ${pendingReviews.length===0 ? emptyState("Nothing awaiting review right now.") : `
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Question</th><th>Author</th><th>Reviewer</th><th>Assigned</th><th></th></tr></thead>
+        <tbody>
+          ${pendingReviews.map(q=>{
+            const candidates = eligibleReviewerCandidates(q.authorEmail, q.peerReview.reviewerEmail);
+            return `<tr>
+              <td><button type="button" class="link-btn" data-goto-question="${q.id}" style="text-align:left;">${escapeHtml(q.titleEn||"Untitled")}</button></td>
+              <td>${escapeHtml(q.authorName||"—")}</td>
+              <td>${escapeHtml(q.peerReview.reviewerName)}</td>
+              <td class="mono">${fmtDate(q.peerReview.assignedAt)}</td>
+              <td style="white-space:nowrap; display:flex; gap:6px; align-items:center;">
+                <select data-reassign-to="${q.id}" style="padding:4px 6px; font-size:12px;" ${candidates.length===0?"disabled":""}>
+                  <option value="">${candidates.length===0?"No one else eligible":"Reassign to…"}</option>
+                  ${candidates.map(t=>`<option value="${escapeHtml(t.email)}">${escapeHtml(t.name||t.email)}</option>`).join("")}
+                </select>
+                <button class="btn small" data-unassign="${q.id}" title="Clear this assignment without picking someone new yet">Take back</button>
+              </td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table></div>`}
+    </details>
     <div class="section-label">Daily limits</div>
     <p class="desc">Caps how many questions a teacher can create, and how many peer reviews they can submit, per day — keeps quality up by preventing a rush of low-effort questions. The 15/20 split is just the suggested target shown on each teacher's dashboard (hit 15 to keep a streak); the cap below is the hard stop.</p>
     <div class="filters" style="align-items:flex-end;">
@@ -4466,7 +4476,7 @@ function renderAdmin(){
         <button class="btn small" id="cx-add-book">+ Add book</button>
       </div>
     </div>
-    ${curriculumExtra.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Type</th><th>Where</th><th>Added</th><th></th></tr></thead><tbody>
+    ${curriculumExtra.length ? `<details class="records-details" style="margin-top:14px;"><summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">Added entries (${curriculumExtra.length})</summary><div class="table-wrap"><table class="data"><thead><tr><th>Type</th><th>Where</th><th>Added</th><th></th></tr></thead><tbody>
       ${curriculumExtra.map(e=>`<tr>
         <td>${e.type==="book"?"Book":e.type==="chapter"?"Chapter":"Subtopic"}</td>
         <td>${e.type==="book" ? escapeHtml(e.bookName)
@@ -4478,7 +4488,7 @@ function renderAdmin(){
           <button class="btn small" style="color:var(--red);" data-delete-curriculum="${e.id}">Remove</button>
         </td>
       </tr>`).join("")}
-    </tbody></table></div>` : ""}
+    </tbody></table></div></details>` : ""}
     <div class="section-label">Manage teachers</div>
     <p class="desc">Create a login for a teacher — they can sign in immediately with this email and password (and change it later via "Forgot password").</p>
     <div class="filters" style="align-items:flex-end;">
@@ -4503,10 +4513,13 @@ function renderAdmin(){
       </div>
       <button class="btn primary" id="add-teacher-btn">Create account</button>
     </div>
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
-      <tbody id="teachers-tbody"><tr><td colspan="5" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
-    </table></div>
+    <details class="records-details" open style="margin-top:12px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">Teacher accounts</summary>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
+        <tbody id="teachers-tbody"><tr><td colspan="5" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+      </table></div>
+    </details>
     <div class="section-label">Enter post-test statistics</div>
     <div class="filters" style="align-items:flex-end;">
       <div class="field" style="margin:0; min-width:220px; flex:1;">
@@ -4517,13 +4530,17 @@ function renderAdmin(){
       </div>
     </div>
     <div id="stat-form-wrap"></div>
-    <div class="section-label">Scored questions</div>
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Question</th><th>Level</th><th>p-value</th><th>Discrimination</th><th>Quality</th><th>Attempts</th></tr></thead>
-      <tbody id="stats-tbody"><tr><td colspan="6" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
-    </table></div>
-    <div class="section-label">Activity log <span class="hint">(admin-only — who did what)</span></div>
-    <div id="activity-log-wrap">${loadingState("Loading activity…")}</div>
+    <details class="records-details">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Scored questions</summary>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Question</th><th>Level</th><th>p-value</th><th>Discrimination</th><th>Quality</th><th>Attempts</th></tr></thead>
+        <tbody id="stats-tbody"><tr><td colspan="6" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+      </table></div>
+    </details>
+    <details class="records-details">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Activity log <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">(admin-only — who did what)</span></summary>
+      <div id="activity-log-wrap">${loadingState("Loading activity…")}</div>
+    </details>
   `;
   document.getElementById("stat-q").addEventListener("change", e=>{
     if(e.target.value) renderStatForm(e.target.value);
@@ -4660,7 +4677,7 @@ function renderTeachersTable(list){
   list.sort((a,b)=> a.email.localeCompare(b.email));
   tbody.innerHTML = list.map(t=>`
     <tr>
-      <td>${escapeHtml(t.name||"—")}</td>
+      <td data-name-cell>${escapeHtml(t.name||"—")} <button type="button" class="link-btn" data-edit-name="${escapeHtml(t.email)}" title="Edit name" style="margin-left:2px;">✎</button></td>
       <td>${escapeHtml(t.email)}</td>
       <td><span class="pill role-${t.role}">${ROLE_LABEL[t.role]||t.role}</span></td>
       <td class="mono">${t.addedAt? fmtDate(t.addedAt): "—"}</td>
@@ -4675,6 +4692,30 @@ function renderTeachersTable(list){
   tbody.querySelectorAll("[data-reset-password]").forEach(b=>b.addEventListener("click", ()=>resetTeacherPassword(b.dataset.resetPassword)));
   tbody.querySelectorAll("[data-role-select]").forEach(sel=>sel.addEventListener("change", ()=>setTeacherRole(sel.dataset.roleSelect, sel.value, sel)));
   tbody.querySelectorAll("[data-remove-teacher]").forEach(b=>b.addEventListener("click", ()=>removeTeacher(b.dataset.removeTeacher)));
+  // Inline rename -- the only way a teacher's display name was ever set was
+  // typing it once into "Full name" at account-creation time (addTeacher()
+  // below); an account created before that field existed, or left blank,
+  // had no way to fix it afterward, so every t.name||t.email fallback
+  // across the app (Assignment Kanban columns, Team/By-teacher chart
+  // labels, reassign dropdowns) permanently showed the raw email instead.
+  tbody.querySelectorAll("[data-edit-name]").forEach(b=>b.addEventListener("click", ()=>{
+    const email = b.dataset.editName;
+    const td = b.closest("tr").querySelector("[data-name-cell]");
+    const current = list.find(t=>t.email===email)?.name || "";
+    td.innerHTML = `<input type="text" value="${escapeHtml(current)}" style="padding:4px 6px; font-size:12px; width:150px;" /> <button type="button" class="btn small primary" data-save-name>Save</button>`;
+    const input = td.querySelector("input");
+    input.focus(); input.select();
+    const save = async ()=>{
+      const newName = input.value.trim();
+      try{
+        await updateDoc(doc(db,"teachers",email), {name: newName || null});
+        logActivity("teacher_updated", `Updated name for ${email}`, email);
+        toast("Name updated");
+      }catch(err){ console.error(err); toast("Couldn't update name"); }
+    };
+    td.querySelector("[data-save-name]").addEventListener("click", save);
+    input.addEventListener("keydown", e=>{ if(e.key==="Enter") save(); });
+  }));
 }
 
 async function addTeacher(){
