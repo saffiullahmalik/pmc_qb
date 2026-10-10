@@ -106,12 +106,24 @@
   .print-options-grid.cols-4{ grid-template-columns:repeat(4,1fr); }
   .print-opt-item{ display:flex; align-items:center; gap:7px; font-size:13.5px; padding:3px 0; }
   .print-opt-item .k{ font-weight:700; width:20px; height:20px; border-radius:50%; background:#eef1ee; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; font-size:11px; }
+
+  /* Questions tab filter bar -- same fields as the live app's Bank tab */
+  .filters{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+  .filters select, .filters input[type=date]{ font-family:inherit; font-size:12.5px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--ink); }
+  .filters label{ display:flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-dim); white-space:nowrap; }
+  .row-actions{ display:flex; gap:6px; margin-top:8px; }
+
+  /* Centered modal (preview) -- same recipe as index.html's .overlay/.drawer */
+  .overlay{ position:fixed; inset:0; background:rgba(10,14,12,.45); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px; }
+  .drawer{ width:min(720px, 94vw); max-height:88vh; background:var(--surface); overflow-y:auto; padding:20px 22px 26px; border-radius:14px; box-shadow:0 24px 60px -18px rgba(0,0,0,.38); }
+  .drawer-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px; }
+  .drawer-head h2{ font-size:17px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="masthead"><div class="mark">QB</div><h1>Offline Backup Viewer</h1></div>
-  <p class="note">Read-only — browsing a backup never sends your data anywhere, and nothing here ever writes back to the live app (so "mark uploaded" isn't available offline). Load a backup JSON file (from the app's Admin tab → "Export all data as JSON") if the live site/Firestore is ever unreachable. Just double-click this file to open it in a browser — no server or install needed. The <b>Upload status</b> tab additionally needs internet access (to load MathJax/html2canvas from a CDN) so its "Download image…" button works — every other tab works fully offline.</p>
+  <p class="note">Read-only — browsing a backup never sends your data anywhere, and nothing here ever writes back to the live app (so "mark uploaded" isn't available offline). Load a backup JSON file (from the app's Admin tab → "Export all data as JSON", or an hourly automated one if that's set up — see <code>backupFirestoreToDrive.gs</code> in the repo) if the live site/Firestore is ever unreachable. Just double-click this file to open it in a browser — no server or install needed. The <b>Questions</b> tab has the same filters as the live Question Bank tab, and every question — not just locked/uploaded ones — can be previewed and downloaded as an image, so a draft or unreviewed question is still usable in a pinch. Previewing/downloading needs internet access (to load MathJax/html2canvas from a CDN) — every other part of this page works fully offline.</p>
 
   <div class="loader" id="loader">
     <p style="margin:0 0 10px;">Choose a backup JSON file to browse</p>
@@ -130,12 +142,27 @@
       <button data-tab="teachers">Teachers</button>
       <button data-tab="curriculum">Curriculum</button>
     </div>
+    <div class="filters" id="q-filters" hidden>
+      <select id="qf-level"><option value="">All levels</option></select>
+      <select id="qf-type"><option value="">All types</option></select>
+      <select id="qf-diff"><option value="">All difficulty</option></select>
+      <select id="qf-status"><option value="">All statuses</option></select>
+      <select id="qf-unit"><option value="">All chapters</option></select>
+      <select id="qf-skill"><option value="">All skills</option></select>
+      <select id="qf-author"><option value="">All authors</option></select>
+      <select id="qf-sort"></select>
+      <label>Made after <input type="date" id="qf-date-from" /></label>
+      <label>before <input type="date" id="qf-date-to" /></label>
+      <button type="button" class="btn" id="qf-clear">Clear filters</button>
+    </div>
     <input type="search" class="search" id="search" placeholder="Search…" />
     <div id="list"></div>
     <div id="upload-status" hidden></div>
     <p class="note" style="margin-top:20px;"><button id="load-another" style="font:inherit; background:none; border:1px solid var(--border); border-radius:7px; padding:6px 12px; cursor:pointer; color:var(--ink);">Load a different file</button></p>
   </div>
 </div>
+
+<div id="modal-root"></div>
 
 <!-- Offscreen render target for the "Download image…" pipeline -- same
      approach as index.html's downloadQuestionImage(): build the real
@@ -273,9 +300,11 @@ document.getElementById("search").addEventListener("input", renderList);
 
 function render(){
   const isUpload = currentTab==="upload";
+  const isQuestions = currentTab==="questions";
   document.getElementById("search").hidden = isUpload;
   document.getElementById("list").hidden = isUpload;
   document.getElementById("upload-status").hidden = !isUpload;
+  document.getElementById("q-filters").hidden = !isQuestions;
   if(isUpload) renderUploadStatus(); else renderList();
 }
 
@@ -301,6 +330,8 @@ function showContent(){
     <div class="stat-tile"><div class="num">${(data.assignments||[]).length}</div><div class="lbl">Assignments</div></div>
     <div class="stat-tile"><div class="num">${(data.teachers||[]).length}</div><div class="lbl">Teachers</div></div>
     <div class="stat-tile"><div class="num">${(data.curriculumExtra||[]).length}</div><div class="lbl">Custom chapters</div></div>`;
+  qFilters = {level:"", qtype:"", diff:"", status:"", unit:"", skill:"", author:"", dateFrom:"", dateTo:"", sort:"newest"};
+  populateQuestionFilterOptions();
   render();
 }
 
@@ -311,6 +342,122 @@ const STATUS_LABEL = {draft:"Draft", in_review:"In Review", finalized:"Locked", 
 function questionStatusInfo(x){
   if(x.status==="in_review" && x.peerReview?.outcome==="agree") return {v:"reviewed", l:"Reviewed (awaiting lock)"};
   return {v:x.status, l:STATUS_LABEL[x.status]||x.status||"—"};
+}
+
+/* ---------------- Questions tab: filters + preview ----------------
+   Same fields as the live app's Bank tab (filteredQuestions()/
+   BANK_STATUS_FILTERS in index.html), so if the live site is down, every
+   question -- not just locked/uploaded ones -- is still findable and
+   previewable/downloadable here. Deliberately NOT gated by status: a
+   draft or in-review question is still a usable question in a pinch. */
+const LEVELS = ["PMC-4","PMC-5","PMC-6","PMC-7"];
+const QTYPES = [{v:"aptitude",l:"Math Aptitude"},{v:"iq_puzzle",l:"IQ / Logic Puzzle"},{v:"math_puzzle",l:"Math Puzzle (graphic)"}];
+const DIFFS = [{v:"medium",l:"Medium"},{v:"hard",l:"Hard"},{v:"very_hard",l:"Very Hard"}];
+const DIFFICULTY_ORDER = ["medium","hard","very_hard"];
+const STATUS_FILTERS = [{v:"draft",l:"Draft"},{v:"in_review",l:"In Review"},{v:"reviewed",l:"Reviewed — ready to lock"},{v:"finalized",l:"Locked"},{v:"uploaded",l:"Uploaded"}];
+const SORT_OPTIONS = [{v:"newest",l:"Newest first"},{v:"oldest",l:"Oldest first"},{v:"updated",l:"Recently updated"},{v:"difficulty",l:"Hardest first"}];
+let qFilters = {level:"", qtype:"", diff:"", status:"", unit:"", skill:"", author:"", dateFrom:"", dateTo:"", sort:"newest"};
+
+function matchesStatusFilter(x, v){
+  if(!v) return true;
+  if(v==="reviewed") return x.status==="in_review" && x.peerReview?.outcome==="agree";
+  return x.status===v;
+}
+// Chapter/skill/author option lists are derived from whatever's actually
+// in this backup's questions -- this file has no copy of the live app's
+// full Beast Academy curriculum constant, so chapters show by their raw
+// unit code (e.g. "B3-C2") rather than "code — title".
+function distinctUnits(){ return Array.from(new Set((data.questions||[]).map(x=>x.unit).filter(Boolean))).sort(); }
+function distinctSkills(){ const s=new Set(); (data.questions||[]).forEach(x=>(x.skills||[]).forEach(k=>s.add(k))); return Array.from(s).sort(); }
+function distinctAuthors(){
+  const seen = new Map();
+  (data.questions||[]).forEach(x=>{ if(x.authorEmail && !seen.has(x.authorEmail)) seen.set(x.authorEmail, x.authorName||x.authorEmail); });
+  return Array.from(seen.entries()).sort((a,b)=>a[1].localeCompare(b[1]));
+}
+function populateQuestionFilterOptions(){
+  document.getElementById("qf-level").innerHTML = `<option value="">All levels</option>` + LEVELS.map(l=>`<option value="${l}">${l}</option>`).join("");
+  document.getElementById("qf-type").innerHTML = `<option value="">All types</option>` + QTYPES.map(t=>`<option value="${t.v}">${esc(t.l)}</option>`).join("");
+  document.getElementById("qf-diff").innerHTML = `<option value="">All difficulty</option>` + DIFFS.map(t=>`<option value="${t.v}">${esc(t.l)}</option>`).join("");
+  document.getElementById("qf-status").innerHTML = `<option value="">All statuses</option>` + STATUS_FILTERS.map(t=>`<option value="${t.v}">${esc(t.l)}</option>`).join("");
+  document.getElementById("qf-unit").innerHTML = `<option value="">All chapters</option>` + distinctUnits().map(u=>`<option value="${esc(u)}">${esc(u)}</option>`).join("");
+  document.getElementById("qf-skill").innerHTML = `<option value="">All skills</option>` + distinctSkills().map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  document.getElementById("qf-author").innerHTML = `<option value="">All authors</option>` + distinctAuthors().map(([email,name])=>`<option value="${esc(email)}">${esc(name)}</option>`).join("");
+  document.getElementById("qf-sort").innerHTML = SORT_OPTIONS.map(s=>`<option value="${s.v}">${esc(s.l)}</option>`).join("");
+}
+function filteredSortedQuestions(searchTerm){
+  let items = (data.questions||[]).filter(x=>{
+    if(qFilters.level && !(Array.isArray(x.level) && x.level.includes(qFilters.level))) return false;
+    if(qFilters.qtype && x.qType!==qFilters.qtype) return false;
+    if(qFilters.diff && x.difficulty!==qFilters.diff) return false;
+    if(qFilters.status && !matchesStatusFilter(x, qFilters.status)) return false;
+    if(qFilters.unit && x.unit!==qFilters.unit) return false;
+    if(qFilters.skill && !(Array.isArray(x.skills) && x.skills.includes(qFilters.skill))) return false;
+    if(qFilters.author && x.authorEmail!==qFilters.author) return false;
+    if(qFilters.dateFrom){ const d=new Date(x.createdAt); if(isNaN(d) || d < new Date(qFilters.dateFrom+"T00:00:00")) return false; }
+    if(qFilters.dateTo){ const d=new Date(x.createdAt); if(isNaN(d) || d > new Date(qFilters.dateTo+"T23:59:59")) return false; }
+    if(searchTerm){
+      const hay = ((x.titleEn||"")+" "+(x.promptEn||"")+" "+(x.subtopic||"")).toLowerCase();
+      if(!hay.includes(searchTerm)) return false;
+    }
+    return true;
+  });
+  items = items.slice();
+  if(qFilters.sort==="oldest") items.sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
+  else if(qFilters.sort==="updated") items.sort((a,b)=>(b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+  else if(qFilters.sort==="difficulty") items.sort((a,b)=>DIFFICULTY_ORDER.indexOf(b.difficulty)-DIFFICULTY_ORDER.indexOf(a.difficulty));
+  // "newest" needs no re-sort -- the export already carries Firestore's
+  // own createdAt-desc subscription order.
+  return items;
+}
+["qf-level","qf-type","qf-diff","qf-status","qf-unit","qf-skill","qf-author","qf-sort"].forEach(id=>{
+  document.getElementById(id).addEventListener("change", e=>{
+    const map = {"qf-level":"level","qf-type":"qtype","qf-diff":"diff","qf-status":"status","qf-unit":"unit","qf-skill":"skill","qf-author":"author","qf-sort":"sort"};
+    qFilters[map[id]] = e.target.value;
+    renderList();
+  });
+});
+document.getElementById("qf-date-from").addEventListener("change", e=>{ qFilters.dateFrom = e.target.value; renderList(); });
+document.getElementById("qf-date-to").addEventListener("change", e=>{ qFilters.dateTo = e.target.value; renderList(); });
+document.getElementById("qf-clear").addEventListener("click", ()=>{
+  qFilters = {level:"", qtype:"", diff:"", status:"", unit:"", skill:"", author:"", dateFrom:"", dateTo:"", sort:"newest"};
+  document.querySelectorAll("#q-filters select").forEach(s=>s.value = s.id==="qf-sort" ? "newest" : "");
+  document.getElementById("qf-date-from").value = "";
+  document.getElementById("qf-date-to").value = "";
+  renderList();
+});
+
+// Centered preview modal -- the live-app-equivalent "View" button, open to
+// EVERY question regardless of status (not just locked/uploaded ones, the
+// only kind the Upload status tab's contest cross-reference can show) --
+// and its own "Download image…" works unconditionally too, since in an
+// actual outage a draft or unreviewed question is still better than no
+// question for a paper that has to go out.
+function openPreview(q){
+  const root = document.getElementById("modal-root");
+  const info = questionStatusInfo(q);
+  root.innerHTML = `
+    <div class="overlay" id="pv-ov">
+      <div class="drawer">
+        <div class="drawer-head"><h2>${esc(q.titleEn||"Untitled")}</h2><button type="button" class="btn" id="pv-close">Close</button></div>
+        <div style="margin-bottom:4px;">
+          ${(q.level||[]).map(l=>`<span class="pill">${esc(l)}</span>`).join("")}
+          <span class="pill status-${info.v}">${esc(info.l)}</span>
+          ${(q.skills||[]).map(s=>`<span class="pill">${esc(s)}</span>`).join("")}
+        </div>
+        <p class="note">By <b>${esc(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)} · ${esc(q.unit||"—")} / ${esc(q.subtopic||"—")}</p>
+        <div id="pv-body"></div>
+        <div class="row-actions">
+          <button type="button" class="btn primary" id="pv-download">Download image…</button>
+        </div>
+      </div>
+    </div>`;
+  const body = document.getElementById("pv-body");
+  body.innerHTML = questionPreviewHtml(q, {includeQuestion:true, includeOptions:true});
+  if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([body]).catch(()=>{});
+  const close = ()=>{ root.innerHTML = ""; };
+  document.getElementById("pv-close").addEventListener("click", close);
+  document.getElementById("pv-ov").addEventListener("click", e=>{ if(e.target.id==="pv-ov") close(); });
+  document.getElementById("pv-download").addEventListener("click", ()=>downloadQuestionImage(q));
 }
 
 // Upload status tab -- the actual point of this file update: if Firestore
@@ -371,8 +518,7 @@ function renderList(){
   const q = document.getElementById("search").value.trim().toLowerCase();
   const list = document.getElementById("list");
   if(currentTab==="questions"){
-    let items = data.questions||[];
-    if(q) items = items.filter(x => (x.titleEn||"").toLowerCase().includes(q) || (x.promptEn||"").toLowerCase().includes(q) || (x.subtopic||"").toLowerCase().includes(q));
+    const items = filteredSortedQuestions(q);
     list.innerHTML = items.length===0 ? `<div class="empty">No questions match.</div>` : items.map(x=>{
       const info = questionStatusInfo(x);
       return `
@@ -380,8 +526,15 @@ function renderList(){
         <div class="top"><span>${(x.level||[]).map(l=>`<span class="pill">${esc(l)}</span>`).join("")}<span class="pill status-${info.v}">${esc(info.l)}</span></span><span>${esc(x.unit||"—")} · ${fmtDate(x.updatedAt||x.createdAt)}</span></div>
         <div class="title">${esc(x.titleEn||"Untitled")}</div>
         <div class="body">${esc(x.promptEn||"")}</div>
+        <div class="row-actions">
+          <button type="button" class="btn" data-preview="${esc(x.id)}">Preview…</button>
+          <button type="button" class="btn" data-dl="${esc(x.id)}">Download image…</button>
+        </div>
       </div>`;
     }).join("");
+    const byId = {}; items.forEach(x=>byId[x.id]=x);
+    list.querySelectorAll("[data-preview]").forEach(b=>b.addEventListener("click", ()=>{ const x=byId[b.dataset.preview]; if(x) openPreview(x); }));
+    list.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{ const x=byId[b.dataset.dl]; if(x) downloadQuestionImage(x); }));
   } else if(currentTab==="contests"){
     let items = data.contests||[];
     if(q) items = items.filter(x => (x.name||"").toLowerCase().includes(q));
