@@ -218,6 +218,26 @@ contests/{contestId}
     -- on a category change (populateUnitFilterOptions()), not on every
     -- keystroke, since chapters are category-dependent and rebuilding the
     -- <select> on every filter change would blow away the chosen chapter.
+    -- Picker eligibility (Oct 2026, explicitly discussed and confirmed with
+    -- the project owner before changing -- see the "Access control model"
+    -- warning above): openContestForm's `eligible` filter now also admits
+    -- a "reviewed" question (status "in_review" AND peerReview.outcome
+    -- "agree") alongside finalized/uploaded -- not just locked ones.
+    -- Deliberately does NOT touch the Lock step itself: locking (QB Lead/
+    -- Admin sign-off, isQBLeadOrAdmin() in firestore.rules) still works
+    -- exactly as before, still the only way to stop a question's content
+    -- from being edited further. This only widens which questions can be
+    -- PICKED for a paper -- a peer-reviewed-and-agreed question no longer
+    -- has to sit waiting on a separate lock click before it's contest-
+    -- eligible. Each picker row now shows a status pill (via
+    -- questionStatusInfo()) so an admin can tell "Locked" from "Reviewed
+    -- OK" at a glance while choosing. Known tradeoff, not a bug: a
+    -- "Reviewed OK" question added to a contest this way is NOT locked --
+    -- its author (or anyone with isContentTeacher()) can still edit it
+    -- afterward, unlike a genuinely locked one, since nothing about adding
+    -- a question to a contest changes its `status`. If a paper needs to be
+    -- frozen from further changes, lock each question first -- picking a
+    -- "Reviewed OK" one doesn't do that automatically.
   uploadStatus: { [questionId]: {uploadedBy, uploadedByName, uploadedAt} }
     -- Upload tracking lives HERE, not on the question doc, because
     -- "uploaded" only makes sense in the context of a specific contest paper.

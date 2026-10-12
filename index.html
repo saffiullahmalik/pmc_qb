@@ -3087,7 +3087,7 @@ function renderContests(){
   const main = document.getElementById("main");
   main.innerHTML = `
     <div class="pagehead"><h1>Contests</h1><button class="btn primary" id="new-contest">+ Create New Contest</button></div>
-    <p class="desc">Assemble a paper from locked questions, then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
+    <p class="desc">Assemble a paper from contest-ready questions — locked, uploaded, or peer-reviewed and agreed ("Reviewed OK," even before a QB Lead has locked it) — then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
     ${!dataReady.contests ? loadingState("Loading contests…") : contests.length===0 ? emptyState("No contests created yet.") : `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Upload</th><th></th></tr></thead>
@@ -3144,7 +3144,14 @@ function renderContests(){
 function openContestForm(existing){
   const isEdit = !!existing;
   const root = document.getElementById("modal-root");
-  const eligible = questions.filter(q=>q.status==="finalized"||q.status==="uploaded");
+  // Locking (QB Lead/Admin sign-off) stays exactly as it was -- this just
+  // stops it being the ONLY way into a contest. A peer-reviewed-and-agreed
+  // question ("reviewed", same derivation as questionStatusInfo()/the Bank
+  // tab's "Reviewed — ready to lock" filter) is content-complete and
+  // already cleared by a second set of eyes; waiting on a lock click
+  // before it could even be picked for a paper was an extra gate with no
+  // real purpose once review had already said the answer is right.
+  const eligible = questions.filter(q=>q.status==="finalized"||q.status==="uploaded"||(q.status==="in_review"&&q.peerReview?.outcome==="agree"));
   let selectedOrder = isEdit ? [...(existing.questionIds||[])] : [];
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
@@ -3242,15 +3249,16 @@ function openContestForm(existing){
     function renderPicker(){
       const level = document.getElementById("cf-level").value;
       const list = filteredPickerList();
-      document.getElementById("picker-count").textContent = `(${list.length} of ${levelEligible().length} locked/uploaded for ${level})`;
+      document.getElementById("picker-count").textContent = `(${list.length} of ${levelEligible().length} contest-ready for ${level})`;
       const picker = document.getElementById("q-picker");
-      picker.innerHTML = list.length===0 ? `<div class="empty">No locked or uploaded questions match these filters.</div>` : list.map(q=>{
+      picker.innerHTML = list.length===0 ? `<div class="empty">No contest-ready questions match these filters.</div>` : list.map(q=>{
         const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
+        const statusInfo = questionStatusInfo(q);
         return `
         <label style="display:flex; align-items:flex-start; gap:8px; padding:9px 6px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
           <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
           <span style="flex:1; min-width:0;">
-            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span></div>
+            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span></div>
             <div style="white-space:pre-wrap;">${escapeHtml(q.promptEn||"")}</div>
             <div class="hint" style="margin-top:4px;">by ${escapeHtml(q.authorName||q.authorEmail||"—")}${(q.skills||[]).length?" · "+q.skills.map(escapeHtml).join(", "):""}</div>
             ${(q.usedIn||[]).length ? `<div class="hint" style="color:var(--gold);">⚠ Already used in: ${(q.usedIn||[]).map(escapeHtml).join(", ")}</div>` : ""}
