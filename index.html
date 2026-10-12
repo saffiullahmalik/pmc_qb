@@ -1254,7 +1254,31 @@ function renderInsightsRail(){
   const levels = Object.keys(byLevel);
   const totalRemaining = levels.reduce((s,l)=>s+Math.max(0, byLevel[l].target-byLevel[l].done), 0);
   const leaderboard = teacherComparisonData().map(r=>({ ...r, fullName:r.label, label:initials(r.label), isMe:r.email===currentUser.email }));
+  // Previously a reviewer's "disagree" only ever surfaced once the author
+  // happened to open that specific question (its drawer/Edit screen) or
+  // noticed the auto-posted comment -- nothing on the dashboard or the
+  // Bank tab's card list distinguished "sent back, needs you" from a
+  // question still just sitting with its reviewer. This card closes that
+  // gap: every one of the author's own questions currently flagged, with
+  // the specific reason and a direct link straight into Edit. Placed
+  // first in the rail (ahead of "Your assignments") since it's the most
+  // time-sensitive thing here, and omitted entirely when there's nothing
+  // to fix so it never clutters an author with a clean slate.
+  const sentBack = mine.filter(q=>q.peerReview?.outcome==="disagree");
   rail.innerHTML = `
+    ${sentBack.length ? `
+    <div class="dash-chart-card" style="border-color:var(--red);">
+      <b style="color:var(--red);">⚠ Sent back (${sentBack.length}) — needs your fix</b>
+      <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+        ${sentBack.map(q=>{
+          const reason = REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Flagged";
+          return `<button type="button" class="btn small" style="justify-content:space-between; text-align:left; width:100%;" data-sentback-open="${q.id}">
+            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(q.titleEn||"Untitled")}</span>
+            <span class="pill" style="background:var(--red-soft); color:var(--red); margin-left:6px; flex:0 0 auto;">${escapeHtml(reason)}</span>
+          </button>`;
+        }).join("")}
+      </div>
+    </div>` : ""}
     ${levels.length ? `
     <div class="dash-chart-card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
@@ -1332,6 +1356,10 @@ function renderInsightsRail(){
   `;
   document.getElementById("dash-start-now")?.addEventListener("click", ()=>openForm(null));
   document.getElementById("dash-review-now")?.addEventListener("click", ()=>openMyReviewsPanel());
+  rail.querySelectorAll("[data-sentback-open]").forEach(b=>b.addEventListener("click", ()=>{
+    const q = questions.find(x=>x.id===b.dataset.sentbackOpen);
+    if(q) openForm(q);
+  }));
   rail.querySelectorAll("[data-rail-level]").forEach(b=>b.addEventListener("click", ()=>{
     railExpandedLevel = railExpandedLevel===b.dataset.railLevel ? null : b.dataset.railLevel;
     renderInsightsRail();
@@ -1612,6 +1640,7 @@ function cardHtml(q){
           <button type="button" class="pill type" data-quickfilter-qtype="${q.qType}" title="Filter by type">${typeLbl}</button>
           <button type="button" class="pill diff-${q.difficulty}" data-quickfilter-diff="${q.difficulty}" title="Filter by difficulty">${diffLbl}${difficultyDots(q.difficulty)}</button>
           <button type="button" class="pill status-${q.status}" data-quickfilter-status="${q.status}" title="Filter by status">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</button>
+          ${q.peerReview?.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);" title="A reviewer sent this back">⚠ ${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Sent back")}</span>` : ""}
           ${(q.skills||[]).map(s=>`<button type="button" class="pill skill-chip" data-quickfilter-skill="${escapeHtml(s)}" title="Filter by skill">${escapeHtml(s)}</button>`).join("")}
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>

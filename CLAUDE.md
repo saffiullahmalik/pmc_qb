@@ -382,6 +382,24 @@ submitted, click opens the normal drawer via `openQuestion()` so they can
 see it in context) -- same split `myReviewStats()` already counted for the
 donut, now browsable as an actual list instead of only a count.
 
+"Sent back" visibility for the author (Oct 2026): previously a reviewer's
+"disagree" only ever surfaced once the author happened to open that
+specific question (its drawer's peer-review card, or the editor's warning
+callout) or noticed the auto-posted comment -- nothing on the dashboard or
+the Bank tab's card list distinguished "sent back, needs you" from a
+question still just sitting with its reviewer. Fixed with two additions,
+both keyed off `q.peerReview?.outcome==="disagree"`: (1) a red-bordered
+"Sent back (N) — needs your fix" card, first in the Bank tab rail (ahead
+of "Your assignments" -- the most time-sensitive thing there), listing
+every one of the author's own flagged questions with its specific
+`REVIEW_FLAGS` reason and a button straight into `openForm(q)` to fix it;
+omitted entirely when N is 0 so a clean author never sees it. (2)
+`cardHtml()` now adds a small red "⚠ {reason}" pill next to the status pill
+on ANY flagged question's row in the Bank tab list (not just the rail,
+and visible to anyone browsing, not only the author -- useful for
+admins/QB Leads scanning too), using the same `REVIEW_FLAGS.short` lookup
+the drawer/editor already use for this.
+
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
   -- append-only (rules block update/delete entirely); any signed-in teacher

@@ -81,6 +81,7 @@ Each assigned chapter's target splits evenly across the three difficulties — a
 
 A thin strip at the top of every tab shows your current streak, today's progress toward the daily target, this week's total, and how many reviews you still owe. The Question Bank tab's right-hand panel goes further:
 
+- **Sent back — needs your fix** — only appears when a reviewer has actually sent one of your questions back, listed with the specific reason (ambiguous, wrong answer, etc.) right at the top of the panel, above everything else — click one to jump straight into fixing it. A flagged question also gets a small red "⚠ {reason}" tag on its card in the main list, so it's visible to anyone scanning the Question Bank tab too, not just on your own dashboard.
 - **Your assignments** — one thin bar per PMC level showing how much of your assigned quota is locked (with a ✓ once a level hits 100%); click a level to expand it into its individual chapters, each showing its own draft/in-review/reviewed breakdown underneath.
 - **Your questions** — a donut of your own draft/in-review/reviewed/locked breakdown. "Reviewed" means a peer already agreed with the answer — it's just waiting on a QB Lead to lock it, which is different from still being actively reviewed.
 - **Last 7 days** — a bar per day of how many questions you created.
