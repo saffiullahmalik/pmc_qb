@@ -400,6 +400,58 @@ and visible to anyone browsing, not only the author -- useful for
 admins/QB Leads scanning too), using the same `REVIEW_FLAGS.short` lookup
 the drawer/editor already use for this.
 
+Peer-review feedback as comments, and a "Reviewed OK" status tag (Oct
+2026): two related gaps, fixed together. First, `openReviewForm()`'s
+submit handler previously only posted an auto-comment for a "disagree"
+outcome, and even then it never included the reviewer's own working
+(`reviewerNote`) or time taken (`reviewTimeMinutes`) -- both were captured
+into `peerReview` but never actually shown to the author anywhere. It now
+posts a comment for EVERY outcome (agree included), with the reviewer's
+working and time taken appended when provided, tagged `kind:"peer_review"`
++ `reviewOutcome:"agree"|"disagree"` on the comment doc itself (no rules
+change needed -- `questions/{id}/comments` already allows any field on
+create). Every comment-rendering site (`renderDrawerBody()`'s thread,
+`renderCardEngagement()`'s Bank-tab-card preview, and the editor's new
+read-only comments section below) checks `c.kind==="peer_review"` to apply
+a colored left-border + "Peer review: OK/Flagged" badge (`.comment-card`/
+`.card-comment` `.review-agree`/`.review-disagree` CSS), distinct from an
+ordinary freeform comment -- including the existing "External Reviewer"
+role badge, which stacks alongside it if that's who posted it. Because
+these are ordinary comments (not overwritten the way `peerReview` itself
+is on a resubmit), the full history survives in the thread even after a
+second review cycle replaces the `peerReview` object: an old "Flagged:
+..." comment and a later "Reviewed OK" comment both stay visible,
+chronologically, so anyone opening the question can see it was flagged,
+then fixed, then approved -- not just its current state. `.comment-txt`/
+`.card-comment` gained `white-space:pre-wrap` since these comments are
+now multi-line (`escapeHtml()` already preserves literal `\n`, no `<br>`
+conversion needed).
+
+Second, `questionStatusInfo(q)` (new, next to `matchesStatusFilter()`) is
+the same "reviewed" derivation used for the status filter, now also used
+for every status PILL display (`cardHtml()`'s card, `renderDrawerBody()`'s
+tag line) instead of each reading `STATUSES` directly off raw `q.status`.
+Filtering the Bank tab by "Reviewed — ready to lock" used to still show
+"In Review" on every matching card (the pill read `q.status`, which
+genuinely is still `"in_review"` until a QB Lead locks it) -- looked like
+the filter was broken. New `.pill.status-reviewed` CSS class (violet,
+matching `backup-viewer.html`'s existing one of the same name) backs the
+"Reviewed OK" label this produces. The editor's actual `<select
+name="status">` is untouched -- "reviewed" still isn't a real status
+value, only ever a derived display label.
+
+The editor (`openForm()`, Edit mode only) also gained a read-only
+"Comments" section in step 4, right where the existing "Reviewer flagged"
+callout already said "see the comments below" -- previously true nowhere,
+since the editor never showed comments at all and an author fixing a
+flagged question had to keep the View drawer open in a second tab/window
+to read the feedback. One-shot `getDocs` fetch (not a live subscription --
+same reasoning as `loadCardEngagement()`'s one-shot fetch, this modal's
+lifetime is short), same comment-card markup/badges as the drawer. Replying
+still only happens from the drawer -- the editor's copy is explicitly
+labeled read-only, so there isn't a second, out-of-sync place comments get
+posted from.
+
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
   -- append-only (rules block update/delete entirely); any signed-in teacher

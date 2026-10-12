@@ -167,6 +167,7 @@
   .pill.diff-very_hard{ background:var(--red-soft); color:var(--red); }
   .pill.status-draft{ background:var(--surface-2); color:var(--ink-dim); }
   .pill.status-in_review{ background:var(--blue-soft); color:var(--blue); }
+  .pill.status-reviewed{ background:var(--violet-soft); color:var(--violet); }
   .pill.status-finalized{ background:var(--accent-soft); color:var(--accent); }
   .pill.status-uploaded{ background:#0f6b5c; color:#fff; }
   :root:not([data-theme="light"]) .pill.status-uploaded{ background:#1a2e27; color:#7ee0c4; }
@@ -291,7 +292,9 @@
   .q-row-body{ flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
   .card-engagement:empty{ display:none; }
   .card-comment-list{ display:flex; flex-direction:column; gap:3px; margin-top:4px; }
-  .card-comment{ font-size:11.5px; color:var(--ink-dim); line-height:1.4; background:var(--surface-2); border-radius:6px; padding:5px 8px; }
+  .card-comment{ font-size:11.5px; color:var(--ink-dim); line-height:1.4; background:var(--surface-2); border-radius:6px; padding:5px 8px; white-space:pre-wrap; }
+  .card-comment.review-agree{ background:var(--accent-soft); color:var(--ink); border-left:2px solid var(--accent); }
+  .card-comment.review-disagree{ background:var(--red-soft); color:var(--ink); border-left:2px solid var(--red); }
   .card-comment b{ color:var(--ink); font-weight:600; }
   .card-engagement .link-btn{ font-size:11px; margin-top:3px; }
   .q-row-actions{ flex:0 0 auto; display:flex; flex-direction:column; gap:5px; align-items:stretch; justify-content:center; }
@@ -343,11 +346,13 @@
   .opt-item.correct .k{ background:var(--accent); color:var(--accent-ink); }
   .status-track{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;}
   .comment-card{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:10px 12px; margin-bottom:8px; }
+  .comment-card.review-agree{ border-left:3px solid var(--accent); background:var(--accent-soft); }
+  .comment-card.review-disagree{ border-left:3px solid var(--red); background:var(--red-soft); }
   .comment-head{ display:flex; align-items:center; gap:8px; margin-bottom:5px; }
   .comment-avatar{ width:22px; height:22px; border-radius:50%; background:var(--accent-soft); color:var(--accent); font-family:'Lexend'; font-weight:700; font-size:11px; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
   .comment-head b{ font-size:12.5px; }
   .comment-head .hint{ margin-left:auto; }
-  .comment-txt{ font-size:13px; line-height:1.5; }
+  .comment-txt{ font-size:13px; line-height:1.5; white-space:pre-wrap; }
   .edit-log{ font-size:11.5px; color:var(--ink-dim); }
   .edit-log li{ margin-bottom:3px; }
   .rate-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -591,6 +596,17 @@ function matchesStatusFilter(q, v){
   if(!v) return true;
   if(v==="reviewed") return q.status==="in_review" && q.peerReview?.outcome==="agree";
   return q.status===v;
+}
+// Same "reviewed" derivation as matchesStatusFilter(), but for the status
+// PILL shown on a card/drawer -- filtering by "Reviewed — ready to lock"
+// used to still show "In Review" on every matching card (the pill read
+// raw q.status, which genuinely is still "in_review" until a QB Lead
+// locks it), which looked like the filter was broken. Every status-pill
+// display site should go through this instead of reading STATUSES
+// directly, so the tag always matches what was actually filtered for.
+function questionStatusInfo(q){
+  if(q.status==="in_review" && q.peerReview?.outcome==="agree") return {v:"reviewed", l:"Reviewed OK"};
+  return {v:q.status, l:STATUSES.find(s=>s.v===q.status)?.l||q.status};
 }
 // The peer-review "how was it" flags a reviewer picks AFTER seeing the
 // marked answer and solution (openReviewForm(), Oct 2026) -- replaces the
@@ -1616,7 +1632,7 @@ function renderCardEngagement(id){
     ${ratingCount>0 ? `<div class="hint" style="margin-top:4px;">★ ${avgStars.toFixed(1)} avg (${ratingCount} rating${ratingCount===1?"":"s"})</div>` : ""}
     ${comments.length>0 ? `
     <div class="card-comment-list">
-      ${visibleComments.map(c=>`<div class="card-comment"><b>${escapeHtml(c.authorName||"—")}:</b> ${escapeHtml(c.text)}</div>`).join("")}
+      ${visibleComments.map(c=>`<div class="card-comment${c.kind==="peer_review"?` review-${c.reviewOutcome}`:""}"><b>${escapeHtml(c.authorName||"—")}${c.kind==="peer_review"?(c.reviewOutcome==="agree"?" (review: OK)":" (review: flagged)"):""}:</b> ${escapeHtml(c.text)}</div>`).join("")}
     </div>
     ${overflow>0 ? `<button type="button" class="link-btn" data-toggle-comments="${id}">${expanded?"Show fewer":`+${overflow} more comment${overflow===1?"":"s"}`}</button>` : ""}` : ""}
   `;
@@ -1631,6 +1647,7 @@ function cardHtml(q){
   const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
   const typeLbl = QTYPES.find(t=>t.v===q.qType)?.l || q.qType;
   const isLocked = q.status==="finalized" && !isAdminUser;
+  const statusInfo = questionStatusInfo(q);
   return `
     <div class="q-row" data-id="${q.id}">
       <div class="q-row-thumb">${q.graphicImage ? `<img src="${q.graphicImage}" alt="" />` : ICON_EMPTY}</div>
@@ -1639,7 +1656,7 @@ function cardHtml(q){
           ${(q.level||[]).map(l=>`<button type="button" class="pill level" data-quickfilter-level="${l}" title="Filter by ${l}">${l}</button>`).join("")}
           <button type="button" class="pill type" data-quickfilter-qtype="${q.qType}" title="Filter by type">${typeLbl}</button>
           <button type="button" class="pill diff-${q.difficulty}" data-quickfilter-diff="${q.difficulty}" title="Filter by difficulty">${diffLbl}${difficultyDots(q.difficulty)}</button>
-          <button type="button" class="pill status-${q.status}" data-quickfilter-status="${q.status}" title="Filter by status">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</button>
+          <button type="button" class="pill status-${statusInfo.v}" data-quickfilter-status="${q.status}" title="Filter by status">${escapeHtml(statusInfo.l)}</button>
           ${q.peerReview?.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);" title="A reviewer sent this back">⚠ ${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Sent back")}</span>` : ""}
           ${(q.skills||[]).map(s=>`<button type="button" class="pill skill-chip" data-quickfilter-skill="${escapeHtml(s)}" title="Filter by skill">${escapeHtml(s)}</button>`).join("")}
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
@@ -1833,6 +1850,10 @@ function openForm(existing){
               ${existing?.peerReview?.outcome==="disagree" ? `<div class="callout warn" style="margin-top:6px;">⚠ Reviewer flagged: <b>${escapeHtml(REVIEW_FLAGS.find(f=>f.v===existing.peerReview.issueFlag)?.short || "issue found")}</b> — see the comments below, fix it, then save to send it back to the same reviewer.</div>` : ""}
               ${existing?.peerReview?.outcome==="pending" ? `<div class="hint" style="margin-top:4px;">Awaiting review from ${escapeHtml(existing.peerReview.reviewerName)}.</div>` : ""}
             </div>
+            ${isEdit ? `<div class="field">
+              <label>Comments <span class="hint">(read-only here — reply from the question's View screen)</span></label>
+              <div id="editor-comments-list"><div class="hint">Loading comments…</div></div>
+            </div>` : ""}
             ${isEdit ? `<div class="field"><label>Edit note <span class="hint">(what changed)</span></label><input type="text" name="editNote" placeholder="e.g. reworded per Bilal's comment" /></div>`:""}
             <div class="section-label">Live preview</div>
             <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
@@ -1877,6 +1898,30 @@ function openForm(existing){
     </div>`;
 
   const formEl = document.getElementById("q-form");
+
+  // Comments (including auto-posted peer-review feedback) used to only be
+  // visible from the question's View screen -- an author fixing a flagged
+  // question had to keep both windows open to see what needed correcting.
+  // One-shot fetch (not a live subscription -- this modal's lifetime is
+  // short, same reasoning as loadCardEngagement()'s one-shot fetch for the
+  // Bank tab cards), read-only here by design (the label says so) so
+  // there's one place replies actually happen -- the drawer's thread.
+  if(isEdit){
+    (async ()=>{
+      const list = document.getElementById("editor-comments-list");
+      if(!list) return;
+      try{
+        const snap = await getDocs(query(collection(db,"questions",existing.id,"comments"), orderBy("createdAt","asc")));
+        const comments = snap.docs.map(d=>({id:d.id, ...d.data()}));
+        const extReviewerBadge = email=>allTeachers.find(t=>t.email===email)?.role==="external_reviewer" ? ` <span class="pill role-external_reviewer" style="font-size:9.5px; padding:1px 6px;">External Reviewer</span>` : "";
+        list.innerHTML = comments.length ? comments.map(c=>`
+          <div class="comment-card${c.kind==="peer_review"?` review-${c.reviewOutcome}`:""}">
+            <div class="comment-head"><span class="comment-avatar">${escapeHtml((c.authorName||"?").trim().charAt(0).toUpperCase())}</span><b>${escapeHtml(c.authorName)}</b>${extReviewerBadge(c.authorEmail)}${c.kind==="peer_review" ? (c.reviewOutcome==="agree" ? ` <span class="pill status-reviewed" style="font-size:9.5px; padding:1px 6px;">Peer review: OK</span>` : ` <span class="pill" style="background:var(--red-soft); color:var(--red); font-size:9.5px; padding:1px 6px;">Peer review: Flagged</span>`) : ""}<span class="hint mono">${fmtDate(c.createdAt)}</span></div>
+            <div class="comment-txt">${escapeHtml(c.text)}</div>
+          </div>`).join("") : `<div class="hint">No comments yet.</div>`;
+      }catch(err){ console.error(err); list.innerHTML = `<div class="hint">Couldn't load comments.</div>`; }
+    })();
+  }
 
   function renderOptionRows(){
     const wrap = document.getElementById("opts-wrap");
@@ -2777,13 +2822,26 @@ function openReviewForm(q){
       await updateDoc(doc(db,"questions",q.id), {
         peerReview: { ...q.peerReview, submittedAt:new Date().toISOString(), reviewerOptionId:chosenOptionId, reviewerNote:noteStep1, reviewTimeMinutes, outcome, issueFlag:flag.v, issueNote }
       });
-      if(outcome==="disagree"){
-        await addDoc(collection(db,"questions",q.id,"comments"), {
-          authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email,
-          text: `Review — ${flag.short}: ${issueNote || "No additional detail provided."}`,
-          createdAt: new Date().toISOString(),
-        });
-      }
+      // Posted for EVERY outcome now (used to be disagree-only) -- the
+      // reviewer's own working/solution and time taken were being captured
+      // in peerReview but never actually shown to the author anywhere, and
+      // an "OK" review left no trail in the comment thread at all, so
+      // there was no visible record of "this was flagged, then fixed, then
+      // came back OK" once a resubmitted review overwrites the old
+      // peerReview object. kind:"peer_review" + reviewOutcome let the
+      // comment thread (renderDrawerBody(), the editor's read-only
+      // comments section, and the card engagement preview) badge and
+      // color these distinctly from an ordinary freeform comment.
+      const lines = [outcome==="agree" ? `✅ Reviewed OK — ready to lock.` : `⚠ Flagged: ${flag.short}.`];
+      if(noteStep1.trim()) lines.push(`Reviewer's working: ${noteStep1.trim()}`);
+      if(reviewTimeMinutes) lines.push(`Time taken: ${reviewTimeMinutes} min`);
+      if(outcome==="disagree" && issueNote) lines.push(`Note: ${issueNote}`);
+      await addDoc(collection(db,"questions",q.id,"comments"), {
+        authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email,
+        text: lines.join("\n"),
+        kind: "peer_review", reviewOutcome: outcome,
+        createdAt: new Date().toISOString(),
+      });
       logActivity("review_submitted", `Reviewed "${q.titleEn||"Untitled"}" — ${flag.short}`, q.id);
       toast(outcome==="agree" ? "Review submitted — marked OK, ready to lock" : "Review submitted — sent back to the author");
       closeModal();
@@ -2857,6 +2915,7 @@ function renderDrawerBody(){
   const likedByMe = (q.likes||[]).includes(currentUser.email);
   const quilgo = getQuilgoUploadInfo(q.id);
   const isLocked = q.status==="finalized" && !isAdminUser;
+  const statusInfo = questionStatusInfo(q);
   const reviewerBadge = email=>allTeachers.find(t=>t.email===email)?.role==="external_reviewer" ? ` <span class="pill role-external_reviewer" style="font-size:9.5px; padding:1px 6px;">External Reviewer</span>` : "";
   body.innerHTML = `
     <div class="drawer-head">
@@ -2865,7 +2924,7 @@ function renderDrawerBody(){
           ${(q.level||[]).map(l=>`<span class="pill level">${l}${isAdminUser?` <span data-remove-level="${l}" style="cursor:pointer; font-weight:700;" title="Remove this level tag">×</span>`:""}</span>`).join("")}
           <span class="pill type">${QTYPES.find(t=>t.v===q.qType)?.l||q.qType}</span>
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
-          <span class="pill status-${q.status}">${STATUSES.find(s=>s.v===q.status)?.l||q.status}</span>
+          <span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span>
           ${(q.skills||[]).map(s=>`<span class="pill skill-chip">${escapeHtml(s)}</span>`).join("")}
           ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
         </div>
@@ -2916,8 +2975,8 @@ function renderDrawerBody(){
     ${(q.likes||[]).length ? `<div class="hint" style="margin-top:4px;">Liked by ${(q.likes||[]).map(e=>escapeHtml(allTeachers.find(t=>t.email===e)?.name||e)).join(", ")}</div>` : ""}
     <div class="section-label">Comments (${_comments.length})</div>
     <div id="comments-list">${_comments.length? _comments.map(c=>`
-      <div class="comment-card">
-        <div class="comment-head"><span class="comment-avatar">${escapeHtml((c.authorName||"?").trim().charAt(0).toUpperCase())}</span><b>${escapeHtml(c.authorName)}</b>${reviewerBadge(c.authorEmail)}<span class="hint mono">${fmtDate(c.createdAt)}</span></div>
+      <div class="comment-card${c.kind==="peer_review"?` review-${c.reviewOutcome}`:""}">
+        <div class="comment-head"><span class="comment-avatar">${escapeHtml((c.authorName||"?").trim().charAt(0).toUpperCase())}</span><b>${escapeHtml(c.authorName)}</b>${reviewerBadge(c.authorEmail)}${c.kind==="peer_review" ? (c.reviewOutcome==="agree" ? ` <span class="pill status-reviewed" style="font-size:9.5px; padding:1px 6px;">Peer review: OK</span>` : ` <span class="pill" style="background:var(--red-soft); color:var(--red); font-size:9.5px; padding:1px 6px;">Peer review: Flagged</span>`) : ""}<span class="hint mono">${fmtDate(c.createdAt)}</span></div>
         <div class="comment-txt">${escapeHtml(c.text)}</div>
       </div>`).join("") : `<div class="hint">No comments yet — be the first to give feedback.</div>`}</div>
     <div class="field" style="margin-top:10px;"><textarea id="new-comment" rows="2" placeholder="Add a comment for other teachers…"></textarea><button class="btn small primary" id="post-comment" style="align-self:flex-start;">Post comment</button></div>
