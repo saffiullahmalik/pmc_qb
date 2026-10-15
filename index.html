@@ -755,6 +755,22 @@ function allCurriculum(){
       if(b) b.chapters.push({code:doc.code, title:doc.title, subtopics:doc.subtopics||[], custom:true});
     }
   });
+  // "chapter_edit" fully replaces an EXISTING chapter's title/subtopics in
+  // place -- the mechanism that makes a hardcoded Beast Academy chapter
+  // (which has no curriculumExtra doc of its own to updateDoc) editable:
+  // openCurriculumEditForm() writes one of these instead when the chapter
+  // being edited isn't already a custom "chapter" doc. Runs BEFORE the
+  // subtopic-append pass below (not after) so a teacher's "+ New subtopic"
+  // addition always survives on top of whatever the override set, whether
+  // that addition happened before or after the override was created --
+  // otherwise a static override snapshot could silently swallow a newer
+  // append on every re-render.
+  curriculumExtra.forEach(doc=>{
+    if(doc.type==="chapter_edit"){
+      const c = merged.flatMap(b=>b.chapters).find(x=>x.code===doc.code);
+      if(c){ c.title = doc.title; c.subtopics = (doc.subtopics||[]).slice(); c.edited = true; }
+    }
+  });
   // Third pass: a "subtopic" extra appends one subtopic to an EXISTING
   // chapter (hardcoded Beast Academy or custom) -- any content-teacher can
   // create these (see firestore.rules), not just admins, so a chapter's
@@ -4416,6 +4432,17 @@ async function exportAllData(){
 // editable from the UI, only admin-added entries. Each type edits its own
 // relevant fields; the write stays a plain updateDoc of the same doc, so
 // its id/type/bookId/chapterCode never change, only the human-facing text.
+// `entry` is either a real curriculumExtra doc (has .id -- updateDoc on
+// save, same as always) or a SYNTHETIC one built from the current merged
+// view of a hardcoded Beast Academy chapter that's never been edited
+// before (no .id -- openCurriculumEditForm is also how "every chapter,
+// not just admin-added ones" becomes editable, Oct 2026). Either way the
+// save writes a type:"chapter_edit" doc (new if entry.id is missing,
+// updateDoc if it already points at an existing "chapter" or
+// "chapter_edit" doc) carrying the FULL subtopics list the admin ends up
+// with -- and absorbs (deletes) any standalone type:"subtopic" docs for
+// this chapterCode into it, so there's exactly one source of truth for
+// this chapter's topics afterward instead of two that could drift apart.
 function openCurriculumEditForm(entry){
   const root = document.getElementById("modal-root");
   const fields = entry.type==="book"
@@ -4428,10 +4455,11 @@ function openCurriculumEditForm(entry){
          <div class="field"><label>Chapter code <span class="hint">(fixed — existing questions reference it)</span></label><input type="text" value="${escapeHtml(entry.code)}" disabled /></div>
          <div class="field"><label>Chapter title</label><input type="text" id="cx-edit-title" value="${escapeHtml(entry.title)}" /></div>
        </div>
-       <div class="field"><label>Subtopics <span class="hint">(comma-separated)</span></label><input type="text" id="cx-edit-subtopics" value="${escapeHtml((entry.subtopics||[]).join(", "))}" /></div>`
+       <div class="field"><label>Subtopics <span class="hint">(comma-separated)</span></label><input type="text" id="cx-edit-subtopics" value="${escapeHtml((entry.subtopics||[]).join(", "))}" /></div>
+       ${!entry.id ? `<p class="hint" style="margin-top:4px;">This is a built-in Beast Academy chapter — saving creates an override with your edits; it won't change the chapter code.</p>` : ""}`
     : `<div class="field"><label>Subtopic</label><input type="text" id="cx-edit-subtopic" value="${escapeHtml(entry.subtopic)}" /></div>`;
   root.innerHTML = `<div class="overlay" id="ov"><div class="drawer" style="width:min(480px,100vw);">
-    <div class="drawer-head"><h2>Edit ${entry.type}</h2><button class="btn ghost small" id="close-form">Close</button></div>
+    <div class="drawer-head"><h2>Edit ${entry.type==="chapter"?"chapter":entry.type}</h2><button class="btn ghost small" id="close-form">Close</button></div>
     ${fields}
     <button class="btn primary" id="cx-edit-save" style="width:100%; justify-content:center; margin-top:10px;">Save</button>
   </div></div>`;
@@ -4456,8 +4484,24 @@ function openCurriculumEditForm(entry){
       body = {subtopic};
     }
     try{
-      await updateDoc(doc(db,"curriculumExtra",entry.id), body);
-      logActivity("curriculum_added", `Edited a curriculum ${entry.type}`, entry.id);
+      if(entry.id){
+        await updateDoc(doc(db,"curriculumExtra",entry.id), body);
+      } else {
+        // First-ever edit of this hardcoded chapter -- no existing doc to
+        // update, create the override.
+        await addDoc(collection(db,"curriculumExtra"), {
+          type:"chapter_edit", bookId:entry.bookId, code:entry.code, ...body,
+          createdAt:new Date().toISOString(), createdBy:currentUser.email,
+        });
+      }
+      if(entry.type==="chapter"){
+        // Fold any standalone "+ New subtopic" docs for this chapter into
+        // the edit just saved, so they don't keep existing as a second,
+        // now-redundant source for the same topics.
+        const toAbsorb = curriculumExtra.filter(e=>e.type==="subtopic" && e.chapterCode===entry.code);
+        await Promise.all(toAbsorb.map(e=>deleteDoc(doc(db,"curriculumExtra",e.id)).catch(()=>{})));
+      }
+      logActivity("curriculum_added", `Edited a curriculum ${entry.type}`, entry.id||null);
       toast("Saved");
       closeModal();
     }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
@@ -4563,7 +4607,7 @@ function renderAdmin(){
     <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
     <button class="btn" id="export-data">⬇ Export all data as JSON</button>
     <div class="section-label">Curriculum</div>
-    <p class="desc">Add extra chapters to an existing book, or a whole new book, if the Beast Academy list doesn't cover something you need to tag. Any teacher can add (or fix the wording of) a subtopic from the question editor — this is where you manage everything they've added, plus edit or remove any book/chapter/subtopic. The official Beast Academy list itself is never editable here.</p>
+    <p class="desc">Add extra chapters to an existing book, or a whole new book, if the Beast Academy list doesn't cover something you need to tag. Any teacher can add (or fix the wording of) a subtopic from the question editor — this is where you manage everything they've added, plus edit or remove any book/chapter/subtopic. <b>Every chapter — including the official Beast Academy ones — can be edited below</b>, not just ones you've added; a chapter's code always stays fixed since existing questions reference it directly.</p>
     <div class="row2">
       <div class="level-block">
         <b style="font-size:12.5px;">Add a chapter to an existing book</b>
@@ -4584,11 +4628,19 @@ function renderAdmin(){
         <button class="btn small" id="cx-add-book">+ Add book</button>
       </div>
     </div>
+    <div class="level-block" style="margin-top:10px;">
+      <b style="font-size:12.5px;">Edit any chapter (title &amp; topics) — including built-in Beast Academy ones</b>
+      <div class="row2" style="margin-top:8px; align-items:end;">
+        <div class="field"><label>Book</label><select id="cx-editpick-book">${bookSelectOptions("")}</select></div>
+        <div class="field"><label>Chapter</label><select id="cx-editpick-chapter"></select></div>
+      </div>
+      <button class="btn small" id="cx-editpick-go">✎ Edit this chapter</button>
+    </div>
     ${curriculumExtra.length ? `<details class="records-details" style="margin-top:14px;"><summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">Added entries (${curriculumExtra.length})</summary><div class="table-wrap"><table class="data"><thead><tr><th>Type</th><th>Where</th><th>Added</th><th></th></tr></thead><tbody>
       ${curriculumExtra.map(e=>`<tr>
-        <td>${e.type==="book"?"Book":e.type==="chapter"?"Chapter":"Subtopic"}</td>
+        <td>${e.type==="book"?"Book":e.type==="chapter"?"Chapter":e.type==="chapter_edit"?"Chapter (edited)":"Subtopic"}</td>
         <td>${e.type==="book" ? escapeHtml(e.bookName)
-          : e.type==="chapter" ? escapeHtml(e.code)+" — "+escapeHtml(e.title)+" (in "+escapeHtml(allCurriculum().find(b=>b.bookId===e.bookId)?.book||e.bookId)+")"
+          : (e.type==="chapter"||e.type==="chapter_edit") ? escapeHtml(e.code)+" — "+escapeHtml(e.title)+" (in "+escapeHtml(allCurriculum().find(b=>b.bookId===e.bookId)?.book||e.bookId)+")"
           : escapeHtml(e.subtopic)+" (in "+escapeHtml(chapterLabel(e.chapterCode))+")"}</td>
         <td class="mono">${fmtDate(e.createdAt)}</td>
         <td style="white-space:nowrap;">
@@ -4714,6 +4766,32 @@ function renderAdmin(){
       toast("Book added — now add chapters to it above");
     }catch(err){ console.error(err); toast("Couldn't add book ("+err.code+")"); }
   });
+  // Edit ANY chapter -- hardcoded Beast Academy ones included, not just
+  // admin-added ones. Builds a synthetic entry from the current merged
+  // view (chapterByCode() already reflects any prior override/appends) so
+  // the form always shows the chapter's actual current title/topics;
+  // reuses an existing "chapter"/"chapter_edit" doc's id if one already
+  // exists for this code (so a second edit updates the same override
+  // instead of creating a duplicate), leaves it null otherwise (first-ever
+  // edit of a pure hardcoded chapter) -- openCurriculumEditForm() handles
+  // both the same way.
+  function populateEditPickChapters(){
+    const bookId = document.getElementById("cx-editpick-book").value;
+    document.getElementById("cx-editpick-chapter").innerHTML = chapterSelectOptions(bookId, "", false);
+  }
+  populateEditPickChapters();
+  document.getElementById("cx-editpick-book").addEventListener("change", populateEditPickChapters);
+  document.getElementById("cx-editpick-go").addEventListener("click", ()=>{
+    const code = document.getElementById("cx-editpick-chapter").value;
+    if(!code){ toast("Pick a chapter"); return; }
+    const c = chapterByCode(code);
+    if(!c){ toast("Chapter not found"); return; }
+    const existingDoc = curriculumExtra.find(e=>(e.type==="chapter"||e.type==="chapter_edit") && e.code===code);
+    openCurriculumEditForm({
+      id: existingDoc?.id || null, type:"chapter",
+      bookId: bookIdForChapterCode(code), code:c.code, title:c.title, subtopics:c.subtopics,
+    });
+  });
   document.querySelectorAll("[data-delete-curriculum]").forEach(b=>b.addEventListener("click", async ()=>{
     if(!(await confirmDialog("Remove this curriculum entry? Any questions already tagged with it keep their tag, but it won't be pickable anymore.", {danger:true}))) return;
     try{
@@ -4724,7 +4802,11 @@ function renderAdmin(){
   }));
   document.querySelectorAll("[data-edit-curriculum]").forEach(b=>b.addEventListener("click", ()=>{
     const entry = curriculumExtra.find(e=>e.id===b.dataset.editCurriculum);
-    if(entry) openCurriculumEditForm(entry);
+    if(!entry) return;
+    // openCurriculumEditForm()'s field/save logic treats "chapter_edit"
+    // identically to "chapter" -- only the doc TYPE on write differs, and
+    // that's decided by whether entry.id is present, not by this label.
+    openCurriculumEditForm(entry.type==="chapter_edit" ? {...entry, type:"chapter"} : entry);
   }));
   document.getElementById("add-teacher-btn").addEventListener("click", addTeacher);
   document.getElementById("gen-password-btn").addEventListener("click", ()=>{

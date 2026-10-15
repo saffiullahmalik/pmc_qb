@@ -276,8 +276,7 @@ teachers/{email, lowercase}
 
 curriculumExtra/{entryId}    -- admin-added books/chapters PLUS (Oct 2026)
   teacher-added subtopics, merged into allCurriculum() at read time with
-  the hardcoded CURRICULUM constant -- additive only, the hardcoded data
-  itself is never edited from the UI.
+  the hardcoded CURRICULUM constant.
   type: "book"     -- {bookId, bookName, levels[], age, chapters:[]}
   type: "chapter"  -- {bookId, code, title, subtopics[]}
   type: "subtopic" -- {bookId, chapterCode, subtopic} -- appends one
@@ -287,14 +286,41 @@ curriculumExtra/{entryId}    -- admin-added books/chapters PLUS (Oct 2026)
     firestore.rules checks `request.resource.data.type == "subtopic"` --
     so subtopics can grow collaboratively while books/chapters, and
     deletes of anything, stay admin-only.
+  type: "chapter_edit" -- {bookId, code, title, subtopics[]} -- added Oct
+    2026 so EVERY chapter is editable, not just admin-added ones: this is
+    what makes a hardcoded Beast Academy chapter's title/topics editable
+    even though it has no curriculumExtra doc of its own to update.
+    allCurriculum()'s merge applies this as a full REPLACE of the matched
+    chapter's title+subtopics (by `code`, found anywhere in the already-
+    merged tree -- hardcoded or custom), run BEFORE the "subtopic" append
+    pass so a teacher's "+ New subtopic" addition always survives on top
+    of an override regardless of which happened first chronologically (an
+    override is a static snapshot; if it ran last it could silently hide a
+    newer append on every re-render). `code`/`bookId` are never editable
+    (same reasoning as "chapter" below); `title`/`subtopics` are freely
+    rewritten, including removing or renaming an originally-hardcoded
+    topic, not just adding new ones.
   createdAt, createdBy
-  -- Admin & Analytics -> Curriculum lists every entry with Edit/Remove;
-  -- openCurriculumEditForm() in index.html edits the human-facing text
-  -- only -- a chapter's `code` is deliberately NOT editable there (shown
+  -- Admin & Analytics -> Curriculum has an "Edit any chapter" picker (Book
+  -- + Chapter selects, builds a synthetic entry from the CURRENT merged
+  -- chapterByCode() so the form always shows what's actually displayed
+  -- right now) alongside the "Added entries" table's per-row Edit/Remove.
+  -- openCurriculumEditForm() in index.html handles both a real doc (has
+  -- .id -- updateDoc, works for "chapter" and "chapter_edit" alike, the
+  -- Added-entries table normalizes a clicked "chapter_edit" row's `type`
+  -- to "chapter" first since the form/save logic treats them identically)
+  -- and a synthetic one with no .id (first-ever edit of a pure hardcoded
+  -- chapter -- addDoc's a new "chapter_edit" instead). Saving a chapter
+  -- edit also deletes any standalone "subtopic" docs for that chapterCode
+  -- (folds them into the one saved list) so there's a single source of
+  -- truth for the chapter's topics afterward, not two that could drift.
+  -- `code` is deliberately NEVER editable anywhere in this form (shown
   -- disabled, with an explanatory hint) since existing questions
   -- reference it directly via `unit`; renaming it out from under them
   -- would silently orphan those questions' chapter tag the same way
-  -- deleting the entry does.
+  -- deleting the entry does. No firestore.rules change was needed for any
+  -- of this -- `isAdmin()` already permits create/update/delete on this
+  -- collection regardless of `type`.
 
 settings/sop    -- single doc, added Oct 2026 (SOP tab's admin-only Edit)
   sections: [{heading, body}, ...] -- body is raw text, not an array of
