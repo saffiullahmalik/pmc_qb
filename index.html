@@ -4841,8 +4841,242 @@ async function renderItemAnalysisTable(box, contest){
   `;
 }
 
-function renderStudentPerformance(body){
-  body.innerHTML = `<div class="empty">Student Performance dashboard (integrity review + merit list) is coming in the next phase of this build.</div>`;
+// ---------------- 4. Student Performance (integrity review + merit list) ----------------
+// Deliberately loads submissions only for the sitting(s) the admin ticks
+// (Firestore `in` query, chunked at 30 ids -- well above this project's
+// real max of 24 = 6 slots x 4 categories) rather than the whole
+// examSubmissions collection, so "combine all PMC-4 across its 4 slots"
+// or "PMC-4 + PMC-5 merit list" both just mean ticking more boxes, with
+// no separate code path for "single" vs "combined" view.
+let ppStudSelectedIds = new Set();
+let ppStudSubs = null;
+let ppStudLiveThresholds = null;
+
+function csvField(v){
+  const s = String(v==null?"":v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+}
+function exportMeritListCsv(rows){
+  let rank = 0;
+  const header = ["Rank","Name","Form B","District","School","PMC Type","Day","Slot","Score","Score %","Status"];
+  const lines = [header.join(",")];
+  rows.forEach(sub=>{
+    const excluded = sub.meritStatus==="excluded";
+    if(!excluded) rank++;
+    lines.push([excluded?"":rank, sub.name, sub.formB, sub.district, sub.school, sub.contestLevel, sub.day, sub.slot, sub.score, sub.scorePercentage, excluded?"Excluded":"Eligible"].map(csvField).join(","));
+  });
+  const blob = new Blob([lines.join("\n")], {type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `merit-list-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+// Same #confirm-root/.overlay/.gate-card pattern as confirmDialog() above,
+// extended with a free-text reason field -- flagging a real student needs
+// a reason on record, a plain yes/no confirm isn't enough.
+function promptFlagDialog(label){
+  return new Promise(resolve=>{
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = `
+      <div class="overlay" id="flag-reason-ov" style="z-index:210;">
+        <div class="gate-card" style="width:min(460px,92vw); text-align:left;">
+          <p style="margin:0 0 10px; font-size:14px;">Flag <b>${escapeHtml(label)}</b> for integrity review — why?</p>
+          <textarea id="flag-reason-text" rows="3" style="width:100%; margin-bottom:14px; font-family:inherit;" placeholder="e.g. Quilgo proctoring report shows a second person in frame at 00:14:22"></textarea>
+          <div style="display:flex; gap:8px;">
+            <button class="btn ghost" id="flag-reason-cancel" style="flex:1; justify-content:center;">Cancel</button>
+            <button class="btn" id="flag-reason-ok" style="flex:1; justify-content:center; background:var(--red); color:#fff; border-color:var(--red);">Flag &amp; exclude</button>
+          </div>
+        </div>
+      </div>`;
+    const finish = result => { root.innerHTML = ""; resolve(result); };
+    document.getElementById("flag-reason-cancel").addEventListener("click", ()=>finish(null));
+    document.getElementById("flag-reason-ok").addEventListener("click", ()=>{
+      const v = document.getElementById("flag-reason-text").value.trim();
+      finish(v || "Flagged for integrity review");
+    });
+    document.getElementById("flag-reason-ov").addEventListener("click", e=>{ if(e.target.id==="flag-reason-ov") finish(null); });
+  });
+}
+
+async function renderStudentPerformance(body){
+  await loadIntegrityThresholds();
+  if(!ppStudLiveThresholds) ppStudLiveThresholds = {...integrityThresholds};
+  const withResults = contests.filter(c=>c.contestLevel && c.day!=null && c.slot!=null && c.resultsImportedAt);
+  body.innerHTML = `
+    <div class="level-block">
+      <b style="font-size:12.5px;">Pick the sitting(s) to analyze</b>
+      <p class="hint" style="margin:4px 0 10px;">Tick one paper for a single sitting, or several to combine them — e.g. all 4 PMC-4 slots together, or PMC-4 + PMC-5 for a combined merit list.</p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; max-height:160px; overflow-y:auto; padding:4px;">
+        ${withResults.length===0 ? `<span class="hint">No papers have imported results yet — use "Import results" first.</span>` : withResults.map(c=>`
+          <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; border:1px solid var(--border); border-radius:8px; padding:4px 10px; cursor:pointer;">
+            <input type="checkbox" data-stud-contest="${c.id}" ${ppStudSelectedIds.has(c.id)?"checked":""} />
+            ${escapeHtml(c.contestLevel)} D${c.day}S${c.slot} — ${escapeHtml(c.name)} (${c.submissionCount||0})
+          </label>`).join("")}
+      </div>
+      <button class="btn primary" id="pp-stud-load" style="margin-top:10px;" ${ppStudSelectedIds.size===0?"disabled":""}>Load</button>
+    </div>
+    <div id="pp-stud-body" style="margin-top:14px;"></div>
+  `;
+  body.querySelectorAll("[data-stud-contest]").forEach(cb=>cb.addEventListener("change", e=>{
+    if(e.target.checked) ppStudSelectedIds.add(e.target.dataset.studContest);
+    else ppStudSelectedIds.delete(e.target.dataset.studContest);
+    const loadBtn = document.getElementById("pp-stud-load");
+    if(loadBtn) loadBtn.disabled = ppStudSelectedIds.size===0;
+  }));
+  document.getElementById("pp-stud-load")?.addEventListener("click", ()=>loadStudentPerformance(document.getElementById("pp-stud-body")));
+  if(ppStudSubs && ppStudSubs.length) renderStudentPerformanceBody(document.getElementById("pp-stud-body"));
+}
+
+async function loadStudentPerformance(box){
+  const ids = Array.from(ppStudSelectedIds);
+  box.innerHTML = `<div class="hint">Loading submissions…</div>`;
+  try{
+    const chunks = [];
+    for(let i=0;i<ids.length;i+=30) chunks.push(ids.slice(i,i+30)); // Firestore `in` caps at 30
+    const results = await Promise.all(chunks.map(c=>getDocs(query(collection(db,"examSubmissions"), where("contestId","in",c)))));
+    const subs = [];
+    results.forEach(snap=>snap.forEach(d=>subs.push({id:d.id, ...d.data()})));
+    ppStudSubs = subs;
+  }catch(err){ console.error(err); box.innerHTML = `<div class="callout warn">Couldn't load submissions.</div>`; return; }
+  renderStudentPerformanceBody(box);
+}
+
+function renderStudentPerformanceBody(box){
+  if(!box) return;
+  const subs = ppStudSubs || [];
+  const th = ppStudLiveThresholds;
+  const rows = subs.map(s=>({ sub:s, autoFlags: computeAutoFlags(s, th) }));
+  const flaggedRows = rows.filter(r=> r.autoFlags.length>0 || r.sub.meritStatus==="excluded" || (r.sub.integrityFlags?.manual||[]).length>0);
+  flaggedRows.sort((a,b)=> (b.autoFlags.length + (b.sub.integrityFlags?.manual||[]).length) - (a.autoFlags.length + (a.sub.integrityFlags?.manual||[]).length));
+  const meritRows = subs.slice().sort((a,b)=>(b.score??0)-(a.score??0));
+  let rank = 0;
+
+  box.innerHTML = `
+    <div class="section-label" style="margin-top:0;">Integrity review — ${flaggedRows.length} of ${subs.length} submission(s) flagged</div>
+    <div class="level-block">
+      <b style="font-size:12px;">Flag thresholds (applied live here — no reimport needed)</b>
+      <div class="row2" style="margin-top:8px;">
+        <div class="field"><label>Max tab/window switches</label><input type="number" min="0" id="th-tabs" value="${th.maxTabSwitches}" /></div>
+        <div class="field"><label>Min face match %</label><input type="number" min="0" max="100" id="th-facematch" value="${th.minFaceMatchPct}" /></div>
+        <div class="field"><label>Min face presence %</label><input type="number" min="0" max="100" id="th-facepresence" value="${th.minFacePresencePct}" /></div>
+        <div class="field"><label>Max suspicious photos</label><input type="number" min="0" id="th-photos" value="${th.maxSuspiciousPhotos}" /></div>
+      </div>
+      <div style="display:flex; gap:16px; margin-top:8px; flex-wrap:wrap;">
+        <label style="font-size:12.5px; display:flex; gap:6px; align-items:center;"><input type="checkbox" id="th-trust" ${th.flagOnTrustScoreLow?"checked":""} /> Flag low Quilgo trust score</label>
+        <label style="font-size:12.5px; display:flex; gap:6px; align-items:center;"><input type="checkbox" id="th-blank" ${th.flagOnBlankShots?"checked":""} /> Flag blank camera shots</label>
+        <label style="font-size:12.5px; display:flex; gap:6px; align-items:center;"><input type="checkbox" id="th-screens" ${th.flagOnMultipleScreens?"checked":""} /> Flag multiple screens</label>
+      </div>
+      <div style="margin-top:10px; display:flex; gap:10px;">
+        <button class="btn small" id="th-apply">Apply</button>
+        <button class="btn small" id="th-save-default">Save as default thresholds</button>
+      </div>
+    </div>
+    ${flaggedRows.length===0 ? `<div class="empty">No submissions currently meet any flag threshold.</div>` : `
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr>
+        <th style="text-align:left; padding:6px;">Student</th><th style="text-align:left; padding:6px;">Form B</th>
+        <th style="text-align:left; padding:6px;">Paper</th><th style="text-align:right; padding:6px;">Score</th>
+        <th style="text-align:left; padding:6px;">Flags</th><th style="text-align:left; padding:6px;">Status</th><th style="padding:6px;"></th>
+      </tr></thead>
+      <tbody>
+        ${flaggedRows.map(({sub,autoFlags})=>{
+          const manual = (sub.integrityFlags?.manual||[]).map(m=>m.reason);
+          const allReasons = [...autoFlags, ...manual];
+          const excluded = sub.meritStatus==="excluded";
+          return `<tr style="border-top:1px solid var(--border); ${excluded?"opacity:0.7;":""}">
+            <td style="padding:6px;">${escapeHtml(sub.name||"—")}</td>
+            <td class="mono" style="padding:6px;">${escapeHtml(sub.formB||"—")}</td>
+            <td style="padding:6px;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
+            <td class="mono" style="padding:6px; text-align:right;">${sub.score??"—"}</td>
+            <td style="padding:6px; max-width:280px;">${allReasons.map(r=>`<div class="hint">• ${escapeHtml(r)}</div>`).join("")||"—"}</td>
+            <td style="padding:6px;">${excluded?`<span class="pill" style="background:var(--red-soft); color:var(--red);">Excluded</span>`:`<span class="pill">Eligible</span>`}</td>
+            <td style="padding:6px;">${excluded
+              ? `<button class="btn small" data-clear-flag="${sub.id}">Clear</button>`
+              : `<button class="btn small" data-set-flag="${sub.id}" data-label="${escapeHtml(sub.name||sub.formB||"this student")}">Flag &amp; exclude</button>`}
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`}
+
+    <div class="section-label" style="margin-top:26px; display:flex; align-items:center; justify-content:space-between;">
+      <span>Merit list — ${subs.length} submission(s)</span>
+      <button class="btn small" id="pp-stud-export">Export CSV</button>
+    </div>
+    ${subs.length===0 ? emptyState("Load a sitting above to see its merit list.") : `
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr>
+        <th style="text-align:right; padding:6px;">Rank</th><th style="text-align:left; padding:6px;">Student</th>
+        <th style="text-align:left; padding:6px;">Form B</th><th style="text-align:left; padding:6px;">District / School</th>
+        <th style="text-align:left; padding:6px;">Paper</th><th style="text-align:right; padding:6px;">Score</th>
+        <th style="text-align:right; padding:6px;">Score %</th><th style="text-align:left; padding:6px;">Status</th>
+      </tr></thead>
+      <tbody>
+        ${meritRows.map(sub=>{
+          const excluded = sub.meritStatus==="excluded";
+          if(!excluded) rank++;
+          return `<tr style="border-top:1px solid var(--border); ${excluded?"opacity:0.5;":""}">
+            <td class="mono" style="padding:6px; text-align:right;">${excluded?"—":rank}</td>
+            <td style="padding:6px;">${escapeHtml(sub.name||"—")}</td>
+            <td class="mono" style="padding:6px;">${escapeHtml(sub.formB||"—")}</td>
+            <td style="padding:6px;">${escapeHtml(sub.district||"—")} / ${escapeHtml(sub.school||"—")}</td>
+            <td style="padding:6px;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
+            <td class="mono" style="padding:6px; text-align:right;">${sub.score??"—"}</td>
+            <td class="mono" style="padding:6px; text-align:right;">${sub.scorePercentage??"—"}</td>
+            <td style="padding:6px;">${excluded?`<span class="pill" style="background:var(--red-soft); color:var(--red);">Excluded</span>`:`<span class="pill">Eligible</span>`}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`}
+  `;
+  document.getElementById("th-apply")?.addEventListener("click", ()=>{
+    ppStudLiveThresholds = {
+      maxTabSwitches: parseFloat(document.getElementById("th-tabs").value)||0,
+      minFaceMatchPct: parseFloat(document.getElementById("th-facematch").value)||0,
+      minFacePresencePct: parseFloat(document.getElementById("th-facepresence").value)||0,
+      maxSuspiciousPhotos: parseFloat(document.getElementById("th-photos").value)||0,
+      flagOnTrustScoreLow: document.getElementById("th-trust").checked,
+      flagOnBlankShots: document.getElementById("th-blank").checked,
+      flagOnMultipleScreens: document.getElementById("th-screens").checked,
+    };
+    renderStudentPerformanceBody(box);
+  });
+  document.getElementById("th-save-default")?.addEventListener("click", async ()=>{
+    document.getElementById("th-apply").click();
+    try{
+      await setDoc(doc(db,"settings","integrityThresholds"), ppStudLiveThresholds);
+      integrityThresholds = {...ppStudLiveThresholds};
+      toast("Saved as the default thresholds");
+    }catch(err){ console.error(err); toast("Couldn't save thresholds ("+err.code+")"); }
+  });
+  box.querySelectorAll("[data-set-flag]").forEach(b=>b.addEventListener("click", async ()=>{
+    const reason = await promptFlagDialog(b.dataset.label);
+    if(!reason) return;
+    try{
+      await updateDoc(doc(db,"examSubmissions",b.dataset.setFlag), {
+        "integrityFlags.manual": arrayUnion({reason, by:currentUser.email, byName:currentUser.displayName||currentUser.email, at:new Date().toISOString()}),
+        meritStatus: "excluded",
+      });
+      const s = ppStudSubs.find(x=>x.id===b.dataset.setFlag);
+      if(s){ s.meritStatus = "excluded"; s.integrityFlags = s.integrityFlags||{auto:[],manual:[]}; s.integrityFlags.manual = [...(s.integrityFlags.manual||[]), {reason}]; }
+      logActivity("student_flagged", `Flagged submission ${b.dataset.setFlag} for integrity review: ${reason}`, b.dataset.setFlag);
+      toast("Flagged and excluded from merit list");
+      renderStudentPerformanceBody(box);
+    }catch(err){ console.error(err); toast("Couldn't flag ("+err.code+")"); }
+  }));
+  box.querySelectorAll("[data-clear-flag]").forEach(b=>b.addEventListener("click", async ()=>{
+    if(!(await confirmDialog("Clear this student's exclusion and return them to the merit list?"))) return;
+    try{
+      await updateDoc(doc(db,"examSubmissions",b.dataset.clearFlag), { meritStatus: "eligible" });
+      const s = ppStudSubs.find(x=>x.id===b.dataset.clearFlag);
+      if(s) s.meritStatus = "eligible";
+      logActivity("student_cleared", `Cleared integrity exclusion for submission ${b.dataset.clearFlag}`, b.dataset.clearFlag);
+      toast("Cleared");
+      renderStudentPerformanceBody(box);
+    }catch(err){ console.error(err); toast("Couldn't clear ("+err.code+")"); }
+  }));
+  document.getElementById("pp-stud-export")?.addEventListener("click", ()=>exportMeritListCsv(meritRows));
 }
 function renderReviewStudents(){
   const main = document.getElementById("main");

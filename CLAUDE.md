@@ -573,6 +573,17 @@ examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 of the post-exam
   -- can't catch to a human flagging it manually after checking Quilgo's
   -- own proctoring report for that submission.
   meritStatus: "eligible"|"excluded", reviewStatus: "unreviewed"|"assigned"|"cleared"|"flagged",
+  -- meritStatus/integrityFlags.manual are written by the Student
+  -- Performance dashboard's per-row Flag/Clear actions (Phase 3,
+  -- `renderStudentPerformanceBody()` in index.html) -- Flag opens
+  -- `promptFlagDialog()` (same #confirm-root/.overlay/.gate-card pattern
+  -- as confirmDialog(), with a required reason textarea) and arrayUnion()s
+  -- a {reason,by,byName,at} entry onto integrityFlags.manual while
+  -- setting meritStatus:"excluded"; Clear only resets meritStatus back to
+  -- "eligible" -- the manual flag HISTORY is never deleted, same
+  -- "comments survive even after the state they describe changes" choice
+  -- already made for peer-review comments above. reviewStatus stays
+  -- unused until Phase 4's reviewAssignments exists.
   rosterMatched (bool -- false if no studentRoster doc found for this formB+sitting),
   importedAt, importedBy
 
@@ -587,9 +598,15 @@ settings/integrityThresholds   -- single doc, admin-adjustable, same
   (bool, default true) -- loaded once per session via loadIntegrityThresholds()
   (falls back to these same defaults if the doc doesn't exist yet, same
   "works with zero setup" pattern as settings/limits), used by
-  computeAutoFlags() at import time; a Phase 3 admin-editable form on the
-  Student Performance dashboard will let these be adjusted live as filter
-  inputs there, not just a one-time settings write.
+  computeAutoFlags() at import time. The Student Performance dashboard's
+  threshold inputs (Phase 3) edit a SEPARATE in-memory copy
+  (`ppStudLiveThresholds`) applied instantly client-side via the same
+  computeAutoFlags() -- "Apply" just re-renders from that local copy, no
+  write at all; "Save as default thresholds" is the only action that
+  actually writes this settings doc (and updates the shared
+  `integrityThresholds` global other code reads), for when an admin wants
+  a threshold change to also apply to the NEXT import's stored
+  `integrityFlags.auto` snapshot.
 
 reviewAssignments/{assignmentId}   -- (Phase 4) admin-created batches
   assigning specific students to a specific student reviewer, same
@@ -637,7 +654,28 @@ Four inner sections via `postProcTab` state + `renderPostProcessing()`:
 Import roster (built, Phase 1); Import results and Item Analysis (built,
 Phase 2 -- `renderResultsImport()`/`renderResultsImportBody()` and
 `renderItemAnalysis()`/`renderItemAnalysisTable()`); Student Performance
-(still a stub, Phase 3). `parseCsv(text)`/`findColIndex(header, candidates)`
+(built, Phase 3 -- `renderStudentPerformance()`/
+`renderStudentPerformanceBody()`). An admin ticks one or more sittings
+with imported results (checkboxes, not a single cascading pick, since
+"combine all 4 PMC-4 slots" or "PMC-4 + PMC-5 merit" both just mean
+ticking more boxes), "Load" fetches examSubmissions for those contestIds
+in chunks of 30 (Firestore `in` cap -- comfortably above this project's
+real max of 24 = 6 slots x 4 categories), cached in `ppStudSubs` for the
+rest of the tab visit. Shows, in the order the project owner asked for:
+(1) an integrity table -- only rows with at least one auto-flag, an
+existing manual flag, or an existing exclusion, sorted by flag count --
+with the threshold inputs editable right above it and applied live via
+the SAME `computeAutoFlags()` results import already uses (no reimport,
+no Firestore write unless "Save as default thresholds" is clicked); each
+row's Flag/Clear action writes `examSubmissions.integrityFlags.manual`/
+`meritStatus` directly (matches firestore.rules' `isStudentReviewer()`
+field allowlist exactly, so this same UI will work for that role once
+Phase 4 exposes it); (2) a full merit list (score desc, excluded rows
+greyed out and skipped in rank numbering, not deleted or hidden) with a
+CSV export (`exportMeritListCsv()`, same Blob/`<a download>` pattern
+`exportAllData()` already uses). Score-distribution chart and a top-N
+discrimination cross-reference stay Phase 5 polish -- not needed for the
+dashboard to be genuinely useful today. `parseCsv(text)`/`findColIndex(header, candidates)`
 (roster) and `parseResultsHeader(header)` (results -- label-based, not
 fixed-offset, detection of every repeating Quilgo question-column block)
 are the reusable CSV-shape-detection pieces, both verified directly
