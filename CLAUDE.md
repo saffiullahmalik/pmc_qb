@@ -582,8 +582,9 @@ examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 of the post-exam
   -- setting meritStatus:"excluded"; Clear only resets meritStatus back to
   -- "eligible" -- the manual flag HISTORY is never deleted, same
   -- "comments survive even after the state they describe changes" choice
-  -- already made for peer-review comments above. reviewStatus stays
-  -- unused until Phase 4's reviewAssignments exists.
+  -- already made for peer-review comments above. reviewStatus moves
+  -- unreviewed -> assigned (when a reviewAssignments batch is created,
+  -- below) -> flagged|cleared (when that reviewer acts on it).
   rosterMatched (bool -- false if no studentRoster doc found for this formB+sitting),
   importedAt, importedBy
 
@@ -608,10 +609,35 @@ settings/integrityThresholds   -- single doc, admin-adjustable, same
   a threshold change to also apply to the NEXT import's stored
   `integrityFlags.auto` snapshot.
 
-reviewAssignments/{assignmentId}   -- (Phase 4) admin-created batches
-  assigning specific students to a specific student reviewer, same
-  balanced-random load-balancing shape already used for pickReviewer().
-  contestId, reviewerEmail, reviewerName, formBs:[...], createdAt, createdBy
+reviewAssignments/{assignmentId}   -- admin-created batches assigning
+  flagged students to a specific student reviewer, written by
+  assignSubmissionsToReviewers() from the Student Performance dashboard's
+  integrity table (checkbox per row + an "Assign checked to reviewers"
+  action, Phase 4). One doc per reviewer per batch (not one doc per
+  student) -- balanced-random, same least-loaded/random-tie-break shape
+  as pickReviewer(), except "load" here means each reviewer's total
+  already-assigned submissionIds across every past batch (re-fetched
+  fresh each time, not a live in-memory count). Three modes: "random"
+  (each selected student goes to whichever reviewer currently has the
+  least), "district"/"school" (group selected students by that field --
+  backfilled from studentRoster at import time -- and send a whole group
+  to one least-loaded reviewer, so one person handles one city/school's
+  cases together) -- covers the project owner's explicit "randomly or
+  city-wise or school-wise" ask.
+  reviewerEmail, reviewerName, submissionIds:[...], mode, createdAt, createdBy
+  -- submissionIds (examSubmissions doc ids, each already contestId+formB-
+  -- scoped) instead of a single contestId + formBs list, since Student
+  -- Performance can combine several sittings/levels in one view and a
+  -- batch may legitimately span more than one contest.
+  Assigning a submission also sets its examSubmissions.reviewStatus to
+  "assigned" (same batch, atomic). "Review Students" (renderReviewStudents()/
+  renderReviewStudentsBody()) is the reviewer-facing mirror: queries
+  reviewAssignments where reviewerEmail==their own email, fetches each
+  referenced examSubmissions doc, and offers the exact same Flag/Clear
+  action the admin's integrity table uses (promptFlagDialog()/
+  computeAutoFlags() shared verbatim) -- Flag also sets reviewStatus to
+  "flagged", Clear sets it to "cleared", matching firestore.rules'
+  isStudentReviewer() field allowlist exactly.
 
 questions/{id}/stats/post_test (existing collection, see above) -- the
   Import results screen's "Run post-processing" button now populates this
@@ -669,10 +695,14 @@ the SAME `computeAutoFlags()` results import already uses (no reimport,
 no Firestore write unless "Save as default thresholds" is clicked); each
 row's Flag/Clear action writes `examSubmissions.integrityFlags.manual`/
 `meritStatus` directly (matches firestore.rules' `isStudentReviewer()`
-field allowlist exactly, so this same UI will work for that role once
-Phase 4 exposes it); (2) a full merit list (score desc, excluded rows
-greyed out and skipped in rank numbering, not deleted or hidden) with a
-CSV export (`exportMeritListCsv()`, same Blob/`<a download>` pattern
+field allowlist exactly -- the Review Students tab's own Flag/Clear,
+below, writes through the exact same two fields); a checkbox per row
+plus "Assign checked to reviewers" sends the ticked students through
+`assignSubmissionsToReviewers()` (see the `reviewAssignments` entry
+above) and is how students actually end up in someone's Review Students
+tab; (2) a full merit list (score desc, excluded rows greyed out and
+skipped in rank numbering, not deleted or hidden) with a CSV export
+(`exportMeritListCsv()`, same Blob/`<a download>` pattern
 `exportAllData()` already uses). Score-distribution chart and a top-N
 discrimination cross-reference stay Phase 5 polish -- not needed for the
 dashboard to be genuinely useful today. `parseCsv(text)`/`findColIndex(header, candidates)`

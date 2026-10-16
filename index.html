@@ -4975,22 +4975,26 @@ function renderStudentPerformanceBody(box){
     ${flaggedRows.length===0 ? `<div class="empty">No submissions currently meet any flag threshold.</div>` : `
     <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
       <thead><tr>
-        <th style="text-align:left; padding:6px;">Student</th><th style="text-align:left; padding:6px;">Form B</th>
+        <th style="padding:6px;"></th><th style="text-align:left; padding:6px;">Student</th><th style="text-align:left; padding:6px;">Form B</th>
         <th style="text-align:left; padding:6px;">Paper</th><th style="text-align:right; padding:6px;">Score</th>
-        <th style="text-align:left; padding:6px;">Flags</th><th style="text-align:left; padding:6px;">Status</th><th style="padding:6px;"></th>
+        <th style="text-align:left; padding:6px;">Flags</th><th style="text-align:left; padding:6px;">Status</th>
+        <th style="text-align:left; padding:6px;">Review</th><th style="padding:6px;"></th>
       </tr></thead>
       <tbody>
         ${flaggedRows.map(({sub,autoFlags})=>{
           const manual = (sub.integrityFlags?.manual||[]).map(m=>m.reason);
           const allReasons = [...autoFlags, ...manual];
           const excluded = sub.meritStatus==="excluded";
+          const reviewStatus = sub.reviewStatus||"unreviewed";
           return `<tr style="border-top:1px solid var(--border); ${excluded?"opacity:0.7;":""}">
+            <td style="padding:6px;"><input type="checkbox" data-assign-check data-sub-id="${sub.id}" ${reviewStatus==="unreviewed"?"checked":""} /></td>
             <td style="padding:6px;">${escapeHtml(sub.name||"—")}</td>
             <td class="mono" style="padding:6px;">${escapeHtml(sub.formB||"—")}</td>
             <td style="padding:6px;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
             <td class="mono" style="padding:6px; text-align:right;">${sub.score??"—"}</td>
             <td style="padding:6px; max-width:280px;">${allReasons.map(r=>`<div class="hint">• ${escapeHtml(r)}</div>`).join("")||"—"}</td>
             <td style="padding:6px;">${excluded?`<span class="pill" style="background:var(--red-soft); color:var(--red);">Excluded</span>`:`<span class="pill">Eligible</span>`}</td>
+            <td style="padding:6px;"><span class="hint">${escapeHtml(reviewStatus)}</span></td>
             <td style="padding:6px;">${excluded
               ? `<button class="btn small" data-clear-flag="${sub.id}">Clear</button>`
               : `<button class="btn small" data-set-flag="${sub.id}" data-label="${escapeHtml(sub.name||sub.formB||"this student")}">Flag &amp; exclude</button>`}
@@ -4998,7 +5002,19 @@ function renderStudentPerformanceBody(box){
           </tr>`;
         }).join("")}
       </tbody>
-    </table>`}
+    </table>
+    <div class="level-block" style="margin-top:10px;">
+      <b style="font-size:12px;">Assign checked students to student reviewers</b>
+      <p class="hint" style="margin:4px 0 8px;">Splits the checked rows across everyone marked as a student reviewer in Manage teachers, balanced by how much each already has assigned. "Randomly" spreads students one at a time; "By district"/"By school" keeps each group together with one reviewer.</p>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <select id="assign-mode">
+          <option value="random">Randomly (balanced load)</option>
+          <option value="district">Group by district</option>
+          <option value="school">Group by school</option>
+        </select>
+        <button class="btn small primary" id="pp-stud-assign">Assign checked to reviewers</button>
+      </div>
+    </div>`}
 
     <div class="section-label" style="margin-top:26px; display:flex; align-items:center; justify-content:space-between;">
       <span>Merit list — ${subs.length} submission(s)</span>
@@ -5077,14 +5093,174 @@ function renderStudentPerformanceBody(box){
     }catch(err){ console.error(err); toast("Couldn't clear ("+err.code+")"); }
   }));
   document.getElementById("pp-stud-export")?.addEventListener("click", ()=>exportMeritListCsv(meritRows));
+  document.getElementById("pp-stud-assign")?.addEventListener("click", async ()=>{
+    const checked = Array.from(box.querySelectorAll("[data-assign-check]:checked")).map(cb=>cb.dataset.subId);
+    if(checked.length===0){ toast("No students checked"); return; }
+    const mode = document.getElementById("assign-mode").value;
+    const reviewers = allTeachers.filter(t=>t.isStudentReviewer===true);
+    if(reviewers.length===0){ toast("No student reviewers set up yet — add one from Manage teachers"); return; }
+    const selectedSubs = checked.map(id=>ppStudSubs.find(x=>x.id===id)).filter(Boolean);
+    const modeLabel = mode==="random" ? "randomly, balanced by load" : mode==="district" ? "grouped by district" : "grouped by school";
+    if(!(await confirmDialog(`Assign ${selectedSubs.length} student(s) to ${reviewers.length} reviewer(s), ${modeLabel}?`))) return;
+    const btn = document.getElementById("pp-stud-assign");
+    btn.disabled = true; btn.textContent = "Assigning…";
+    try{
+      const assignedCount = await assignSubmissionsToReviewers(selectedSubs, reviewers, mode);
+      toast(`Assigned ${assignedCount} student(s) for review`);
+      renderStudentPerformanceBody(box);
+    }catch(err){ console.error(err); toast("Couldn't assign ("+err.code+")"); btn.disabled=false; btn.textContent="Assign checked to reviewers"; }
+  });
 }
-function renderReviewStudents(){
+// Balanced-random assignment of flagged students to isStudentReviewer
+// accounts, same load-balancing shape as pickReviewer() (least-loaded
+// candidate, random tie-break) but batch-oriented: one reviewAssignments
+// doc per reviewer holds a LIST of submissionIds, not one doc per
+// student, and "load" is each reviewer's total already-assigned count
+// across every past batch rather than a live in-memory question count.
+// "district"/"school" modes keep a city/school's flagged students
+// together with one reviewer instead of scattering them individually --
+// both the plan's explicit "randomly or city-wise or school-wise" ask.
+// Deliberately stores submissionIds (examSubmissions doc ids, each
+// already contestId+formB-scoped) rather than a single contestId +
+// formBs list, since Student Performance can combine several sittings
+// at once and a batch may span more than one contest.
+async function assignSubmissionsToReviewers(selectedSubs, reviewers, mode){
+  const existingSnap = await getDocs(collection(db,"reviewAssignments"));
+  const load = {}; reviewers.forEach(r=>load[r.email]=0);
+  existingSnap.forEach(d=>{
+    const data = d.data();
+    if(load[data.reviewerEmail]!=null) load[data.reviewerEmail] += (data.submissionIds||[]).length;
+  });
+  const pickLeastLoaded = ()=>{
+    const minLoad = Math.min(...reviewers.map(r=>load[r.email]));
+    const least = reviewers.filter(r=>load[r.email]===minLoad);
+    return least[Math.floor(Math.random()*least.length)];
+  };
+  const buckets = {};
+  if(mode==="district" || mode==="school"){
+    const groups = {};
+    selectedSubs.forEach(sub=>{
+      const key = (mode==="district" ? sub.district : sub.school) || "Unassigned";
+      (groups[key]=groups[key]||[]).push(sub);
+    });
+    Object.values(groups).forEach(group=>{
+      const r = pickLeastLoaded();
+      if(!buckets[r.email]) buckets[r.email] = {reviewer:r, subs:[]};
+      buckets[r.email].subs.push(...group);
+      load[r.email] += group.length;
+    });
+  } else {
+    selectedSubs.forEach(sub=>{
+      const r = pickLeastLoaded();
+      if(!buckets[r.email]) buckets[r.email] = {reviewer:r, subs:[]};
+      buckets[r.email].subs.push(sub);
+      load[r.email] += 1;
+    });
+  }
+  const batch = writeBatch(db);
+  let assignedCount = 0;
+  for(const email of Object.keys(buckets)){
+    const {reviewer, subs} = buckets[email];
+    const ref = doc(collection(db,"reviewAssignments"));
+    batch.set(ref, {
+      reviewerEmail: reviewer.email, reviewerName: reviewer.name||reviewer.email,
+      submissionIds: subs.map(s=>s.id), mode, createdAt: new Date().toISOString(), createdBy: currentUser.email,
+    });
+    subs.forEach(s=>{
+      batch.update(doc(db,"examSubmissions",s.id), {reviewStatus:"assigned"});
+      s.reviewStatus = "assigned";
+      assignedCount++;
+    });
+  }
+  await batch.commit();
+  logActivity("review_assigned", `Assigned ${assignedCount} student(s) for integrity review across ${Object.keys(buckets).length} reviewer(s)`, null);
+  return assignedCount;
+}
+
+// Mirrors the External Reviewer UX already built for questions (read +
+// flag, not edit) but for exam submissions: a student reviewer sees only
+// what's in reviewAssignments docs addressed to them, with the same
+// integrity signals and the same Flag/Clear action the Student
+// Performance dashboard's admin view uses -- firestore.rules'
+// isStudentReviewer() already restricts them to exactly these fields
+// (integrityFlags/meritStatus/reviewStatus) on examSubmissions, so this
+// view can share promptFlagDialog()/computeAutoFlags() verbatim.
+async function renderReviewStudents(){
   const main = document.getElementById("main");
   main.innerHTML = `
     <div class="pagehead"><h1>Review Students</h1></div>
-    <p class="desc">Submissions assigned to you for integrity review will show up here.</p>
-    <div class="empty">No review assignments yet.</div>
+    <p class="desc">Students assigned to you for integrity review.</p>
+    <div id="review-students-body"><div class="hint">Loading your assignments…</div></div>
   `;
+  const body = document.getElementById("review-students-body");
+  try{
+    const snap = await getDocs(query(collection(db,"reviewAssignments"), where("reviewerEmail","==",currentUser.email)));
+    const submissionIds = new Set();
+    snap.forEach(d=>(d.data().submissionIds||[]).forEach(id=>submissionIds.add(id)));
+    if(submissionIds.size===0){ body.innerHTML = `<div class="empty">No review assignments yet.</div>`; return; }
+    const docs = await Promise.all(Array.from(submissionIds).map(id=>getDoc(doc(db,"examSubmissions",id))));
+    const subs = docs.filter(d=>d.exists()).map(d=>({id:d.id, ...d.data()}));
+    renderReviewStudentsBody(body, subs);
+  }catch(err){ console.error(err); body.innerHTML = `<div class="callout warn">Couldn't load your assignments.</div>`; }
+}
+
+function renderReviewStudentsBody(body, subs){
+  const th = integrityThresholds;
+  subs.sort((a,b)=>{
+    const aw = a.reviewStatus==="assigned" ? 0 : 1, bw = b.reviewStatus==="assigned" ? 0 : 1;
+    return aw-bw;
+  });
+  body.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr>
+        <th style="text-align:left; padding:6px;">Student</th><th style="text-align:left; padding:6px;">Form B</th>
+        <th style="text-align:left; padding:6px;">District / School</th><th style="text-align:left; padding:6px;">Paper</th>
+        <th style="text-align:left; padding:6px;">Signals</th><th style="text-align:left; padding:6px;">Status</th><th style="padding:6px;"></th>
+      </tr></thead>
+      <tbody>
+        ${subs.map(sub=>{
+          const autoFlags = computeAutoFlags(sub, th);
+          const manual = (sub.integrityFlags?.manual||[]).map(m=>m.reason);
+          const allReasons = [...autoFlags, ...manual];
+          const excluded = sub.meritStatus==="excluded";
+          return `<tr style="border-top:1px solid var(--border); ${excluded?"opacity:0.7;":""}">
+            <td style="padding:6px;">${escapeHtml(sub.name||"—")}</td>
+            <td class="mono" style="padding:6px;">${escapeHtml(sub.formB||"—")}</td>
+            <td style="padding:6px;">${escapeHtml(sub.district||"—")} / ${escapeHtml(sub.school||"—")}</td>
+            <td style="padding:6px;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
+            <td style="padding:6px; max-width:280px;">${allReasons.map(r=>`<div class="hint">• ${escapeHtml(r)}</div>`).join("")||"<span class=\"hint\">No automatic signals — check Quilgo's proctoring report directly</span>"}</td>
+            <td style="padding:6px;">${excluded?`<span class="pill" style="background:var(--red-soft); color:var(--red);">Excluded</span>`:`<span class="pill">Eligible</span>`}</td>
+            <td style="padding:6px;">${excluded
+              ? `<button class="btn small" data-rs-clear="${sub.id}">Clear</button>`
+              : `<button class="btn small" data-rs-flag="${sub.id}" data-label="${escapeHtml(sub.name||sub.formB||"this student")}">Flag &amp; exclude</button>`}
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  body.querySelectorAll("[data-rs-flag]").forEach(b=>b.addEventListener("click", async ()=>{
+    const reason = await promptFlagDialog(b.dataset.label);
+    if(!reason) return;
+    try{
+      await updateDoc(doc(db,"examSubmissions",b.dataset.rsFlag), {
+        "integrityFlags.manual": arrayUnion({reason, by:currentUser.email, byName:currentUser.displayName||currentUser.email, at:new Date().toISOString()}),
+        meritStatus: "excluded", reviewStatus: "flagged",
+      });
+      logActivity("student_flagged", `Flagged submission ${b.dataset.rsFlag} for integrity review: ${reason}`, b.dataset.rsFlag);
+      toast("Flagged and excluded from merit list");
+      renderReviewStudents();
+    }catch(err){ console.error(err); toast("Couldn't flag ("+err.code+")"); }
+  }));
+  body.querySelectorAll("[data-rs-clear]").forEach(b=>b.addEventListener("click", async ()=>{
+    if(!(await confirmDialog("Clear this student's exclusion and return them to the merit list?"))) return;
+    try{
+      await updateDoc(doc(db,"examSubmissions",b.dataset.rsClear), { meritStatus: "eligible", reviewStatus: "cleared" });
+      logActivity("student_cleared", `Cleared integrity exclusion for submission ${b.dataset.rsClear}`, b.dataset.rsClear);
+      toast("Cleared");
+      renderReviewStudents();
+    }catch(err){ console.error(err); toast("Couldn't clear ("+err.code+")"); }
+  }));
 }
 
 /* ================= CURRICULUM TAB ================= */
