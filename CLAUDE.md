@@ -37,6 +37,7 @@ A signed-in user can read/write question data **only if** a document exists at `
 - `role: "external_reviewer"` (added Oct 2026) is a read-and-comment-only role for an outside reviewer who spot-checks questions — including **locked** ones — and leaves feedback for an admin to act on. They see the *same* Bank tab every teacher does -- full filters, search, and every question regardless of status (`renderBank()` branches on `isExternalReviewerUser` only to hide the "+ New Question" button, the "Only mine" filter, and each card's Edit/Locked button, not to replace the view) -- so they pick a question to review themselves, the same way a teacher picks one to read, rather than through a separate restricted screen. Every other nav tab is hidden for them client-side (an earlier version of this role had its own single "pick a random question" screen instead; that was replaced after feedback that reviewers need the normal filtered browsing experience, not a narrower one). In `renderDrawerBody()`, the Status section and Edit/Delete buttons are replaced with just a "Download as image…" button for this role, but the preview, peer-review section, and comment thread all render normally. Enforcement is server-side too, via a new `isContentTeacher()` function in `firestore.rules` (role in `["teacher","qb_lead","admin"]`) required for creating/editing questions and contests — `isTeacher()` (any of the four roles, including this one) still gates reads and comment-creation, since reading everything and commenting on anything (even locked) is exactly what this role is for. They're excluded from `pickReviewer()`'s balanced peer-review rotation and from the team comparison/leaderboard charts (`teacherComparisonData()`) — they don't author content or carry a quota. A comment from this role gets an "External Reviewer" badge in the thread (`reviewerBadge()` in `renderDrawerBody()`), and an admin viewing a **locked** question with such a comment sees an explicit callout prompting them to unlock it to act on the feedback.
 - `role: "uploader"` (added Oct 2026) can only ever see the Upload tab — every other nav tab (including Bank) is hidden for them client-side, and `checkTeacherStatus()` forces `currentTab = "quilgo"` on sign-in since Bank, the app's normal default landing tab, isn't reachable for this role at all. Within Upload they can do everything the tab already offered any teacher — browse by category/day/slot, download a question's image, mark it uploaded/undo — no new UI was needed for that, since those actions were never `isAdminUser`-gated to begin with. Only "Mark this contest's upload complete" stays admin-only. Server-side, a new `isUploadOnlyChange()` in `firestore.rules`' `contests` match block allows any approved teacher (this role included) to update *just* `uploadStatus`/`quilgoComplete` on a contest, while creating a contest or changing any other field still requires `isContentTeacher()`. Excluded from `pickReviewer()` (allowlisted by role, not denylisted — see below) and from the team comparison/leaderboard charts, same reasoning as `external_reviewer`.
 - `role: "automation"` (added Oct 2026) is for non-human service accounts — e.g. `backupFirestoreToDrive.gs`'s dedicated login — that need to read (and, if ever useful, write) exactly like a `teacher` but shouldn't clutter anything that lists "who's actually producing." No client-side UI hides any nav tab for this role (it behaves exactly like a plain `teacher` if anyone ever does sign in with it through the website, which it isn't meant to) — the whole point is server-side-equivalent authority (`isContentTeacher()` in `firestore.rules` includes it alongside `teacher`/`qb_lead`/`admin`) with client-side exclusion from `teacherComparisonData()`/`teamAverageToday()` (now an allowlist, see the data-model section below) and the Assignment tab's Kanban board (filtered out before building columns — nobody should be able to drag a chapter onto a service account). It still appears normally in Admin → Manage teachers.
+- `isStudentReviewer: true` (added Oct 2026, part of the post-processing pipeline) is **not** a 7th `role` value — it's a separate boolean on any teacher doc, independent of whatever `role` they already have, so one person can be e.g. `role:"teacher"` and a student reviewer at the same time ("one person, two jobs" — deliberately not a `roles[]` rework, see the data-model section's `teachers/{email}` entry for why). Toggled via a checkbox in Admin → Manage teachers, gates a client-side-only "Review Students" nav tab (`isStudentReviewerUser` global) and, server-side, lets its holder update ONLY the review-outcome fields (`integrityFlags`/`meritStatus`/`reviewStatus`) on an `examSubmissions` doc — `isStudentReviewer()` in `firestore.rules`.
 
 All of this is enforced in `firestore.rules`, not in client-side JS — the client UI hides admin controls from non-admins, but the real enforcement is server-side. Emails are lowercased on both sides (client lookup and rules) specifically because Firestore document IDs are case-sensitive and admins type them by hand — this was a real bug caught during setup and fixed.
 
@@ -497,6 +498,113 @@ lifetime is short), same comment-card markup/badges as the drawer. Replying
 still only happens from the drawer -- the editor's copy is explicitly
 labeled read-only, so there isn't a second, out-of-sync place comments get
 posted from.
+
+studentRoster/{formB}_{sittingKey}   -- Oct 2026, Post Processing tab, Phase 1
+  of the post-exam pipeline (Item Analysis + Student Performance -- see
+  below). A pre-exam roster CSV (Form B, Name, District, School, Father
+  Name columns -- resilient header matching via findColIndex(), not exact
+  string matching, since this is hand-built by the admin) imported with
+  PMC type/day/slot picked once in the UI and applied to every row --
+  sittingKey = `${pmcType}_D${day}_S${slot}`. Doc ID is Form-B+sittingKey
+  so re-importing a corrected file for the same sitting safely overwrites
+  rather than duplicating. Form B is the student's unique identifier
+  project-wide -- the SAME 13-digit number appears as the local-part of
+  their Quilgo login email (`<formB>@vss.com`), which is how a results
+  import (below) joins back to this roster.
+  formB, name, district, school, fatherName, pmcType, day, slot, importedAt, importedBy
+
+examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 (not yet built as
+  of this writing -- Phase 1 shipped the data model + roster import only;
+  see the plan file this was built from for the full phase breakdown).
+  One doc per student per contest sitting, parsed from the actual Quilgo
+  CSV export client-side (parseCsv() in index.html -- a small hand-rolled
+  RFC4180-ish parser, no library, verified against a real export:
+  "PMC-5 (Summer 2025).csv" in this repo, 664 students, 1360 columns).
+  Real volume per import is ~600-1,500 rows (not 10,000 -- that's the
+  total across all 6 slots x 4 PMC categories combined), so parsing and
+  batched writeBatch() calls (400/batch, under Firestore's 500 cap) happen
+  entirely client-side -- no Apps Script relay for this part (that stays
+  where it already is, for the hourly Drive backup, a different job).
+  formB, email, name, contestId, contestLevel, day, slot,
+  score, scorePercentage, durationMinutes, completelyFilled,
+  startedAt, submittedAt, trustScore, switchedTabsTotal,
+  facePresencePct, faceMatchPct, blankShots, multipleScreens, botDetection,
+  answers: [{questionId, chosenLabel, result, score, switchedTabs,
+             suspiciousPatterns, suspiciousPhotos, suspiciousScreenshots}],
+  -- answers[i].questionId is resolved from contest.questionIds[i] at
+  -- import time (confirmed with the project owner: Quilgo's question
+  -- column order matches the paper's print order exactly), SLICED to
+  -- contest.questionIds.length -- the real Quilgo export reserves more
+  -- question-column slots than a given paper actually uses (134 in the
+  -- sample file vs. a real 30-question paper), so this slice is what
+  -- keeps the padding from being misread as extra questions.
+  integrityFlags: {auto:[reason,...], manual:[{reason,by,byName,at}]},
+  -- auto-computed at import time from settings/integrityThresholds
+  -- (below); Quilgo's export has no literal "multiple faces" column --
+  -- confirmed with the project owner to use Face match %/Face presence
+  -- %/Suspicious photos count as the closest automatic proxies, and leave
+  -- anything the CSV can't catch to a human flagging it manually after
+  -- checking Quilgo's own proctoring report for that submission.
+  meritStatus: "eligible"|"excluded", reviewStatus: "unreviewed"|"assigned"|"cleared"|"flagged",
+  rosterMatched (bool -- false if no studentRoster doc found for this formB+sitting),
+  importedAt, importedBy
+
+contests/{contestId}  -- (Phase 2) gains resultsImportedAt, resultsImportedBy, submissionCount
+
+settings/integrityThresholds   -- (Phase 2) single doc, admin-adjustable, same
+  pattern as settings/limits. maxTabSwitches (default 10), minFaceMatchPct
+  (default 50), minFacePresencePct (default 50), maxSuspiciousPhotos
+  (default 3), flagOnTrustScoreLow/flagOnBlankShots/flagOnMultipleScreens
+  (bool, default true) -- editable live as filter inputs on the Student
+  Performance dashboard, not just a settings form, so "more than 10 tab
+  switches, or any number" applies instantly without a reimport.
+
+reviewAssignments/{assignmentId}   -- (Phase 4) admin-created batches
+  assigning specific students to a specific student reviewer, same
+  balanced-random load-balancing shape already used for pickReviewer().
+  contestId, reviewerEmail, reviewerName, formBs:[...], createdAt, createdBy
+
+questions/{id}/stats/post_test (existing collection, see above) -- once
+  Phase 2's post-processing run exists, this gets populated AUTOMATICALLY
+  from real examSubmissions data instead of the admin hand-typing six
+  aggregate numbers into renderStatForm() -- same fields, same
+  qualityLabel() formula, so the existing "Scored questions" table needs
+  zero changes itself to start showing real computed numbers.
+
+teachers/{email}  -- gains isStudentReviewer: boolean (Oct 2026, additive --
+  independent of the existing single `role` field, which stays completely
+  untouched). One person can be e.g. role:"teacher" AND
+  isStudentReviewer:true at the same time -- "one person, two jobs" without
+  reworking `role` into an array (that was considered and explicitly
+  rejected as higher-risk: it would touch every role check across the app
+  -- isAdmin(), isContentTeacher(), isQBLeadOrAdmin(), isExternalReviewerUser,
+  isUploaderUser, pickReviewer(), teacherComparisonData(), the Manage
+  Teachers role dropdown, firestore.rules -- for one additive need).
+  Toggled via a checkbox column in Admin -> Manage teachers -> Teacher
+  accounts (`renderTeachersTable()`), `updateDoc(doc(db,"teachers",email),
+  {isStudentReviewer})` -- no rules change needed, same "updateDoc merge
+  preserves the existing role" reasoning as the inline name-edit feature.
+  `isStudentReviewer()` in firestore.rules mirrors `isAdmin()`'s pattern,
+  used only to gate examSubmissions' review-only fields (a reviewer can
+  update integrityFlags/meritStatus/reviewStatus but nothing else on a
+  submission -- they didn't import the data and shouldn't be able to touch
+  scores/answers). Global `isStudentReviewerUser` in index.html (set in
+  checkTeacherStatus(), alongside isAdminUser/isExternalReviewerUser/
+  isUploaderUser) gates a new "Review Students" nav tab, hidden from
+  external_reviewer/uploader same as every other tab those two roles don't
+  get.
+
+New nav tab "Post Processing" (admin-only, same client-side hide pattern
+as the existing Admin tab -- `document.querySelectorAll('[data-tab=
+"postproc"]').forEach(b=>b.hidden = !isAdminUser)` in checkTeacherStatus()).
+Four inner sections via `postProcTab` state + `renderPostProcessing()`:
+Import roster (built, Phase 1), Import results / Item Analysis / Student
+Performance (stubs as of Phase 1, see `renderResultsImport()`/
+`renderItemAnalysis()`/`renderStudentPerformance()` -- each is a one-line
+placeholder until its phase ships). `parseCsv(text)` and `findColIndex(header,
+candidates)` (both top-level functions, placed just above `renderPostProcessing()`)
+are the two reusable pieces both the roster and (future) results importers
+share -- verified directly against the real Quilgo export file in this repo.
 
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt

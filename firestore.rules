@@ -47,6 +47,16 @@ service cloud.firestore {
         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["qb_lead", "admin"];
     }
 
+    // Independent of `role` (Oct 2026) -- a teacher/qb_lead/admin account can
+    // ALSO be a student reviewer at the same time (one person, two jobs),
+    // via a separate boolean on their own teachers/{email} doc rather than
+    // reworking `role` into an array. Used only to gate examSubmissions'
+    // review-only fields below.
+    function isStudentReviewer() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.isStudentReviewer == true;
+    }
+
     // Any signed-in approved teacher can read the full roster -- every
     // teacher's client (not just admins) needs this to balanced-randomly
     // pick a peer reviewer from the full team (pickReviewer() in
@@ -111,6 +121,38 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isTeacher();
       allow update, delete: if false;
+    }
+
+    // Post-processing pipeline (Oct 2026) -- imported from Quilgo CSV
+    // exports + a pre-exam student roster CSV, admin-only to import, read
+    // by any teacher (student reviewers need to read submissions assigned
+    // to them, and the Item Analysis/Student Performance dashboards are
+    // admin-only client-side but there's no reason to restrict reads
+    // server-side beyond the existing isTeacher() baseline every other
+    // collection uses).
+    match /studentRoster/{id} {
+      allow read: if isTeacher();
+      allow write: if isAdmin();
+    }
+
+    match /examSubmissions/{id} {
+      allow read: if isTeacher();
+      allow create, delete: if isAdmin();
+      // Admin can edit anything (re-running an import, correcting a
+      // mismatch); a student reviewer -- who didn't import this data and
+      // shouldn't be able to touch scores/answers -- can only touch the
+      // three review-outcome fields a Flag/Clear action writes.
+      allow update: if isAdmin() || (isStudentReviewer() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["integrityFlags", "meritStatus", "reviewStatus"]));
+    }
+
+    // Admin-created batches assigning specific students to a specific
+    // student reviewer for integrity review (balanced-random, same shape
+    // as pickReviewer() for peer review). Read by isTeacher() so a
+    // reviewer's own client can filter to "assigned to me".
+    match /reviewAssignments/{id} {
+      allow read: if isTeacher();
+      allow write: if isAdmin();
     }
 
     match /questions/{questionId} {

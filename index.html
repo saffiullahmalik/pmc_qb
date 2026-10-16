@@ -461,6 +461,8 @@
   <button data-tab="workload">Assignment</button>
   <button data-tab="curriculum">Curriculum</button>
   <button data-tab="sop">SOP</button>
+  <button data-tab="postproc">Post Processing</button>
+  <button data-tab="reviewstudents">Review Students</button>
   <button data-tab="admin">Admin</button>
   <button id="mobile-signout-btn" style="margin-left:6px; color:var(--red); border-color:var(--red);">Sign out</button>
 </div>
@@ -481,6 +483,8 @@
       <button data-tab="workload"><span class="dot"></span>Assignment</button>
       <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
       <button data-tab="sop"><span class="dot"></span>SOP</button>
+      <button data-tab="postproc"><span class="dot"></span>Post Processing</button>
+      <button data-tab="reviewstudents"><span class="dot"></span>Review Students</button>
       <button data-tab="admin"><span class="dot"></span>Admin &amp; Analytics</button>
     </div>
     <div class="side-foot">
@@ -529,7 +533,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc,
-  collection, collectionGroup, query, orderBy, limit, onSnapshot, arrayUnion, arrayRemove, deleteField
+  collection, collectionGroup, query, orderBy, limit, where, onSnapshot, arrayUnion, arrayRemove, deleteField,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
@@ -852,6 +857,10 @@ let isAdminUser = false;
 let canFinalize = false;
 let isExternalReviewerUser = false;
 let isUploaderUser = false;
+// Independent of `role` -- any teacher/qb_lead/admin account can ALSO be a
+// student reviewer at the same time (one person, two jobs), per the
+// additive-flag design (not a roles[] rework) confirmed Oct 2026.
+let isStudentReviewerUser = false;
 
 let questions = [];
 let contests = [];
@@ -1098,17 +1107,20 @@ async function checkTeacherStatus(){
       canFinalize = isAdminUser || snap.data().role === "qb_lead";
       isExternalReviewerUser = snap.data().role === "external_reviewer";
       isUploaderUser = snap.data().role === "uploader";
+      isStudentReviewerUser = snap.data().isStudentReviewer === true;
       document.querySelectorAll('[data-tab="admin"]').forEach(b=>b.hidden = !isAdminUser);
+      document.querySelectorAll('[data-tab="postproc"]').forEach(b=>b.hidden = !isAdminUser);
+      document.querySelectorAll('[data-tab="reviewstudents"]').forEach(b=>b.hidden = !isStudentReviewerUser);
       // An external reviewer gets the normal Bank tab (full filters/search,
       // every question regardless of status) -- just not create/edit/
       // status controls -- so the rest of the app is hidden for them.
-      ["activity","contests","quilgo","workload","curriculum","sop"].forEach(t=>{
+      ["activity","contests","quilgo","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
         document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isExternalReviewerUser);
       });
       // An uploader can only ever see the Upload tab -- everything else,
       // including Bank, is hidden; they land there directly since Bank
       // (the app's normal default tab) isn't available to them at all.
-      ["bank","activity","contests","workload","curriculum","sop"].forEach(t=>{
+      ["bank","activity","contests","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
         document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isUploaderUser);
       });
       if(isUploaderUser) currentTab = "quilgo";
@@ -1235,6 +1247,8 @@ function renderTab(){
   else if(currentTab==="workload") renderWorkload();
   else if(currentTab==="curriculum") renderCurriculum();
   else if(currentTab==="sop") renderSOP();
+  else if(currentTab==="postproc") renderPostProcessing();
+  else if(currentTab==="reviewstudents") renderReviewStudents();
   else if(currentTab==="admin") renderAdmin();
   renderGamifyBar();
   renderInsightsRail();
@@ -4277,6 +4291,192 @@ function renderQuilgoBody(){
   }));
 }
 
+/* ================= POST PROCESSING (item analysis + student performance) =================
+   Oct 2026. Two source CSVs, imported separately:
+   1. A pre-exam student roster (Form B, Name, District, School, Father Name)
+      the admin uploads before the exam, scoped to one PMC type/day/slot.
+   2. The actual Quilgo results export, uploaded after, matched to the SAME
+      roster by Form B (= the Quilgo email's local-part, before "@").
+   Both are parsed entirely client-side (parseCsv() below) and written in
+   batches -- real volume per import is ~600-1,500 rows, trivial against
+   Firestore's free-tier 20K writes/day, so no Apps Script relay is used
+   here (that stays where it already is, for the hourly Drive backup --
+   a different job entirely). */
+
+// Minimal RFC4180-ish CSV parser (quoted fields, "" escaped quotes inside
+// a quoted field, CRLF or LF line endings, strips a leading UTF-8 BOM --
+// Quilgo's own export has one). No library -- consistent with this
+// project's "no bundler, no dependencies" convention.
+function parseCsv(text){
+  if(text.charCodeAt(0)===0xFEFF) text = text.slice(1);
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c==='"'){
+        if(text[i+1]==='"'){ field+='"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c==='"') inQuotes = true;
+      else if(c===','){ row.push(field); field=""; }
+      else if(c==='\r'){ /* no-op -- the matching \n handles the row break */ }
+      else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=""; }
+      else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  const header = (rows.shift()||[]).map(h=>h.trim());
+  return { header, rows: rows.filter(r=>r.some(v=>(v||"").trim()!=="")) };
+}
+// Case/whitespace-insensitive header lookup, trying several likely
+// spellings in order -- a hand-built roster CSV won't always match one
+// exact column name (e.g. "Form B" vs "Form-B" vs "FormB").
+function findColIndex(header, candidates){
+  const norm = s=>String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const normHeader = header.map(norm);
+  for(const cand of candidates){
+    const idx = normHeader.indexOf(norm(cand));
+    if(idx>=0) return idx;
+  }
+  return -1;
+}
+function sittingKey(pmcType, day, slot){ return `${pmcType}_D${day}_S${slot}`; }
+
+let postProcTab = "roster"; // roster | results | item | student
+let integrityThresholds = { maxTabSwitches:10, minFaceMatchPct:50, minFacePresencePct:50, maxSuspiciousPhotos:3, flagOnTrustScoreLow:true, flagOnBlankShots:true, flagOnMultipleScreens:true };
+
+function renderPostProcessing(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>Post Processing</h1></div>
+    <p class="desc">Import the pre-exam student roster and the Quilgo results export, then review item analysis and student performance — admin-only.</p>
+    <div class="level-tabs" id="pp-subtabs">
+      <button type="button" data-pptab="roster" class="${postProcTab==="roster"?"active":""}">Import roster</button>
+      <button type="button" data-pptab="results" class="${postProcTab==="results"?"active":""}">Import results</button>
+      <button type="button" data-pptab="item" class="${postProcTab==="item"?"active":""}">Item Analysis</button>
+      <button type="button" data-pptab="student" class="${postProcTab==="student"?"active":""}">Student Performance</button>
+    </div>
+    <div id="pp-body" style="margin-top:14px;"></div>
+  `;
+  document.querySelectorAll("#pp-subtabs [data-pptab]").forEach(b=>b.addEventListener("click", ()=>{
+    postProcTab = b.dataset.pptab;
+    renderPostProcessing();
+  }));
+  const body = document.getElementById("pp-body");
+  if(postProcTab==="roster") renderRosterImport(body);
+  else if(postProcTab==="results") renderResultsImport(body);
+  else if(postProcTab==="item") renderItemAnalysis(body);
+  else if(postProcTab==="student") renderStudentPerformance(body);
+}
+
+// ---------------- 1. Roster import ----------------
+function renderRosterImport(body){
+  let parsed = null; // {header, rows} from parseCsv()
+  let colMap = null; // {formB, name, district, school, father}
+  body.innerHTML = `
+    <div class="level-block">
+      <b style="font-size:12.5px;">Upload the student roster</b>
+      <p class="hint" style="margin:4px 0 10px;">CSV columns expected: Form B, Name, District, School, Father Name. PMC type/day/slot are picked here, not read from the file — every row in the file is tagged with whatever you pick below.</p>
+      <div class="row2">
+        <div class="field"><label>PMC type</label><select id="roster-pmctype">${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join("")}</select></div>
+        <div class="row2" style="grid-template-columns:1fr 1fr;">
+          <div class="field"><label>Day</label><input type="number" id="roster-day" min="1" value="1" /></div>
+          <div class="field"><label>Slot</label><input type="number" id="roster-slot" min="1" value="1" /></div>
+        </div>
+      </div>
+      <div class="field"><label>Roster CSV</label><input type="file" id="roster-file" accept=".csv,text/csv" /></div>
+      <div id="roster-preview"></div>
+      <button class="btn primary" id="roster-import-btn" disabled style="margin-top:8px;">Import roster</button>
+    </div>
+  `;
+  document.getElementById("roster-file").addEventListener("change", async e=>{
+    const file = e.target.files[0];
+    const preview = document.getElementById("roster-preview");
+    const importBtn = document.getElementById("roster-import-btn");
+    importBtn.disabled = true;
+    if(!file){ preview.innerHTML = ""; return; }
+    try{
+      const text = await file.text();
+      parsed = parseCsv(text);
+      const idxFormB = findColIndex(parsed.header, ["Form B","Form-B","FormB","Form_B","CNIC"]);
+      const idxName = findColIndex(parsed.header, ["Name","Student Name"]);
+      const idxDistrict = findColIndex(parsed.header, ["District"]);
+      const idxSchool = findColIndex(parsed.header, ["School"]);
+      const idxFather = findColIndex(parsed.header, ["Father Name","Father's Name","FatherName"]);
+      if(idxFormB<0){
+        preview.innerHTML = `<div class="callout warn">Couldn't find a "Form B" column in this file's header. Columns found: ${parsed.header.map(escapeHtml).join(", ")}</div>`;
+        return;
+      }
+      colMap = {formB:idxFormB, name:idxName, district:idxDistrict, school:idxSchool, father:idxFather};
+      const seen = new Set(); let dupes = 0;
+      parsed.rows.forEach(r=>{ const fb=(r[idxFormB]||"").trim(); if(fb){ if(seen.has(fb)) dupes++; seen.add(fb); } });
+      preview.innerHTML = `
+        <div class="callout" style="margin-top:8px;">
+          ${parsed.rows.length} row(s) parsed, ${seen.size} distinct Form B number(s)${dupes?`, <b style="color:var(--red);">${dupes} duplicate Form B row(s) in this file</b>`:""}.
+          ${idxName<0?`<br>⚠ No "Name" column found — names will show as "—".`:""}
+          ${idxDistrict<0?`<br>⚠ No "District" column found.`:""}
+          ${idxSchool<0?`<br>⚠ No "School" column found.`:""}
+        </div>`;
+      importBtn.disabled = parsed.rows.length===0;
+    }catch(err){ console.error(err); preview.innerHTML = `<div class="callout warn">Couldn't read that file.</div>`; }
+  });
+  document.getElementById("roster-import-btn").addEventListener("click", async ()=>{
+    if(!parsed || !colMap) return;
+    const pmcType = document.getElementById("roster-pmctype").value;
+    const day = parseInt(document.getElementById("roster-day").value,10)||1;
+    const slot = parseInt(document.getElementById("roster-slot").value,10)||1;
+    const key = sittingKey(pmcType, day, slot);
+    if(!(await confirmDialog(`Import ${parsed.rows.length} roster row(s) for ${pmcType}, Day ${day}, Slot ${slot}? Re-importing the same Form B for this sitting overwrites that row, it won't duplicate.`))) return;
+    const btn = document.getElementById("roster-import-btn");
+    btn.disabled = true; btn.textContent = "Importing…";
+    try{
+      let written = 0;
+      for(let i=0; i<parsed.rows.length; i+=400){
+        const chunk = parsed.rows.slice(i, i+400);
+        const batch = writeBatch(db);
+        chunk.forEach(r=>{
+          const formB = (r[colMap.formB]||"").trim();
+          if(!formB) return;
+          const id = `${formB}_${key}`;
+          batch.set(doc(db,"studentRoster",id), {
+            formB, name: colMap.name>=0 ? (r[colMap.name]||"").trim() : "",
+            district: colMap.district>=0 ? (r[colMap.district]||"").trim() : "",
+            school: colMap.school>=0 ? (r[colMap.school]||"").trim() : "",
+            fatherName: colMap.father>=0 ? (r[colMap.father]||"").trim() : "",
+            pmcType, day, slot, importedAt:new Date().toISOString(), importedBy:currentUser.email,
+          });
+          written++;
+        });
+        await batch.commit();
+      }
+      logActivity("roster_imported", `Imported ${written} roster row(s) for ${pmcType} Day ${day} Slot ${slot}`, null);
+      toast(`Imported ${written} roster row(s)`);
+      btn.textContent = "Import roster";
+    }catch(err){ console.error(err); toast("Couldn't import roster ("+err.code+")"); btn.textContent = "Import roster"; btn.disabled = false; }
+  });
+}
+
+// ---------------- 2/3/4: stubs, filled in next phases ----------------
+function renderResultsImport(body){
+  body.innerHTML = `<div class="empty">Results import (the Quilgo CSV) is coming in the next phase of this build.</div>`;
+}
+function renderItemAnalysis(body){
+  body.innerHTML = `<div class="empty">Item Analysis dashboard is coming once results import is in place.</div>`;
+}
+function renderStudentPerformance(body){
+  body.innerHTML = `<div class="empty">Student Performance dashboard (integrity review + merit list) is coming once results import is in place.</div>`;
+}
+function renderReviewStudents(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="pagehead"><h1>Review Students</h1></div>
+    <p class="desc">Submissions assigned to you for integrity review will show up here.</p>
+    <div class="empty">No review assignments yet.</div>
+  `;
+}
+
 /* ================= CURRICULUM TAB ================= */
 function renderCurriculum(){
   const main = document.getElementById("main");
@@ -4676,8 +4876,8 @@ function renderAdmin(){
     <details class="records-details" open style="margin-top:12px;">
       <summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">Teacher accounts</summary>
       <div class="table-wrap"><table class="data">
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th><th></th></tr></thead>
-        <tbody id="teachers-tbody"><tr><td colspan="5" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th title="Independent of role -- can be ticked on any account">Student reviewer</th><th>Added</th><th></th></tr></thead>
+        <tbody id="teachers-tbody"><tr><td colspan="6" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
       </table></div>
     </details>
     <div class="section-label">Enter post-test statistics</div>
@@ -4874,13 +5074,14 @@ function renderTeachersTable(list){
   allTeachers = list;
   const tbody = document.getElementById("teachers-tbody");
   if(!tbody) return;
-  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="5" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
+  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="6" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
   list.sort((a,b)=> a.email.localeCompare(b.email));
   tbody.innerHTML = list.map(t=>`
     <tr>
       <td data-name-cell>${escapeHtml(t.name||"—")} <button type="button" class="link-btn" data-edit-name="${escapeHtml(t.email)}" title="Edit name" style="margin-left:2px;">✎</button></td>
       <td>${escapeHtml(t.email)}</td>
       <td><span class="pill role-${t.role}">${ROLE_LABEL[t.role]||t.role}</span></td>
+      <td><input type="checkbox" data-toggle-reviewer="${escapeHtml(t.email)}" ${t.isStudentReviewer?"checked":""} title="Can also review student submissions for integrity, regardless of their role above" /></td>
       <td class="mono">${t.addedAt? fmtDate(t.addedAt): "—"}</td>
       <td style="white-space:nowrap; display:flex; gap:6px; align-items:center;">
         <select data-role-select="${escapeHtml(t.email)}" style="padding:4px 6px; font-size:12px;">
@@ -4893,6 +5094,20 @@ function renderTeachersTable(list){
   tbody.querySelectorAll("[data-reset-password]").forEach(b=>b.addEventListener("click", ()=>resetTeacherPassword(b.dataset.resetPassword)));
   tbody.querySelectorAll("[data-role-select]").forEach(sel=>sel.addEventListener("change", ()=>setTeacherRole(sel.dataset.roleSelect, sel.value, sel)));
   tbody.querySelectorAll("[data-remove-teacher]").forEach(b=>b.addEventListener("click", ()=>removeTeacher(b.dataset.removeTeacher)));
+  // Independent of the role dropdown -- same `role` value in the write
+  // (the teachers/{email} update rule requires one), just the extra flag
+  // toggled alongside it.
+  tbody.querySelectorAll("[data-toggle-reviewer]").forEach(cb=>cb.addEventListener("change", async ()=>{
+    const email = cb.dataset.toggleReviewer;
+    try{
+      // updateDoc merges -- role isn't re-sent here, the rule already sees
+      // the existing role preserved in the merged result (same reasoning
+      // as the inline name-edit feature above).
+      await updateDoc(doc(db,"teachers",email), {isStudentReviewer:cb.checked});
+      logActivity("teacher_role_changed", `${cb.checked?"Added":"Removed"} student-reviewer duty for ${email}`, email);
+      toast(cb.checked ? "Now a student reviewer" : "No longer a student reviewer");
+    }catch(err){ console.error(err); toast("Couldn't update"); cb.checked = !cb.checked; }
+  }));
   // Inline rename -- the only way a teacher's display name was ever set was
   // typing it once into "Full name" at account-creation time (addTeacher()
   // below); an account created before that field existed, or left blank,
