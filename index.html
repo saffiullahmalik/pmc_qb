@@ -4346,6 +4346,43 @@ function sittingKey(pmcType, day, slot){ return `${pmcType}_D${day}_S${slot}`; }
 
 let postProcTab = "roster"; // roster | results | item | student
 let integrityThresholds = { maxTabSwitches:10, minFaceMatchPct:50, minFacePresencePct:50, maxSuspiciousPhotos:3, flagOnTrustScoreLow:true, flagOnBlankShots:true, flagOnMultipleScreens:true };
+let integrityThresholdsLoaded = false;
+async function loadIntegrityThresholds(){
+  if(integrityThresholdsLoaded) return integrityThresholds;
+  try{
+    const snap = await getDoc(doc(db,"settings","integrityThresholds"));
+    if(snap.exists()) integrityThresholds = {...integrityThresholds, ...snap.data()};
+  }catch(e){ console.error(e); }
+  integrityThresholdsLoaded = true;
+  return integrityThresholds;
+}
+
+// Cascading PMC type / day / slot pickers for the Import results and Item
+// Analysis sections -- deliberately separate state from the Upload tab's
+// own quilgoLevel/Day/Slot (renderQuilgo()), even though the filtering
+// logic is identical, so visiting one tab never resets the other's picker.
+let ppResLevel = "", ppResDay = "", ppResSlot = "", ppResContestId = "";
+let ppItemLevel = "", ppItemDay = "", ppItemSlot = "", ppItemContestId = "";
+function resolveContestPicker(level, day, slot, currentId){
+  const withMeta = contests.filter(c=>c.contestLevel && c.day!=null && c.slot!=null);
+  const days = level ? Array.from(new Set(withMeta.filter(c=>c.contestLevel===level).map(c=>c.day))).sort((a,b)=>a-b) : [];
+  const slots = (level && day!=="") ? Array.from(new Set(withMeta.filter(c=>c.contestLevel===level && String(c.day)===String(day)).map(c=>c.slot))).sort((a,b)=>a-b) : [];
+  const matches = (level && day!=="" && slot!=="") ? withMeta.filter(c=>c.contestLevel===level && String(c.day)===String(day) && String(c.slot)===String(slot)) : [];
+  let resolvedId = currentId;
+  if(matches.length===1) resolvedId = matches[0].id;
+  else if(matches.length!==1 && !matches.some(c=>c.id===currentId)) resolvedId = "";
+  return {days, slots, matches, resolvedId};
+}
+function contestPickerHtml(idPrefix, level, day, slot, picker){
+  return `
+    <div class="filters" style="margin-top:8px;">
+      <select id="${idPrefix}-level"><option value="">Category…</option>${LEVELS.map(l=>`<option value="${l}" ${level===l?"selected":""}>${l}</option>`).join("")}</select>
+      ${level ? `<select id="${idPrefix}-day"><option value="">Day…</option>${picker.days.map(d=>`<option value="${d}" ${String(day)===String(d)?"selected":""}>Day ${d}</option>`).join("")}</select>` : ""}
+      ${level && day!=="" ? `<select id="${idPrefix}-slot"><option value="">Slot…</option>${picker.slots.map(s=>`<option value="${s}" ${String(slot)===String(s)?"selected":""}>Slot ${s}</option>`).join("")}</select>` : ""}
+    </div>
+    ${picker.matches.length>1 ? `<div class="callout warn">More than one contest matches — pick one: ${picker.matches.map(c=>`<button type="button" class="btn small" data-${idPrefix}-pick="${c.id}">${escapeHtml(c.name)}</button>`).join(" ")}</div>` : ""}
+  `;
+}
 
 function renderPostProcessing(){
   const main = document.getElementById("main");
@@ -4458,15 +4495,354 @@ function renderRosterImport(body){
   });
 }
 
-// ---------------- 2/3/4: stubs, filled in next phases ----------------
+// ---------------- 2. Results import (the Quilgo CSV) ----------------
+// Quilgo's export isn't a flat header -- after ~33 summary columns it
+// repeats one 9-column block per question slot: a mislabeled
+// "[Question] Question" column (actually the student's CHOSEN ANSWER,
+// not the question text), then Result/Score/Max Points/Answered at
+// (UTC)/a per-question Yes-No tab-switch flag (the summary-level column
+// of the same name is the real numeric total used for flagging)/
+// Suspicious patterns/photos/
+// screenshots. A real export (PMC-5 Summer 2025, read directly while
+// building this) had 134 of these column-slots but the paper itself was
+// only 30 questions -- Quilgo reserves more slots than any one paper
+// uses. So this NEVER trusts the CSV's column count as the question
+// count: it detects every "[Question]"-prefixed block by header label
+// (not fixed offsets, so minor column reordering/renaming still works),
+// then takes only the first contest.questionIds.length of them, mapped
+// positionally (column order == the contest's print order, confirmed
+// with the project owner) with a manual override table as a safety net.
+function parseResultsHeader(header){
+  const norm = s=>String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const findIn = (from,to,cands)=>{
+    for(const cand of cands){ const nc = norm(cand); for(let i=from;i<to;i++){ if(norm(header[i])===nc) return i; } }
+    return -1;
+  };
+  const blockStarts = [];
+  header.forEach((h,i)=>{ if(/^\[question\]/i.test(String(h||"").trim())) blockStarts.push(i); });
+  const firstBlock = blockStarts.length ? blockStarts[0] : header.length;
+  const summary = {
+    email: findIn(0,firstBlock,["Email"]),
+    name: findIn(0,firstBlock,["Name"]),
+    score: findIn(0,firstBlock,["Score"]),
+    scorePct: findIn(0,firstBlock,["Score percentage"]),
+    duration: findIn(0,firstBlock,["Duration (minutes)","Duration"]),
+    trustScore: findIn(0,firstBlock,["Trust score"]),
+    botDetection: findIn(0,firstBlock,["Bot detection"]),
+    switchedTabsTotal: findIn(0,firstBlock,["Swithed to another tab / window","Switched to another tab / window","Switched to another tab/window"]),
+    facePresence: findIn(0,firstBlock,["Face presence"]),
+    faceMatch: findIn(0,firstBlock,["Face match"]),
+    blankShots: findIn(0,firstBlock,["Blank shots"]),
+    multipleScreens: findIn(0,firstBlock,["Multiple screens"]),
+    completelyFilled: findIn(0,firstBlock,["Completely filled"]),
+    startedAt: findIn(0,firstBlock,["Started (UTC)"]),
+    submittedAt: findIn(0,firstBlock,["Submitted (UTC)"]),
+  };
+  const blocks = blockStarts.map((start,bi)=>{
+    const end = blockStarts[bi+1]!=null ? blockStarts[bi+1] : header.length;
+    return {
+      chosen: start,
+      result: findIn(start,end,["Result"]),
+      score: findIn(start,end,["Score"]),
+      answeredAt: findIn(start,end,["Answered at (UTC)"]),
+      switchedTabs: findIn(start,end,["Swithed to another tab / window","Switched to another tab / window"]),
+      suspiciousPatterns: findIn(start,end,["Suspicious patterns"]),
+      suspiciousPhotos: findIn(start,end,["Suspicious photos"]),
+      suspiciousScreenshots: findIn(start,end,["Suspicious screenshots"]),
+    };
+  });
+  return {summary, blocks};
+}
+function parseNum(v){ if(v==null||String(v).trim()==="") return null; const n = parseFloat(v); return isNaN(n)? null : n; }
+function parsePct(v){ if(v==null||String(v).trim()==="") return null; const m = String(v).match(/-?\d+(\.\d+)?/); return m? parseFloat(m[0]) : null; }
+function yesBool(v){ const s = String(v||"").trim().toLowerCase(); return s==="yes" || s==="true"; }
+
+function rowToSubmission(row, summary, blocks, mapping){
+  const email = (row[summary.email]||"").trim();
+  const formB = email.split("@")[0].trim();
+  return {
+    formB, email,
+    name: summary.name>=0 ? (row[summary.name]||"").trim() : "",
+    score: parseNum(row[summary.score]),
+    scorePercentage: parsePct(row[summary.scorePct]),
+    durationMinutes: parseNum(row[summary.duration]),
+    completelyFilled: summary.completelyFilled>=0 ? yesBool(row[summary.completelyFilled]) : null,
+    startedAt: summary.startedAt>=0 ? (row[summary.startedAt]||"").trim() : "",
+    submittedAt: summary.submittedAt>=0 ? (row[summary.submittedAt]||"").trim() : "",
+    trustScore: summary.trustScore>=0 ? (row[summary.trustScore]||"").trim() : "",
+    botDetection: summary.botDetection>=0 ? (row[summary.botDetection]||"").trim() : "",
+    switchedTabsTotal: parseNum(row[summary.switchedTabsTotal]),
+    facePresencePct: parsePct(row[summary.facePresence]),
+    faceMatchPct: parsePct(row[summary.faceMatch]),
+    blankShots: yesBool(row[summary.blankShots]),
+    multipleScreens: yesBool(row[summary.multipleScreens]),
+    answers: mapping.map(questionId=>({questionId, chosenLabel:"", result:"", score:null, switchedTabs:null, suspiciousPatterns:"", suspiciousPhotos:0, suspiciousScreenshots:0}))
+      .map((a,i)=>{
+        const b = blocks[i];
+        if(!b) return a;
+        return {
+          questionId: a.questionId,
+          chosenLabel: b.chosen>=0 ? (row[b.chosen]||"").trim() : "",
+          result: b.result>=0 ? (row[b.result]||"").trim() : "",
+          score: b.score>=0 ? parseNum(row[b.score]) : null,
+          switchedTabs: b.switchedTabs>=0 ? yesBool(row[b.switchedTabs]) : null,
+          suspiciousPatterns: b.suspiciousPatterns>=0 ? (row[b.suspiciousPatterns]||"").trim() : "",
+          suspiciousPhotos: b.suspiciousPhotos>=0 ? (parseNum(row[b.suspiciousPhotos])||0) : 0,
+          suspiciousScreenshots: b.suspiciousScreenshots>=0 ? (parseNum(row[b.suspiciousScreenshots])||0) : 0,
+        };
+      }),
+  };
+}
+// Computed fresh from the submission's raw signal fields + whatever
+// thresholds are passed in -- used both to snapshot integrityFlags.auto
+// at import time AND, unchanged, to live-filter the Student Performance
+// dashboard as an admin edits thresholds there (Phase 3) with no
+// reimport needed. Deliberately does NOT invent a "multiple faces"
+// signal the CSV doesn't contain (confirmed with the project owner) --
+// only flags what Quilgo itself actually reports; anything else is a
+// manual flag a human applies after reviewing Quilgo's own report.
+function computeAutoFlags(sub, th){
+  const reasons = [];
+  if(th.flagOnTrustScoreLow && sub.trustScore==="Low") reasons.push("Low Quilgo trust score");
+  if(sub.switchedTabsTotal!=null && sub.switchedTabsTotal>th.maxTabSwitches) reasons.push(`Switched tabs/windows ${sub.switchedTabsTotal} times (over ${th.maxTabSwitches})`);
+  if(sub.faceMatchPct!=null && sub.faceMatchPct<th.minFaceMatchPct) reasons.push(`Face match ${sub.faceMatchPct}% (under ${th.minFaceMatchPct}%)`);
+  if(sub.facePresencePct!=null && sub.facePresencePct<th.minFacePresencePct) reasons.push(`Face presence ${sub.facePresencePct}% (under ${th.minFacePresencePct}%)`);
+  if(th.flagOnBlankShots && sub.blankShots) reasons.push("Blank camera shots detected");
+  if(th.flagOnMultipleScreens && sub.multipleScreens) reasons.push("Multiple screens detected");
+  const totalSuspiciousPhotos = (sub.answers||[]).reduce((s,a)=>s+(a.suspiciousPhotos||0),0);
+  if(totalSuspiciousPhotos>th.maxSuspiciousPhotos) reasons.push(`${totalSuspiciousPhotos} suspicious photo(s) flagged across answers (over ${th.maxSuspiciousPhotos})`);
+  return reasons;
+}
+
 function renderResultsImport(body){
-  body.innerHTML = `<div class="empty">Results import (the Quilgo CSV) is coming in the next phase of this build.</div>`;
+  const picker = resolveContestPicker(ppResLevel, ppResDay, ppResSlot, ppResContestId);
+  ppResContestId = picker.resolvedId;
+  const contest = contests.find(c=>c.id===ppResContestId);
+  body.innerHTML = `
+    <div class="level-block">
+      <b style="font-size:12.5px;">Pick the paper</b>
+      ${contestPickerHtml("pp-res", ppResLevel, ppResDay, ppResSlot, picker)}
+    </div>
+    <div id="pp-res-body" style="margin-top:14px;"></div>
+  `;
+  document.getElementById("pp-res-level").addEventListener("change", e=>{ ppResLevel=e.target.value; ppResDay=""; ppResSlot=""; ppResContestId=""; renderResultsImport(body); });
+  document.getElementById("pp-res-day")?.addEventListener("change", e=>{ ppResDay=e.target.value; ppResSlot=""; ppResContestId=""; renderResultsImport(body); });
+  document.getElementById("pp-res-slot")?.addEventListener("change", e=>{ ppResSlot=e.target.value; renderResultsImport(body); });
+  body.querySelectorAll("[data-pp-res-pick]").forEach(b=>b.addEventListener("click", ()=>{ ppResContestId=b.dataset.ppResPick; renderResultsImport(body); }));
+  renderResultsImportBody(document.getElementById("pp-res-body"), contest);
 }
+
+function renderResultsImportBody(box, contest){
+  if(!contest){ box.innerHTML = emptyState("Pick a category, day, and slot above to choose a paper to import results for."); return; }
+  const targetN = (contest.questionIds||[]).length;
+  let parsed = null, headerInfo = null, mapping = null;
+  box.innerHTML = `
+    <div class="section-label" style="margin-top:0;">${escapeHtml(contest.contestLevel||"")} — Day ${contest.day}, Slot ${contest.slot} — ${escapeHtml(contest.name)}</div>
+    ${contest.resultsImportedAt ? `<div class="callout">Results already imported: <b>${contest.submissionCount||0}</b> submission(s), by ${escapeHtml(contest.resultsImportedBy||"—")} on ${fmtDate(contest.resultsImportedAt)}. Re-importing overwrites matching rows (same Form B) — it won't duplicate.</div>` : ""}
+    <p class="hint">This paper has <b>${targetN}</b> question(s). Quilgo's export may reserve more question-column slots than this paper used — only the first ${targetN} detected question block(s) are imported, matched to this paper's question order.</p>
+    <div class="field"><label>Quilgo results CSV</label><input type="file" id="pp-res-file" accept=".csv,text/csv" /></div>
+    <div id="pp-res-preview"></div>
+    <div id="pp-res-mapping"></div>
+    <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn primary" id="pp-res-import-btn" disabled>Import results</button>
+      <button class="btn" id="pp-res-runpost-btn">Run post-processing (compute item stats)</button>
+    </div>
+  `;
+  document.getElementById("pp-res-file").addEventListener("change", async e=>{
+    const file = e.target.files[0];
+    const preview = document.getElementById("pp-res-preview");
+    const mappingBox = document.getElementById("pp-res-mapping");
+    const importBtn = document.getElementById("pp-res-import-btn");
+    importBtn.disabled = true;
+    if(!file){ preview.innerHTML=""; mappingBox.innerHTML=""; return; }
+    try{
+      const text = await file.text();
+      parsed = parseCsv(text);
+      headerInfo = parseResultsHeader(parsed.header);
+      if(headerInfo.summary.email<0){
+        preview.innerHTML = `<div class="callout warn">Couldn't find an "Email" column in this file's header — is this a Quilgo results export?</div>`;
+        return;
+      }
+      const detected = headerInfo.blocks.length;
+      const used = Math.min(detected, targetN);
+      mapping = (contest.questionIds||[]).slice(0, used);
+      preview.innerHTML = `
+        <div class="callout" style="margin-top:8px;">
+          ${parsed.rows.length} student row(s) parsed. ${detected} question-column block(s) detected in this file${detected!==targetN?`, but this paper has ${targetN} question(s) — using the first ${used}.`:"."}
+          ${detected<targetN ? `<br>⚠ Fewer columns than questions — the last ${targetN-detected} question(s) on this paper will get no data from this file.` : ""}
+        </div>`;
+      mappingBox.innerHTML = mapping.length ? `
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Question column mapping (override if column order doesn't match this paper's order)</summary>
+          <table class="mono" style="width:100%; font-size:12px; margin-top:8px;">
+            ${mapping.map((qid,i)=>{
+              return `<tr><td style="padding:3px 6px;">Column ${i+1}</td><td style="padding:3px 6px;">
+                <select data-map-idx="${i}">
+                  ${(contest.questionIds||[]).map((oid,oi)=>{
+                    const oq = questions.find(x=>x.id===oid);
+                    return `<option value="${oid}" ${oid===qid?"selected":""}>${oi+1}. ${escapeHtml((oq&&oq.titleEn)||oid)}</option>`;
+                  }).join("")}
+                </select>
+              </td></tr>`;
+            }).join("")}
+          </table>
+        </details>` : "";
+      mappingBox.querySelectorAll("[data-map-idx]").forEach(sel=>sel.addEventListener("change", ev=>{
+        mapping[parseInt(ev.target.dataset.mapIdx,10)] = ev.target.value;
+      }));
+      importBtn.disabled = parsed.rows.length===0;
+    }catch(err){ console.error(err); preview.innerHTML = `<div class="callout warn">Couldn't read that file.</div>`; }
+  });
+  document.getElementById("pp-res-import-btn").addEventListener("click", async ()=>{
+    if(!parsed || !headerInfo || !mapping) return;
+    if(!(await confirmDialog(`Import ${parsed.rows.length} result row(s) for "${contest.name}"? Re-importing the same Form B for this contest overwrites that row — it won't duplicate.`))) return;
+    const btn = document.getElementById("pp-res-import-btn");
+    btn.disabled = true; btn.textContent = "Importing…";
+    try{
+      const th = await loadIntegrityThresholds();
+      const key = sittingKey(contest.contestLevel, contest.day, contest.slot);
+      let written = 0, skipped = 0;
+      for(let i=0;i<parsed.rows.length;i+=400){
+        const chunk = parsed.rows.slice(i,i+400);
+        const subs = chunk.map(row=>rowToSubmission(row, headerInfo.summary, headerInfo.blocks, mapping));
+        await Promise.all(subs.map(async sub=>{
+          if(!sub.formB) return;
+          try{
+            const rs = await getDoc(doc(db,"studentRoster",`${sub.formB}_${key}`));
+            sub.rosterMatched = rs.exists();
+            if(rs.exists()){ const rd = rs.data(); sub.name = sub.name || rd.name || ""; sub.district = rd.district||""; sub.school = rd.school||""; }
+          }catch(e){ sub.rosterMatched = false; }
+        }));
+        const batch = writeBatch(db);
+        subs.forEach(sub=>{
+          if(!sub.formB){ skipped++; return; }
+          sub.contestId = contest.id;
+          sub.contestLevel = contest.contestLevel||"";
+          sub.day = contest.day; sub.slot = contest.slot;
+          sub.integrityFlags = { auto: computeAutoFlags(sub, th), manual: [] };
+          sub.meritStatus = "eligible";
+          sub.reviewStatus = "unreviewed";
+          sub.importedAt = new Date().toISOString();
+          sub.importedBy = currentUser.email;
+          batch.set(doc(db,"examSubmissions",`${contest.id}_${sub.formB}`), sub);
+          written++;
+        });
+        await batch.commit();
+      }
+      await updateDoc(doc(db,"contests",contest.id), { resultsImportedAt:new Date().toISOString(), resultsImportedBy:currentUser.email, submissionCount: written });
+      logActivity("results_imported", `Imported ${written} result row(s) for "${contest.name}"`, contest.id);
+      toast(`Imported ${written} result row(s)${skipped?`, skipped ${skipped} row(s) with no email`:""}`);
+      contest.resultsImportedAt = new Date().toISOString(); contest.resultsImportedBy = currentUser.email; contest.submissionCount = written;
+      btn.textContent = "Import results";
+      renderResultsImportBody(box, contest);
+    }catch(err){ console.error(err); toast("Couldn't import results ("+err.code+")"); btn.textContent="Import results"; btn.disabled=false; }
+  });
+  document.getElementById("pp-res-runpost-btn").addEventListener("click", async ()=>{
+    const btn = document.getElementById("pp-res-runpost-btn");
+    btn.disabled = true; btn.textContent = "Running…";
+    try{
+      const snap = await getDocs(query(collection(db,"examSubmissions"), where("contestId","==",contest.id)));
+      const subs = []; snap.forEach(d=>subs.push(d.data()));
+      if(subs.length===0){ toast("No imported submissions found for this contest yet"); btn.textContent="Run post-processing (compute item stats)"; btn.disabled=false; return; }
+      subs.sort((a,b)=>(b.score??0)-(a.score??0));
+      // Classic top/bottom-27% item-analysis groups, same methodology the
+      // existing manual stat-entry form's labels already describe.
+      const groupSize = Math.max(1, Math.round(subs.length*0.27));
+      const topGroup = subs.slice(0, groupSize);
+      const botGroup = subs.slice(-groupSize);
+      let qCount = 0;
+      for(const qid of (contest.questionIds||[])){
+        const find = s=>(s.answers||[]).find(a=>a.questionId===qid);
+        const all = subs.map(find).filter(Boolean);
+        const attempts = all.filter(a=>(a.chosenLabel||"")!=="").length;
+        if(attempts===0) continue;
+        const correct = all.filter(a=>a.result==="Correct").length;
+        const topAns = topGroup.map(find).filter(Boolean);
+        const botAns = botGroup.map(find).filter(Boolean);
+        const topN = topAns.length, topCorrect = topAns.filter(a=>a.result==="Correct").length;
+        const botN = botAns.length, botCorrect = botAns.filter(a=>a.result==="Correct").length;
+        const p = correct/attempts;
+        const d = (topN>0?topCorrect/topN:0) - (botN>0?botCorrect/botN:0);
+        const ql = qualityLabel(p,d);
+        await setDoc(doc(db,"questions",qid,"stats","post_test"), {
+          attempts, correct, topN, topCorrect, botN, botCorrect,
+          pValue:p, discrimination:d, qualityLabel:ql.l, qualityKey:ql.v,
+          enteredBy: `${currentUser.displayName||currentUser.email} (auto, CSV import)`,
+          updatedAt:new Date().toISOString(), source:"csv_import", contestId:contest.id,
+        });
+        qCount++;
+      }
+      logActivity("post_processing_run", `Computed item stats for ${qCount} question(s) from "${contest.name}" (${subs.length} submission(s))`, contest.id);
+      toast(`Computed stats for ${qCount} question(s) across ${subs.length} submission(s)`);
+      loadAllStats();
+    }catch(err){ console.error(err); toast("Couldn't run post-processing ("+err.code+")"); }
+    btn.textContent = "Run post-processing (compute item stats)"; btn.disabled = false;
+  });
+}
+
+// ---------------- 3. Item Analysis dashboard ----------------
+// Reuses the existing questions/{id}/stats/post_test docs (now populated
+// by "Run post-processing" above instead of hand-typed) alongside each
+// question's own skill/unit tags already in the bank -- the linkage is
+// free since both sides key off the same questionId. Cross-slot combine,
+// pivot tables and charts are a later polish pass (plan Phase 5); this
+// is the real per-paper table.
 function renderItemAnalysis(body){
-  body.innerHTML = `<div class="empty">Item Analysis dashboard is coming once results import is in place.</div>`;
+  const picker = resolveContestPicker(ppItemLevel, ppItemDay, ppItemSlot, ppItemContestId);
+  ppItemContestId = picker.resolvedId;
+  const contest = contests.find(c=>c.id===ppItemContestId);
+  body.innerHTML = `
+    <div class="level-block">
+      <b style="font-size:12.5px;">Pick a paper</b>
+      ${contestPickerHtml("pp-item", ppItemLevel, ppItemDay, ppItemSlot, picker)}
+    </div>
+    <div id="pp-item-table" style="margin-top:14px;"></div>
+  `;
+  document.getElementById("pp-item-level").addEventListener("change", e=>{ ppItemLevel=e.target.value; ppItemDay=""; ppItemSlot=""; ppItemContestId=""; renderItemAnalysis(body); });
+  document.getElementById("pp-item-day")?.addEventListener("change", e=>{ ppItemDay=e.target.value; ppItemSlot=""; ppItemContestId=""; renderItemAnalysis(body); });
+  document.getElementById("pp-item-slot")?.addEventListener("change", e=>{ ppItemSlot=e.target.value; renderItemAnalysis(body); });
+  body.querySelectorAll("[data-pp-item-pick]").forEach(b=>b.addEventListener("click", ()=>{ ppItemContestId=b.dataset.ppItemPick; renderItemAnalysis(body); }));
+  renderItemAnalysisTable(document.getElementById("pp-item-table"), contest);
 }
+async function renderItemAnalysisTable(box, contest){
+  if(!contest){ box.innerHTML = emptyState("Pick a category, day, and slot above to see that paper's item analysis."); return; }
+  box.innerHTML = `<div class="hint">Loading item statistics…</div>`;
+  const qs = (contest.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
+  const rows = await Promise.all(qs.map(async (q,i)=>{
+    try{ const snap = await getDoc(doc(db,"questions",q.id,"stats","post_test")); return {q, i, d: snap.exists()?snap.data():null}; }
+    catch(e){ return {q,i,d:null}; }
+  }));
+  if(!box.isConnected) return;
+  const withStats = rows.filter(r=>r.d);
+  box.innerHTML = `
+    <div class="section-label" style="margin-top:0;">${escapeHtml(contest.name)} — ${qs.length} question(s), ${withStats.length} with computed stats</div>
+    ${withStats.length===0 ? emptyState("No item statistics yet for this paper — import results and run post-processing from the Import results tab.") : `
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr>
+        <th style="text-align:left; padding:6px;">#</th><th style="text-align:left; padding:6px;">Question</th>
+        <th style="text-align:left; padding:6px;">Unit</th><th style="text-align:left; padding:6px;">Skills</th>
+        <th style="text-align:right; padding:6px;">Attempts</th><th style="text-align:right; padding:6px;">p-value</th>
+        <th style="text-align:right; padding:6px;">Discrimination</th><th style="text-align:left; padding:6px;">Quality</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(({q,i,d})=>`
+          <tr style="border-top:1px solid var(--border);">
+            <td class="mono" style="padding:6px;">${i+1}</td>
+            <td style="padding:6px; max-width:280px;">${escapeHtml(q.titleEn||"Untitled")}</td>
+            <td style="padding:6px;">${escapeHtml(q.unit||"—")}</td>
+            <td style="padding:6px;">${(q.skills||[]).map(escapeHtml).join(", ")||"—"}</td>
+            <td class="mono" style="padding:6px; text-align:right;">${d?d.attempts:"—"}</td>
+            <td class="mono" style="padding:6px; text-align:right;">${d&&d.pValue!=null?d.pValue.toFixed(2):"—"}</td>
+            <td class="mono" style="padding:6px; text-align:right;">${d&&d.discrimination!=null?d.discrimination.toFixed(2):"—"}</td>
+            <td style="padding:6px;">${d?`<span class="quality ${d.qualityKey}">${d.qualityLabel}</span>`:"—"}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`}
+  `;
+}
+
 function renderStudentPerformance(body){
-  body.innerHTML = `<div class="empty">Student Performance dashboard (integrity review + merit list) is coming once results import is in place.</div>`;
+  body.innerHTML = `<div class="empty">Student Performance dashboard (integrity review + merit list) is coming in the next phase of this build.</div>`;
 }
 function renderReviewStudents(){
   const main = document.getElementById("main");

@@ -513,9 +513,10 @@ studentRoster/{formB}_{sittingKey}   -- Oct 2026, Post Processing tab, Phase 1
   import (below) joins back to this roster.
   formB, name, district, school, fatherName, pmcType, day, slot, importedAt, importedBy
 
-examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 (not yet built as
-  of this writing -- Phase 1 shipped the data model + roster import only;
-  see the plan file this was built from for the full phase breakdown).
+examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 of the post-exam
+  pipeline (results import + auto-flagging + the post-processing run that
+  populates post_test stats -- see `renderResultsImport()`/
+  `renderResultsImportBody()`/`renderItemAnalysis()` in index.html).
   One doc per student per contest sitting, parsed from the actual Quilgo
   CSV export client-side (parseCsv() in index.html -- a small hand-rolled
   RFC4180-ish parser, no library, verified against a real export:
@@ -525,11 +526,17 @@ examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 (not yet built as
   batched writeBatch() calls (400/batch, under Firestore's 500 cap) happen
   entirely client-side -- no Apps Script relay for this part (that stays
   where it already is, for the hourly Drive backup, a different job).
-  formB, email, name, contestId, contestLevel, day, slot,
+  formB, email, name, district, school (the last two backfilled from the
+  matching studentRoster doc at import time, when one exists),
+  contestId, contestLevel, day, slot,
   score, scorePercentage, durationMinutes, completelyFilled,
-  startedAt, submittedAt, trustScore, switchedTabsTotal,
-  facePresencePct, faceMatchPct, blankShots, multipleScreens, botDetection,
-  answers: [{questionId, chosenLabel, result, score, switchedTabs,
+  startedAt, submittedAt, trustScore, switchedTabsTotal (numeric, the
+  summary-level column), facePresencePct, faceMatchPct, blankShots,
+  multipleScreens, botDetection,
+  answers: [{questionId, chosenLabel, result, score, switchedTabs (bool --
+             Quilgo's PER-QUESTION column of this name is actually a
+             Yes/No flag, not a count, unlike the summary-level total
+             above; confirmed by reading the raw CSV values directly),
              suspiciousPatterns, suspiciousPhotos, suspiciousScreenshots}],
   -- answers[i].questionId is resolved from contest.questionIds[i] at
   -- import time (confirmed with the project owner: Quilgo's question
@@ -537,39 +544,68 @@ examSubmissions/{contestId}_{formB}   -- Oct 2026, Phase 2 (not yet built as
   -- contest.questionIds.length -- the real Quilgo export reserves more
   -- question-column slots than a given paper actually uses (134 in the
   -- sample file vs. a real 30-question paper), so this slice is what
-  -- keeps the padding from being misread as extra questions.
+  -- keeps the padding from being misread as extra questions. Column
+  -- blocks are detected by header LABEL (parseResultsHeader() in
+  -- index.html, every "[Question]"-prefixed header cell, each field
+  -- within a block found by label too, not fixed offsets) so minor
+  -- column reordering across export batches doesn't silently misalign
+  -- the import -- the Import results screen also shows an editable
+  -- override table (defaults to positional) as a safety net. NOTE: in
+  -- the sample file, the first 30 raw blocks don't line up 1:1 with 30
+  -- real per-student answers (most students show far fewer than 30
+  -- attempted among the first 30 blocks) -- the 134 blocks sit under 30
+  -- "[Section]" markers with an uneven 3-5 blocks each, so the real
+  -- question-to-block relationship for a given paper may not simply be
+  -- "the first N in file order." Always check the override table against
+  -- a couple of known students' real answers on a genuine import rather
+  -- than trusting the positional default blindly.
   integrityFlags: {auto:[reason,...], manual:[{reason,by,byName,at}]},
-  -- auto-computed at import time from settings/integrityThresholds
-  -- (below); Quilgo's export has no literal "multiple faces" column --
-  -- confirmed with the project owner to use Face match %/Face presence
-  -- %/Suspicious photos count as the closest automatic proxies, and leave
-  -- anything the CSV can't catch to a human flagging it manually after
-  -- checking Quilgo's own proctoring report for that submission.
+  -- auto array is a SNAPSHOT computed at import time via computeAutoFlags()
+  -- from settings/integrityThresholds (below); the Student Performance
+  -- dashboard (Phase 3) recomputes the same function fresh from this doc's
+  -- raw signal fields whenever an admin edits a threshold there, so
+  -- "more than 10 tab switches, or any number" applies live without a
+  -- reimport -- the stored snapshot is only a convenience for anything
+  -- that reads it directly (the Review Students tab, badges). Quilgo's
+  -- export has no literal "multiple faces" column -- confirmed with the
+  -- project owner to use Face match %/Face presence %/Suspicious photos
+  -- count as the closest automatic proxies, and leave anything the CSV
+  -- can't catch to a human flagging it manually after checking Quilgo's
+  -- own proctoring report for that submission.
   meritStatus: "eligible"|"excluded", reviewStatus: "unreviewed"|"assigned"|"cleared"|"flagged",
   rosterMatched (bool -- false if no studentRoster doc found for this formB+sitting),
   importedAt, importedBy
 
-contests/{contestId}  -- (Phase 2) gains resultsImportedAt, resultsImportedBy, submissionCount
+contests/{contestId}  -- gains resultsImportedAt, resultsImportedBy,
+  submissionCount, set by the Import results screen's "Import results"
+  button (Phase 2).
 
-settings/integrityThresholds   -- (Phase 2) single doc, admin-adjustable, same
+settings/integrityThresholds   -- single doc, admin-adjustable, same
   pattern as settings/limits. maxTabSwitches (default 10), minFaceMatchPct
   (default 50), minFacePresencePct (default 50), maxSuspiciousPhotos
   (default 3), flagOnTrustScoreLow/flagOnBlankShots/flagOnMultipleScreens
-  (bool, default true) -- editable live as filter inputs on the Student
-  Performance dashboard, not just a settings form, so "more than 10 tab
-  switches, or any number" applies instantly without a reimport.
+  (bool, default true) -- loaded once per session via loadIntegrityThresholds()
+  (falls back to these same defaults if the doc doesn't exist yet, same
+  "works with zero setup" pattern as settings/limits), used by
+  computeAutoFlags() at import time; a Phase 3 admin-editable form on the
+  Student Performance dashboard will let these be adjusted live as filter
+  inputs there, not just a one-time settings write.
 
 reviewAssignments/{assignmentId}   -- (Phase 4) admin-created batches
   assigning specific students to a specific student reviewer, same
   balanced-random load-balancing shape already used for pickReviewer().
   contestId, reviewerEmail, reviewerName, formBs:[...], createdAt, createdBy
 
-questions/{id}/stats/post_test (existing collection, see above) -- once
-  Phase 2's post-processing run exists, this gets populated AUTOMATICALLY
-  from real examSubmissions data instead of the admin hand-typing six
-  aggregate numbers into renderStatForm() -- same fields, same
-  qualityLabel() formula, so the existing "Scored questions" table needs
-  zero changes itself to start showing real computed numbers.
+questions/{id}/stats/post_test (existing collection, see above) -- the
+  Import results screen's "Run post-processing" button now populates this
+  AUTOMATICALLY from real examSubmissions data (classic top/bottom ~27%
+  item-analysis groups by total score) instead of the admin hand-typing
+  six aggregate numbers into renderStatForm() -- same fields, same
+  qualityLabel() formula, plus two additive fields (source:"csv_import",
+  contestId) -- so the existing "Scored questions" table needed zero
+  changes itself to start showing real computed numbers, and can be
+  re-run any time (e.g. after fixing a question-column mapping) without
+  re-importing the CSV.
 
 teachers/{email}  -- gains isStudentReviewer: boolean (Oct 2026, additive --
   independent of the existing single `role` field, which stays completely
@@ -598,13 +634,23 @@ New nav tab "Post Processing" (admin-only, same client-side hide pattern
 as the existing Admin tab -- `document.querySelectorAll('[data-tab=
 "postproc"]').forEach(b=>b.hidden = !isAdminUser)` in checkTeacherStatus()).
 Four inner sections via `postProcTab` state + `renderPostProcessing()`:
-Import roster (built, Phase 1), Import results / Item Analysis / Student
-Performance (stubs as of Phase 1, see `renderResultsImport()`/
-`renderItemAnalysis()`/`renderStudentPerformance()` -- each is a one-line
-placeholder until its phase ships). `parseCsv(text)` and `findColIndex(header,
-candidates)` (both top-level functions, placed just above `renderPostProcessing()`)
-are the two reusable pieces both the roster and (future) results importers
-share -- verified directly against the real Quilgo export file in this repo.
+Import roster (built, Phase 1); Import results and Item Analysis (built,
+Phase 2 -- `renderResultsImport()`/`renderResultsImportBody()` and
+`renderItemAnalysis()`/`renderItemAnalysisTable()`); Student Performance
+(still a stub, Phase 3). `parseCsv(text)`/`findColIndex(header, candidates)`
+(roster) and `parseResultsHeader(header)` (results -- label-based, not
+fixed-offset, detection of every repeating Quilgo question-column block)
+are the reusable CSV-shape-detection pieces, both verified directly
+against the real Quilgo export file in this repo. Both the Import results
+and Item Analysis sections share one cascading category/day/slot contest
+picker implementation (`resolveContestPicker()`/`contestPickerHtml()`),
+factored out of the pattern `renderQuilgo()` already used for the Upload
+tab, but kept on separate state variables (`ppResLevel/Day/Slot/ContestId`
+vs `ppItemLevel/Day/Slot/ContestId`) so visiting one sub-tab never resets
+the other's picker. `qualityLabel()` and the `questions/{id}/stats/post_test`
+write shape are shared verbatim with the pre-existing manual
+`renderStatForm()` entry path -- the Admin tab's "Scored questions" table
+doesn't care which path populated a question's stats.
 
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
