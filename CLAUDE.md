@@ -109,9 +109,21 @@ questions/{questionId}
     reviewerOptionId, reviewerNote, reviewTimeMinutes, outcome,
     issueFlag, issueNote } | null,
     -- added Oct 2026. Auto-assigned (pickReviewer() -- random among
-    -- whoever has the fewest currently-"pending" reviews, i.e. balanced
-    -- load, not round-robin) the moment status is set to "in_review" and no
-    -- peerReview exists yet. Candidates are allowlisted by role (teacher or
+    -- whoever has the fewest reviews EVER ASSIGNED to them lifetime, any
+    -- outcome, i.e. balanced load, not round-robin) the moment status is
+    -- set to "in_review" and no peerReview exists yet. Fixed Oct 2026
+    -- after a real report of one teacher ending up with noticeably more
+    -- reviews than everyone else: this used to count only
+    -- outcome==="pending" as load, which balances CURRENT QUEUE DEPTH,
+    -- not lifetime total -- a reviewer who cleared their queue quickly
+    -- cycled straight back to load 0 and kept getting picked again, so a
+    -- fast responder racked up far more TOTAL reviews over time than a
+    -- slow one (whose growing pending backlog perversely protected them
+    -- from further assignment). Now counts every review ever assigned
+    -- regardless of current outcome, computed fresh from live `questions`
+    -- state on every call (not a persisted counter), so taking a review
+    -- away from someone (admin's "Take back" in Pending reviews) lowers
+    -- their load back down immediately. Candidates are allowlisted by role (teacher or
     -- qb_lead only -- never admin/external_reviewer/uploader, and any
     -- future role is excluded by default instead of needing to be added to
     -- a denylist), AND must already have an assigned chapter quota
@@ -429,6 +441,18 @@ submitted, click opens the normal drawer via `openQuestion()` so they can
 see it in context) -- same split `myReviewStats()` already counted for the
 donut, now browsable as an actual list instead of only a count.
 
+Reviews progress pie (Oct 2026, part of the same pickReviewer() balancing
+fix above): the rail's "Reviews" card donut used to only break down
+already-COMPLETED reviews by OK/sent-back (`rv.agree`/`rv.disagree`),
+with pending work visible only as a count on the "N to do" button --
+nothing showed assigned-vs-done at a glance the way the "Your questions"
+donut right above it does for authoring. The donut now plots
+done(`rv.total`)-vs-assigned(`pending.length`) as its two segments
+(label "done"), with the OK/sent-back split kept as a second legend line
+underneath -- so a teacher's own view has both progress pies (questions
+authored, reviews assigned+done) visible together, side by side, per
+explicit request.
+
 "Sent back" visibility for the author (Oct 2026): previously a reviewer's
 "disagree" only ever surfaced once the author happened to open that
 specific question (its drawer's peer-review card, or the editor's warning
@@ -676,49 +700,83 @@ teachers/{email}  -- gains isStudentReviewer: boolean (Oct 2026, additive --
 New nav tab "Post Processing" (admin-only, same client-side hide pattern
 as the existing Admin tab -- `document.querySelectorAll('[data-tab=
 "postproc"]').forEach(b=>b.hidden = !isAdminUser)` in checkTeacherStatus()).
-Four inner sections via `postProcTab` state + `renderPostProcessing()`:
-Import roster (built, Phase 1); Import results and Item Analysis (built,
-Phase 2 -- `renderResultsImport()`/`renderResultsImportBody()` and
-`renderItemAnalysis()`/`renderItemAnalysisTable()`); Student Performance
-(built, Phase 3 -- `renderStudentPerformance()`/
-`renderStudentPerformanceBody()`). An admin ticks one or more sittings
-with imported results (checkboxes, not a single cascading pick, since
-"combine all 4 PMC-4 slots" or "PMC-4 + PMC-5 merit" both just mean
-ticking more boxes), "Load" fetches examSubmissions for those contestIds
-in chunks of 30 (Firestore `in` cap -- comfortably above this project's
-real max of 24 = 6 slots x 4 categories), cached in `ppStudSubs` for the
-rest of the tab visit. Shows, in the order the project owner asked for:
-(1) an integrity table -- only rows with at least one auto-flag, an
-existing manual flag, or an existing exclusion, sorted by flag count --
-with the threshold inputs editable right above it and applied live via
-the SAME `computeAutoFlags()` results import already uses (no reimport,
-no Firestore write unless "Save as default thresholds" is clicked); each
+Four inner sections via `postProcTab` state + `renderPostProcessing()`,
+ALL FOUR now fully built (Phase 5, the plan's last phase, shipped Oct
+2026): Import roster (Phase 1); Import results (Phase 2 --
+`renderResultsImport()`/`renderResultsImportBody()`); Student Performance
+(Phase 3+5 -- `renderStudentPerformance()`/`renderStudentPerformanceBody()`);
+Item Analysis (Phase 2, rebuilt for Phase 5 -- `renderItemAnalysis()`/
+`loadItemAnalysis()`/`renderItemAnalysisBody()`).
+
+Student Performance: an admin ticks one or more sittings with imported
+results (checkboxes, not a single cascading pick, since "combine all 4
+PMC-4 slots" or "PMC-4 + PMC-5 merit" both just mean ticking more boxes),
+"Load" fetches examSubmissions for those contestIds in chunks of 30
+(Firestore `in` cap -- comfortably above this project's real max of 24 =
+6 slots x 4 categories), cached in `ppStudSubs` for the rest of the tab
+visit. Shows, in the order the project owner asked for: (1) an integrity
+table -- only rows with at least one auto-flag, an existing manual flag,
+or an existing exclusion, sorted by flag count -- with the threshold
+inputs editable right above it and applied live via the SAME
+`computeAutoFlags()` results import already uses (no reimport, no
+Firestore write unless "Save as default thresholds" is clicked); each
 row's Flag/Clear action writes `examSubmissions.integrityFlags.manual`/
 `meritStatus` directly (matches firestore.rules' `isStudentReviewer()`
-field allowlist exactly -- the Review Students tab's own Flag/Clear,
-below, writes through the exact same two fields); a checkbox per row
-plus "Assign checked to reviewers" sends the ticked students through
+field allowlist exactly -- the Review Students tab's own Flag/Clear
+writes through the exact same two fields); a checkbox per row plus
+"Assign checked to reviewers" sends the ticked students through
 `assignSubmissionsToReviewers()` (see the `reviewAssignments` entry
 above) and is how students actually end up in someone's Review Students
-tab; (2) a full merit list (score desc, excluded rows greyed out and
-skipped in rank numbering, not deleted or hidden) with a CSV export
+tab; (2) Phase 5 additions, both pure read-only computations over the
+already-loaded `ppStudSubs` (no new Firestore reads/writes) -- a score-
+distribution histogram (`simpleBarSvg()`, bucketed by `scorePercentage`
+in 10-point bands rather than raw score, since raw scores aren't
+comparable once sittings with different total marks are combined) and a
+"Top N performers — question breakdown" table (N capped at 20, not every
+loaded submission, to keep the DOM light at real scale): of the top-N
+non-excluded students by score, what % got each question right, sorted
+worst-first so a question even strong students are missing stands out;
+(3) a full merit list (score desc, excluded rows greyed out and skipped
+in rank numbering, not deleted or hidden) with a CSV export
 (`exportMeritListCsv()`, same Blob/`<a download>` pattern
-`exportAllData()` already uses). Score-distribution chart and a top-N
-discrimination cross-reference stay Phase 5 polish -- not needed for the
-dashboard to be genuinely useful today. `parseCsv(text)`/`findColIndex(header, candidates)`
-(roster) and `parseResultsHeader(header)` (results -- label-based, not
-fixed-offset, detection of every repeating Quilgo question-column block)
-are the reusable CSV-shape-detection pieces, both verified directly
-against the real Quilgo export file in this repo. Both the Import results
-and Item Analysis sections share one cascading category/day/slot contest
-picker implementation (`resolveContestPicker()`/`contestPickerHtml()`),
-factored out of the pattern `renderQuilgo()` already used for the Upload
-tab, but kept on separate state variables (`ppResLevel/Day/Slot/ContestId`
-vs `ppItemLevel/Day/Slot/ContestId`) so visiting one sub-tab never resets
-the other's picker. `qualityLabel()` and the `questions/{id}/stats/post_test`
-write shape are shared verbatim with the pre-existing manual
+`exportAllData()` already uses).
+
+Item Analysis was REWRITTEN for Phase 5, not just extended: it now ticks
+sittings the same multi-select way Student Performance does (own state,
+`ppItemSelectedIds`/`ppItemSubs`), and computes p-value/discrimination/
+quality LIVE in the browser from whichever sitting(s) are loaded, instead
+of reading the stored `questions/{id}/stats/post_test` doc the way it did
+through Phase 2. This is what makes "combine across slots" possible: tick
+several sittings a question was reused across and its attempts/correct/
+top/bottom pool together client-side before p/d is computed -- read-only,
+nothing written to Firestore, so it does NOT disturb the stored
+`post_test` docs "Run post-processing" (Import results tab) still writes,
+which the pre-existing Admin "Scored questions" table still reads exactly
+as before. Below the per-question table: two roll-up bar charts (average
+discrimination by skill, average p-value by difficulty tier) and a plain
+HTML skill x difficulty pivot table of average discrimination -- all
+three derived from the same live-computed rows, no extra Firestore reads.
+Known tradeoff, inherited from the identical choice already accepted for
+Student Performance's combined merit list: when sittings with different
+question sets are combined, a question only in some of them draws its
+top/bottom-27% counts from whichever pooled-rank students happen to have
+answered it, which can be a small/noisy sample -- not a bug, just how
+combining differently-composed papers works.
+
+`parseCsv(text)`/`findColIndex(header, candidates)` (roster) and
+`parseResultsHeader(header)` (results -- label-based, not fixed-offset,
+detection of every repeating Quilgo question-column block) are the
+reusable CSV-shape-detection pieces, both verified directly against the
+real Quilgo export file in this repo. Import results still uses the
+single-sitting cascading category/day/slot picker
+(`resolveContestPicker()`/`contestPickerHtml()`, factored out of the
+pattern `renderQuilgo()` already used for the Upload tab) on its own
+`ppResLevel/Day/Slot/ContestId` state -- only Item Analysis moved to the
+multi-select pattern. `qualityLabel()` and the `questions/{id}/stats/
+post_test` write shape are shared verbatim with the pre-existing manual
 `renderStatForm()` entry path -- the Admin tab's "Scored questions" table
-doesn't care which path populated a question's stats.
+doesn't care which path populated a question's stats, and nothing about
+Phase 5 changes what that path writes.
 
 activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
   type, summary, targetId, actorEmail, actorName, createdAt
