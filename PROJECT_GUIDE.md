@@ -36,7 +36,7 @@ There's no public sign-up — an admin creates every login from **Admin → Mana
 
 ## The life of a question
 
-1. **Draft** — a teacher writes it: English + Urdu prompt, a figure or a shared equation if needed, 2–8 options, difficulty, chapter, skill(s) tested, and a required solution.
+1. **Draft** — a teacher writes it: English + Urdu prompt, a figure or a shared equation if needed, 2–8 options, difficulty, chapter, skill(s) tested, and a required solution (with an optional image attached to it too, e.g. a worked diagram — separate from the question's own figure, and never shown to students, only wherever the solution itself is shown: peer review, the drawer, and the printed Solution Manual).
 2. **In Review** — the moment a question is moved here, the portal automatically assigns it to a *different* teacher as a reviewer — see "Peer review" below. The author can keep editing while it's in this state; other teachers can comment at any point regardless of status.
 3. **Peer review happens** — the assigned reviewer solves the question independently first (without seeing the marked answer), then the screen reveals the marked answer and the author's solution so they can compare it against their own. Only then do they say how it went:
    - **✅ OK — reviewed, ready to lock** → the question becomes lockable.

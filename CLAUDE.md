@@ -88,6 +88,20 @@ questions/{questionId}
   -- for a non-web-safe face) -- nothing else needs to change.
   solutionEn (free text, feeds the print engine's Solution Manual -- REQUIRED,
   -- enforced client-side in openForm()'s save validation as of Sept 2026),
+  solutionImage (data-URL or null, Oct 2026) -- optional image attached to
+  -- the solution (e.g. a worked diagram), compressed client-side the same
+  -- way graphicImage/option images are (fileToCompressedDataUrl()) and
+  -- counted in the editor's total-image-size budget check alongside them.
+  -- Deliberately separate from graphicImage (the question's own figure):
+  -- this one only ever renders next to solutionEn -- the editor's live
+  -- preview, the drawer's Solution section, openReviewForm()'s post-
+  -- reveal step, and the Contests print view's Solution Manual -- and,
+  -- like solutionEn's own text, only inside questionPreviewHtml()'s
+  -- includeAnswer block, so it's never baked into the exam-facing "Final
+  -- preview"/downloaded image unless a caller explicitly asks for the
+  -- answer included (same exam-safety reasoning as the revealAnswer note
+  -- below). No fixed width/position controls like the question figure
+  -- has -- just upload/preview/remove, rendered at a fixed display width.
   level[] (subset of PMC-4/5/6/7), qType (aptitude|iq_puzzle|math_puzzle),
   difficulty (medium|hard|very_hard), unit (chapter code, e.g. "B3-C1"), subtopic,
   skills: [skillName, ...],   -- "skill tested" -- the transferable problem-

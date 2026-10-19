@@ -1747,6 +1747,14 @@ function openForm(existing){
   let graphicImageState = existing?.graphicImage || null;
   let graphicImageWidthState = existing?.graphicImageWidth || 400;
   let graphicPositionState = existing?.graphicPosition || "center";
+  // Separate from the question's own figure (graphicImage) -- this one
+  // attaches to the SOLUTION (e.g. a worked diagram), so it only ever
+  // shows up alongside solutionEn: the editor's live preview, the
+  // drawer's Solution section, the reviewer's post-reveal step, and the
+  // Contests print view's Solution Manual -- never in the exam-facing
+  // "Final preview"/downloaded image, same exam-safety reasoning as
+  // solutionEn's own text (see questionPreviewHtml()'s revealAnswer note).
+  let solutionImageState = existing?.solutionImage || null;
   let optionsLayoutState = existing?.optionsLayout || 2;
   let skillsState = existing?.skills ? [...existing.skills] : [];
   let previewEnSize = existing?.fontSizeEn || 15, previewUrSize = existing?.fontSizeUr || 14;
@@ -1905,6 +1913,10 @@ function openForm(existing){
 
           <div class="step-panel" data-step="4" hidden>
             <div class="field"><label>Solution <span class="hint">(required — feeds the Solution Manual in Print/Export)</span></label><textarea name="solutionEn" id="solutionEn-input" rows="3" required placeholder="Step-by-step working, for the answer/solution manual">${escapeHtml(existing?.solutionEn||"")}</textarea></div>
+            <div class="field"><label>Solution image <span class="hint">(optional — a worked diagram or extra explanation image, shown with the solution — never with the exam-facing question)</span></label>
+              <div id="solution-image-wrap"></div>
+              <input type="file" accept="image/*" id="solution-image-file" style="margin-top:6px;" />
+            </div>
             <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status, existing?.peerReview).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select>
               ${existing?.peerReview?.outcome==="disagree" ? `<div class="callout warn" style="margin-top:6px;">⚠ Reviewer flagged: <b>${escapeHtml(REVIEW_FLAGS.find(f=>f.v===existing.peerReview.issueFlag)?.short || "issue found")}</b> — see the comments below, fix it, then save to send it back to the same reviewer.</div>` : ""}
               ${existing?.peerReview?.outcome==="pending" ? `<div class="hint" style="margin-top:4px;">Awaiting review from ${escapeHtml(existing.peerReview.reviewerName)}.</div>` : ""}
@@ -2040,8 +2052,25 @@ function openForm(existing){
     updateImageSizeIndicator();
   }
 
+  function renderSolutionImageWrap(){
+    const wrap = document.getElementById("solution-image-wrap");
+    if(!wrap) return;
+    wrap.innerHTML = solutionImageState
+      ? `<img src="${solutionImageState}" alt="Solution image" style="max-width:100%; width:360px; border-radius:6px; display:block; margin-bottom:6px;" /><button type="button" class="btn small" id="solution-image-remove">Remove image</button>`
+      : `<span class="hint">No solution image yet.</span>`;
+    document.getElementById("solution-image-remove")?.addEventListener("click", ()=>{ solutionImageState=null; renderSolutionImageWrap(); updateImageSizeIndicator(); });
+    updateImageSizeIndicator();
+  }
+  renderSolutionImageWrap();
+  document.getElementById("solution-image-file").addEventListener("change", async e=>{
+    const file = e.target.files[0]; if(!file) return;
+    solutionImageState = await fileToCompressedDataUrl(file);
+    renderSolutionImageWrap();
+    e.target.value = "";
+  });
+
   function totalImageBytes(){
-    let total = (graphicImageState||"").length;
+    let total = (graphicImageState||"").length + (solutionImageState||"").length;
     optionsState.forEach(o=>{ total += (o.image||"").length; });
     return total;
   }
@@ -2307,6 +2336,7 @@ function openForm(existing){
         <div class="section-label" style="margin-top:0;">Answer</div>
         <p><span class="k" style="background:var(--accent); color:var(--accent-ink); display:inline-flex;">${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span> ${correctOpt?(renderRichText(escapeHtml(correctOpt.text))||`<span class="hint">Option ${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span>`):`<span class="hint">Pick a correct option in step 2</span>`}</p>
         ${solutionEn.trim() ? `<div style="margin-top:6px;">${renderRichText(escapeHtml(solutionEn))}</div>` : `<span class="hint">No solution written yet.</span>`}
+        ${solutionImageState ? `<img src="${solutionImageState}" alt="Solution image" style="max-width:100%; width:300px; border-radius:6px; display:block; margin-top:6px;" />` : ""}
       </div>`;
     if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([pane]).catch(console.error);
   }
@@ -2355,7 +2385,7 @@ function openForm(existing){
       options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
       correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
       graphicPosition: graphicImageState?graphicPositionState:null, optionsLayout: optionsLayoutState,
-      graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(), skills: skillsState,
+      graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(), solutionImage: solutionImageState||null, skills: skillsState,
       commonEquation: fd.get("commonEquation").trim(),
       fontSizeEn: previewEnSize, fontSizeUr: previewUrSize,
       lineHeightEn: previewEnLineHeight, lineHeightUr: previewUrLineHeight,
@@ -2686,6 +2716,7 @@ function questionPreviewHtml(q, config={}){
       <div class="section-label" style="margin-top:0;">Answer</div>
       <p><span class="k" style="background:var(--accent); color:var(--accent-ink); display:inline-flex;">${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span> ${correctOpt?renderRichText(escapeHtml(correctOpt.text)):""}</p>
       ${q.solutionEn ? `<div style="margin-top:6px;">${renderRichText(escapeHtml(q.solutionEn))}</div>` : ""}
+      ${q.solutionImage ? `<img src="${q.solutionImage}" alt="Solution image" style="max-width:100%; width:360px; border-radius:6px; display:block; margin-top:6px;" />` : ""}
     </div>` : ""}`;
 }
 // Some downloads want just the bare question (e.g. a flash-card image, or
@@ -2858,6 +2889,7 @@ function openReviewForm(q){
       <div class="question-container answer-box">
         <p><span class="k" style="background:var(--accent); color:var(--accent-ink); display:inline-flex;">${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span> ${correctOpt?renderRichText(escapeHtml(correctOpt.text)):""}</p>
         ${q.solutionEn ? `<div style="margin-top:6px;">${renderRichText(escapeHtml(q.solutionEn))}</div>` : `<span class="hint">No solution written yet.</span>`}
+        ${q.solutionImage ? `<img src="${q.solutionImage}" alt="Solution image" style="max-width:100%; width:360px; border-radius:6px; display:block; margin-top:6px;" />` : ""}
       </div>
       <div class="hint" style="margin-top:8px;">You answered <b>${myOpt?renderRichText(escapeHtml(myOpt.text)):"—"}</b>${chosenOptionId===correctId ? " — matches the marked answer." : " — different from the marked answer."}</div>
     `;
@@ -2997,7 +3029,7 @@ function renderDrawerBody(){
       ? `<div class="callout warn" style="margin-top:8px;">⚠ An external reviewer left feedback on this <b>locked</b> question — see comments below. Unlock it (set status to "In Review") to make any correction.</div>` : ""}
     <div class="section-label">Final preview <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">— exactly what "Download as image" produces</span></div>
     <div id="drawer-preview">${questionPreviewHtml(q)}</div>
-    ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box" id="drawer-solution">${renderRichText(escapeHtml(q.solutionEn))}</div>` : ""}
+    ${q.solutionEn ? `<div class="section-label">Solution</div><div class="prompt-box" id="drawer-solution">${renderRichText(escapeHtml(q.solutionEn))}${q.solutionImage?`<img src="${q.solutionImage}" alt="Solution image" style="max-width:100%; width:360px; border-radius:6px; display:block; margin-top:8px;" />`:""}</div>` : ""}
     ${q.peerReview ? `<div class="section-label">Peer review</div>
       <div class="progress-card" style="${q.peerReview.outcome==="disagree"?"border-color:var(--red);":q.peerReview.outcome==="agree"?"border-color:var(--accent);":""}">
         ${q.peerReview.outcome==="pending" ? `Awaiting review from <b>${escapeHtml(q.peerReview.reviewerName)}</b>.` : ""}
@@ -3475,7 +3507,7 @@ function renderPrintView(contestId, opts){
         </div>
         <div class="answer-key">
           <h2>Solution Manual — ${escapeHtml(c.name)}</h2>
-          ${qs.map((q,i)=>`<div class="question-container"><b>Q${i+1}.</b> ${q.solutionEn ? renderRichText(escapeHtml(q.solutionEn)) : `<span class="hint">No solution provided yet.</span>`}</div>`).join("")}
+          ${qs.map((q,i)=>`<div class="question-container"><b>Q${i+1}.</b> ${q.solutionEn ? renderRichText(escapeHtml(q.solutionEn)) : `<span class="hint">No solution provided yet.</span>`}${q.solutionImage?`<img src="${q.solutionImage}" alt="Solution image" style="max-width:100%; width:300px; border-radius:6px; display:block; margin-top:6px;" />`:""}</div>`).join("")}
         </div>
       </div>
     </div>`;
