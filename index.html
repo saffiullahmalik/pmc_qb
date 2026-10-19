@@ -177,6 +177,7 @@
   .pill.role-external_reviewer{ background:var(--violet-soft); color:var(--violet); }
   .pill.role-uploader{ background:var(--gold-soft); color:var(--gold); }
   .pill.role-automation{ background:var(--brown-soft); color:var(--brown); }
+  .pill.role-student_reviewer{ background:var(--red-soft); color:var(--red); }
   .progress-bar{ height:8px; border-radius:999px; background:var(--surface-2); overflow:hidden; }
   .progress-bar-fill{ height:100%; background:linear-gradient(90deg, var(--accent-soft), var(--accent)); border-radius:999px; transition:width .7s cubic-bezier(.16,1,.3,1); }
   .progress-card{ border:1px solid var(--border); border-radius:9px; padding:12px 14px; margin-bottom:10px; }
@@ -857,10 +858,16 @@ let isAdminUser = false;
 let canFinalize = false;
 let isExternalReviewerUser = false;
 let isUploaderUser = false;
-// Independent of `role` -- any teacher/qb_lead/admin account can ALSO be a
-// student reviewer at the same time (one person, two jobs), per the
-// additive-flag design (not a roles[] rework) confirmed Oct 2026.
+// isStudentReviewerUser: true if this account can see Review Students at
+// all, via EITHER the independent `isStudentReviewer` boolean (a
+// teacher/qb_lead/admin who ALSO reviews students, one person two jobs --
+// keeps every tab their real role gives them, plus this one) OR the
+// dedicated `role==="student_reviewer"` value (reviews students ONLY).
+// isStudentReviewerOnlyUser narrows to just that second case -- used to
+// hide every other tab, the same "one tab, no exceptions" treatment
+// isUploaderUser already gets for Upload.
 let isStudentReviewerUser = false;
+let isStudentReviewerOnlyUser = false;
 
 let questions = [];
 let contests = [];
@@ -1107,7 +1114,15 @@ async function checkTeacherStatus(){
       canFinalize = isAdminUser || snap.data().role === "qb_lead";
       isExternalReviewerUser = snap.data().role === "external_reviewer";
       isUploaderUser = snap.data().role === "uploader";
-      isStudentReviewerUser = snap.data().isStudentReviewer === true;
+      // Two ways to end up with the Review Students tab: the independent
+      // `isStudentReviewer` boolean (a teacher/qb_lead/admin who ALSO
+      // reviews students -- keeps every one of their normal tabs, just
+      // gains this one) or the dedicated `role==="student_reviewer"`
+      // value (someone who reviews students ONLY, no authoring duties --
+      // isStudentReviewerOnlyUser below restricts them to just this tab,
+      // the same way isUploaderUser restricts an uploader to just Upload).
+      isStudentReviewerUser = snap.data().isStudentReviewer === true || snap.data().role === "student_reviewer";
+      isStudentReviewerOnlyUser = snap.data().role === "student_reviewer";
       document.querySelectorAll('[data-tab="admin"]').forEach(b=>b.hidden = !isAdminUser);
       document.querySelectorAll('[data-tab="postproc"]').forEach(b=>b.hidden = !isAdminUser);
       document.querySelectorAll('[data-tab="reviewstudents"]').forEach(b=>b.hidden = !isStudentReviewerUser);
@@ -1123,7 +1138,17 @@ async function checkTeacherStatus(){
       ["bank","activity","contests","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
         document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isUploaderUser);
       });
+      // A dedicated student_reviewer (not also a teacher) only ever sees
+      // Review Students -- same "one tab, no exceptions" treatment as
+      // uploader above, just with "reviewstudents" kept visible instead
+      // of "quilgo". A teacher who separately ticked the isStudentReviewer
+      // checkbox is NOT affected by this block -- they keep every tab
+      // their actual role already gave them, plus this one.
+      ["bank","activity","contests","quilgo","workload","curriculum","sop","postproc"].forEach(t=>{
+        document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isStudentReviewerOnlyUser);
+      });
       if(isUploaderUser) currentTab = "quilgo";
+      if(isStudentReviewerOnlyUser) currentTab = "reviewstudents";
       document.getElementById("modal-root").innerHTML = "";
       renderSignedInChrome();
       startDataSubscriptions();
@@ -1260,7 +1285,7 @@ function renderTab(){
 function renderGamifyBar(){
   const bar = document.getElementById("gamify-bar");
   if(!bar) return;
-  if(!isTeacherApproved || !currentUser || isExternalReviewerUser || isUploaderUser){ bar.innerHTML = ""; return; }
+  if(!isTeacherApproved || !currentUser || isExternalReviewerUser || isUploaderUser || isStudentReviewerOnlyUser){ bar.innerHTML = ""; return; }
   const streak = computeStreak(currentUser.email);
   const today = countTodayCreated(currentUser.email);
   const week = countThisWeek(currentUser.email);
@@ -4097,7 +4122,7 @@ function openAssignmentForm(existing){
         <div class="kanban-col-head">Unassigned <span class="mono">(${pool.length})</span></div>
         <div class="kanban-cards" data-dropzone="">${pool.map(c=>chapterCard(c,null)).join("") || `<div class="kanban-empty">All chapters assigned</div>`}</div>
       </div>
-      ${allTeachers.filter(t=>t.role!=="automation").map(t=>{
+      ${allTeachers.filter(t=>t.role!=="automation" && t.role!=="student_reviewer").map(t=>{
         const m = mine[t.email] || {};
         const cards = Object.keys(m).map(code=>{ const c = chapterByCode(code); return c ? chapterCard(c, m[code]) : ""; }).join("");
         return `<div class="kanban-col" data-teacher="${t.email}">
@@ -5821,7 +5846,7 @@ function renderAdmin(){
       </div>
       <div class="field" style="margin:0; min-width:120px;">
         <label>Role</label>
-        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="qb_lead">QB Lead</option><option value="admin">Admin</option><option value="external_reviewer">External Reviewer</option><option value="uploader">Uploader</option><option value="automation">Automation (service account)</option></select>
+        <select id="new-teacher-role"><option value="teacher">Teacher</option><option value="qb_lead">QB Lead</option><option value="admin">Admin</option><option value="external_reviewer">External Reviewer</option><option value="uploader">Uploader</option><option value="automation">Automation (service account)</option><option value="student_reviewer">Student Reviewer (reviews students only)</option></select>
       </div>
       <button class="btn primary" id="add-teacher-btn">Create account</button>
     </div>
@@ -6020,7 +6045,7 @@ function renderActivityLog(){
       </div>`).join("")}</div>`;
 }
 
-const ROLE_LABEL = {teacher:"Teacher", qb_lead:"QB Lead", admin:"Admin", external_reviewer:"External Reviewer", uploader:"Uploader", automation:"Automation"};
+const ROLE_LABEL = {teacher:"Teacher", qb_lead:"QB Lead", admin:"Admin", external_reviewer:"External Reviewer", uploader:"Uploader", automation:"Automation", student_reviewer:"Student Reviewer"};
 
 function renderTeachersTable(list){
   allTeachers = list;

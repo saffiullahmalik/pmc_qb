@@ -47,14 +47,18 @@ service cloud.firestore {
         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role in ["qb_lead", "admin"];
     }
 
-    // Independent of `role` (Oct 2026) -- a teacher/qb_lead/admin account can
-    // ALSO be a student reviewer at the same time (one person, two jobs),
-    // via a separate boolean on their own teachers/{email} doc rather than
-    // reworking `role` into an array. Used only to gate examSubmissions'
-    // review-only fields below.
+    // Two ways to be a student reviewer: the `isStudentReviewer` boolean
+    // (Oct 2026) for a teacher/qb_lead/admin who ALSO reviews students --
+    // one person, two jobs, via a flag independent of `role` rather than
+    // reworking `role` into an array -- OR the dedicated `role ==
+    // "student_reviewer"` value (added for someone who reviews students
+    // ONLY, with no authoring duties at all; isContentTeacher() below does
+    // NOT include this role, so they can never create/edit questions).
+    // Used to gate examSubmissions' review-only fields below.
     function isStudentReviewer() {
       return isSignedIn() &&
-        get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.isStudentReviewer == true;
+        (get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.isStudentReviewer == true ||
+         get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.role == "student_reviewer");
     }
 
     // Any signed-in approved teacher can read the full roster -- every
@@ -67,7 +71,7 @@ service cloud.firestore {
       allow read: if isTeacher();
       allow create, update: if isAdmin() &&
         email == email.lower() &&
-        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer", "uploader", "automation"];
+        request.resource.data.role in ["teacher", "qb_lead", "admin", "external_reviewer", "uploader", "automation", "student_reviewer"];
       allow delete: if isAdmin();
     }
 
