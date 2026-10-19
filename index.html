@@ -1389,15 +1389,19 @@ function renderInsightsRail(){
         <b>Reviews</b>
         <button class="btn small ${pending.length?"primary":"ghost"}" id="dash-review-now">${pending.length ? `${pending.length} to do` : "My reviews"}</button>
       </div>
-      ${rv.total ? `
+      ${(rv.total+pending.length)>0 ? `
         <div style="display:flex; flex-direction:column; align-items:center; text-align:center;">
-          ${donutChartSvg([{value:rv.agree,cls:"bar-done"},{value:rv.disagree,cls:"bar-disagree"}], rv.total, "OK")}
+          ${donutChartSvg([{value:rv.total,cls:"bar-done"},{value:pending.length,cls:"bar-inreview"}], rv.total+pending.length, "done")}
           <div class="chart-legend">
+            <span><span class="swatch bar-done"></span>Done ${rv.total}</span>
+            <span><span class="swatch bar-inreview"></span>Assigned ${pending.length}</span>
+          </div>
+          <div class="chart-legend" style="margin-top:2px;">
             <span><span class="swatch bar-done"></span>OK ${rv.agree}</span>
             <span><span class="swatch bar-disagree"></span>Sent back ${rv.disagree}</span>
           </div>
           ${rv.avgTime ? `<p class="hint" style="margin:8px 0 0;">Avg. time per review: ${rv.avgTime} min</p>` : ""}
-        </div>` : `<p class="hint" style="margin-top:8px;">No reviews completed yet.</p>`}
+        </div>` : `<p class="hint" style="margin-top:8px;">No reviews assigned yet.</p>`}
     </div>
   `;
   document.getElementById("dash-start-now")?.addEventListener("click", ()=>openForm(null));
@@ -3593,9 +3597,25 @@ function teacherComparisonData(){
 
 /* ---------------- peer review ---------------- */
 // Balanced + random: among everyone except the author, find whoever has
-// the fewest reviews currently sitting in their "pending" queue, then pick
-// randomly among that tied-least-loaded set -- spreads load evenly without
-// being predictable about who gets what.
+// the fewest reviews EVER ASSIGNED to them (any outcome -- pending, agree,
+// or disagree), then pick randomly among that tied-least-loaded set.
+// Fixed Oct 2026 after a real report that one teacher was ending up with
+// noticeably more total reviews than everyone else: this used to count
+// only `outcome==="pending"` as load, which balances CURRENT QUEUE DEPTH,
+// not lifetime total -- a reviewer who clears their queue quickly cycles
+// straight back to load 0 and keeps getting picked again, while a slower
+// reviewer's growing pending backlog (perversely) shields them from
+// further assignment. Over time the fast responder accumulates far more
+// TOTAL reviews than anyone else, which is exactly the imbalance
+// reported. Counting every review ever assigned (regardless of its
+// current outcome) makes "load" mean lifetime workload instead, so once
+// someone has done more than the rest, the strict least-loaded selection
+// below simply can't pick them again until everyone else catches up --
+// per explicit request: "if someone has reviewed more, stop giving him
+// more until all others are balanced." This is computed fresh from live
+// `questions` state on every call, not a persisted counter, so taking a
+// review away from someone (e.g. admin's "Take back" in Pending reviews)
+// correctly lowers their load back down immediately.
 // Allowlist (role==="teacher"||"qb_lead"), not a denylist -- external
 // reviewers, uploaders, and admins are never eligible, and a new role
 // added later is excluded by default instead of needing to be remembered
@@ -3621,7 +3641,7 @@ function pickReviewer(authorEmail, excludeAlso){
   candidates.forEach(t=>load[t.email]=0);
   questions.forEach(q=>{
     const r = q.peerReview;
-    if(r && r.outcome==="pending" && load[r.reviewerEmail]!=null) load[r.reviewerEmail]++;
+    if(r && load[r.reviewerEmail]!=null) load[r.reviewerEmail]++;
   });
   const minLoad = Math.min(...candidates.map(t=>load[t.email]));
   const leastLoaded = candidates.filter(t=>load[t.email]===minLoad);
