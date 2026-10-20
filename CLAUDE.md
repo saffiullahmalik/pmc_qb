@@ -149,7 +149,23 @@ questions/{questionId}
     -- future role is excluded by default instead of needing to be added to
     -- a denylist), AND must already have an assigned chapter quota
     -- somewhere (assignments.quotas) -- by request, someone with no
-    -- assignment at all isn't part of this rotation. outcome is "pending" until the reviewer
+    -- assignment at all isn't part of this rotation.
+    -- Fairness CAP (Oct 2026, on top of the balancing fix above): nobody
+    -- should be asked to review more than the team's average authoring
+    -- load, per explicit request -- reviewCapFor() in index.html divides
+    -- the total quota every eligible candidate collectively carries
+    -- (teacherQuotaTargets(), the same sum teacherComparisonData() uses)
+    -- by how many candidates there are (e.g. 4 teachers x 180 quota each =
+    -- 720 total / 4 = a 180 cap for each). pickReviewer() filters to
+    -- candidates still under that cap before picking least-loaded among
+    -- THEM; if literally everyone eligible is already at/past it (small
+    -- team, or genuinely overloaded), it falls back to the full candidate
+    -- pool rather than leaving a question unassignable forever. Recomputed
+    -- live from assignments.quotas on every call -- no migration step if
+    -- quotas change. The cap only ever stops FUTURE assignment from
+    -- building up further; it never strips already-assigned reviews from
+    -- anyone by itself -- see "Review workload" in the data-model section
+    -- below for the admin tool that corrects an EXISTING backlog. outcome is "pending" until the reviewer
     -- submits (openReviewForm()), then "agree" or "disagree" depending on
     -- which REVIEW_FLAGS entry they pick (see below) -- also auto-posts an
     -- explanatory comment when the outcome is "disagree". allowedStatusOptions() removes "finalized"
@@ -377,7 +393,7 @@ settings/sop    -- single doc, added Oct 2026 (SOP tab's admin-only Edit)
 
 settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
   dailyCreationTarget (default 15), dailyCreationLimit (default 20),
-  dailyReviewLimit (default 20)
+  dailyReviewLimit (default 20), reviewBacklogBlockThreshold (default 50)
   -- one global number each, not per-teacher. Read by every teacher
   -- (dailyLimits global in index.html, kept live via onSnapshot and
   -- defaulted to these same numbers before the doc is ever written, so a
@@ -385,6 +401,27 @@ settings/limits    -- single doc, added Oct 2026 (Admin -> Daily limits form)
   -- can write it. Enforced client-side only (countTodayCreated()/
   -- countTodaySubmittedReviews() in index.html) -- same "business rule,
   -- not a security boundary" treatment as the required-solution check.
+  -- reviewBacklogBlockThreshold (Oct 2026, same field/form, new input):
+  -- "review first, write second" -- canMakeNewQuestions(email) in
+  -- index.html blocks a teacher from STARTING a new question (the
+  -- "+ New Question"/"Start" entry points only -- editing an existing
+  -- draft is never blocked) once pendingReviewsFor(email).length exceeds
+  -- this. Same client-side-only treatment as the other limits above.
+
+teachers/{email} also gains questionMakingPaused: boolean (Oct 2026,
+  additive, same "updateDoc merge preserves role" pattern as
+  isStudentReviewer) -- an admin's manual override that blocks a specific
+  teacher's new-question creation regardless of their review backlog size
+  (e.g. "focus on review this week"), toggled via a "Paused" checkbox
+  column in Admin -> Manage teachers -> Teacher accounts
+  (renderTeachersTable()). canMakeNewQuestions(email) checks this FIRST
+  (reading the live `allTeachers` array, not a one-time sign-in snapshot,
+  so a pause an admin sets mid-session takes effect on the teacher's very
+  next click -- no sign-out required), then falls through to the backlog
+  threshold above. openNewQuestionGuarded() (wraps both the "+ New
+  Question" button and the rail's "Start" button) is the one place that
+  calls canMakeNewQuestions() and shows its `reason` via toast() if
+  blocked, instead of opening openForm(null).
 
 Difficulty balance (Oct 2026, no new doc -- derived from assignments.quotas):
   each assigned chapter's target splits ~evenly across medium/hard/very_hard
@@ -472,7 +509,43 @@ done(`rv.total`)-vs-assigned(`pending.length`) as its two segments
 (label "done"), with the OK/sent-back split kept as a second legend line
 underneath -- so a teacher's own view has both progress pies (questions
 authored, reviews assigned+done) visible together, side by side, per
-explicit request.
+explicit request. It also shows the SAME fairness cap the admin panel
+below uses (`${rv.total+pending.length} / ${myReviewCap} total reviews`,
+with an explicit note once they're AT the cap) so a teacher can see for
+themselves why new reviews have stopped coming.
+
+Admin "Review workload" panel (Oct 2026, Admin & Analytics, a new
+`<details class="records-details">` between "Pending reviews" and "Daily
+limits"): one card per candidate `pickReviewer()` could actually assign to
+(`eligibleReviewerCandidates(null, null)` -- no author to exclude, the
+full pool), sorted by current load descending so the most-loaded person
+sorts first. Each card shows the exact SAME two donuts the teacher's own
+rail already renders for themselves -- authored (made/reviewed OK/locked,
+via `teamRows.find(r=>r.email===t.email)`) and reviews (assigned/done,
+via `myReviewStats()` + `pendingReviewsFor()`) -- "both pie...at top" per
+explicit request, now visible to an admin for EVERY reviewer at a glance,
+not just their own. Below the pies: `${load} / ${cap} total reviews`,
+red and bolded once over cap. A card with pending reviews gets a number
+input (defaulted to however many they're over cap, or 1 if under) plus a
+"Shift to others" button -> `shiftReviewsToOthers(fromEmail, count)`,
+which moves that many of the person's OLDEST pending reviews (most
+overdue first) to other eligible candidates, spreading them across
+whoever currently has the least load as each one shifts (recomputed
+after each pick, not dumped on a single other person) rather than picking
+one fixed destination -- same least-loaded shape `pickReviewer()` itself
+uses, just scoped to "everyone except the one being relieved." This is
+the admin's actual lever for correcting a backlog that already exists:
+the fairness cap above only stops it from growing FURTHER, it never
+strips already-assigned work from anyone by itself -- per explicit
+request ("allow me at admin to shift a few questions to another
+teacher"). Writes through the exact same `peerReview: freshPeerReview(...)`
+update shape the drawer's single-question "Reassign" button and the
+Pending Reviews table's per-row reassign dropdown already use, batched
+via `writeBatch` since several questions move in one action; calls
+`renderTab()` on success so the panel's numbers refresh immediately
+(the single-row reassign/Take-back handlers nearby do NOT do this --
+pre-existing behavior, left as-is; only this new bulk action re-renders,
+since seeing the redistribution land is the whole point of it).
 
 "Sent back" visibility for the author (Oct 2026): previously a reviewer's
 "disagree" only ever surfaced once the author happened to open that

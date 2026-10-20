@@ -375,6 +375,7 @@
   .stat-tile .num{ font-family:'IBM Plex Mono'; font-size:22px; font-weight:600; }
   .stat-tile .lbl{ font-size:11.5px; color:var(--ink-dim); }
   .admin-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-bottom:20px; }
+  .review-workload-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin-top:10px; }
   table.data{ width:100%; border-collapse:collapse; font-size:12.5px; }
   table.data th{ text-align:left; padding:8px 9px; border-bottom:1px solid var(--border); font-family:'Lexend'; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-dim); position:sticky; top:0; background:var(--surface); }
   table.data td{ padding:8px 9px; border-bottom:1px solid var(--border); }
@@ -735,7 +736,7 @@ let curriculumExtra = [];
 // Admin-adjustable daily creation/review caps (settings/limits). Defaults
 // here match what a brand-new install sees before the doc is ever written,
 // so the app works sensibly even before an admin opens the settings form.
-let dailyLimits = { dailyCreationLimit:20, dailyCreationTarget:15, dailyReviewLimit:20 };
+let dailyLimits = { dailyCreationLimit:20, dailyCreationTarget:15, dailyReviewLimit:20, reviewBacklogBlockThreshold:50 };
 // Admin-editable SOP content (settings/sop) -- null until that doc is ever
 // written, in which case renderSOP() falls back to the hardcoded SOP_TEXT
 // below at a sensible default font-size/line-height, so the tab works
@@ -1320,6 +1321,11 @@ function renderInsightsRail(){
   const week = last7DaysCounts(currentUser.email);
   const rv = myReviewStats(currentUser.email);
   const pending = pendingReviewsFor(currentUser.email);
+  // Same fairness cap the Admin "Review workload" panel shows, surfaced
+  // here too so a teacher can see for themselves why they've stopped
+  // getting new reviews once they're at it.
+  const myReviewCandidates = eligibleReviewerCandidates(null, null);
+  const myReviewCap = reviewCapFor(myReviewCandidates);
   const lastPosted = mine.reduce((latest,q)=> (!latest || q.createdAt>latest.createdAt) ? q : latest, null);
   const byLevel = myAssignedByLevel();
   const levels = Object.keys(byLevel);
@@ -1425,11 +1431,12 @@ function renderInsightsRail(){
             <span><span class="swatch bar-done"></span>OK ${rv.agree}</span>
             <span><span class="swatch bar-disagree"></span>Sent back ${rv.disagree}</span>
           </div>
-          ${rv.avgTime ? `<p class="hint" style="margin:8px 0 0;">Avg. time per review: ${rv.avgTime} min</p>` : ""}
+          ${myReviewCap!==Infinity ? `<p class="hint" style="margin:6px 0 0;">${rv.total+pending.length} / ${myReviewCap} total reviews${(rv.total+pending.length)>=myReviewCap?` — at the fairness cap, won't get more until others catch up`:""}</p>` : ""}
+          ${rv.avgTime ? `<p class="hint" style="margin:4px 0 0;">Avg. time per review: ${rv.avgTime} min</p>` : ""}
         </div>` : `<p class="hint" style="margin-top:8px;">No reviews assigned yet.</p>`}
     </div>
   `;
-  document.getElementById("dash-start-now")?.addEventListener("click", ()=>openForm(null));
+  document.getElementById("dash-start-now")?.addEventListener("click", openNewQuestionGuarded);
   document.getElementById("dash-review-now")?.addEventListener("click", ()=>openMyReviewsPanel());
   rail.querySelectorAll("[data-sentback-open]").forEach(b=>b.addEventListener("click", ()=>{
     const q = questions.find(x=>x.id===b.dataset.sentbackOpen);
@@ -1529,7 +1536,7 @@ function renderBank(){
     </div>` : ""}
     ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div><div id="load-more-wrap"></div>`}
   `;
-  document.getElementById("new-q")?.addEventListener("click", ()=>openForm(null));
+  document.getElementById("new-q")?.addEventListener("click", openNewQuestionGuarded);
   ["level","type","diff","status","unit","sort","skill","author"].forEach(k=>{
     document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
@@ -3563,6 +3570,33 @@ function countTodaySubmittedReviews(email){ return countReviewsSubmittedOn(email
 function pendingReviewsFor(email){
   return questions.filter(q=>q.peerReview?.reviewerEmail===email && q.peerReview?.outcome==="pending");
 }
+// "Review first, write second": once a teacher's own pending-review queue
+// crosses the admin-set threshold, they can't start a NEW question until
+// they clear some -- editing/fixing an existing draft is still always
+// allowed, this only blocks the "+ New Question"/"Start" entry points.
+// An admin's manual questionMakingPaused toggle overrides regardless of
+// backlog size. Both checks read LIVE state (allTeachers/questions, not a
+// one-time snapshot from sign-in) so an admin pausing someone mid-session
+// takes effect on their very next click, no sign-out required. Business
+// rule, not a security boundary -- same client-side-only treatment as the
+// daily creation/review caps already use.
+function canMakeNewQuestions(email){
+  const me = allTeachers.find(t=>t.email===email);
+  if(me?.questionMakingPaused) return {ok:false, reason:"An admin has paused new question creation for your account — see them to resume."};
+  const backlog = pendingReviewsFor(email).length;
+  const threshold = dailyLimits.reviewBacklogBlockThreshold ?? 50;
+  if(backlog>threshold) return {ok:false, reason:`You have ${backlog} peer review${backlog===1?"":"s"} waiting — clear some before starting a new question (blocks past ${threshold}).`};
+  return {ok:true};
+}
+// Shared by the "+ New Question" button (Bank tab) and "Start" (rail's
+// "Your assignments" card) -- the two places a teacher begins a brand-new
+// question, as opposed to opening an existing draft (openForm(q) with a
+// real question, which canMakeNewQuestions() never gates).
+function openNewQuestionGuarded(){
+  const check = canMakeNewQuestions(currentUser.email);
+  if(!check.ok){ toast(check.reason); return; }
+  openForm(null);
+}
 function countThisWeek(email){
   const now = new Date();
   const start = new Date(now); start.setDate(now.getDate()-6); start.setHours(0,0,0,0);
@@ -3622,16 +3656,25 @@ function initials(name){
   if(parts.length>=2) return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
   return (parts[0]||"?").slice(0,2).toUpperCase();
 }
-// Review completion is part of "how much is this teacher actually doing"
-// just as much as creation -- reviewsDone feeds both the admin chart's and
-// the teacher-facing leaderboard's trailing value text.
-function teacherComparisonData(){
+// Each teacher's total assigned authoring quota, summed across every
+// chapter in every level's assignment doc -- the one source both
+// teacherComparisonData() (below) and reviewCapFor() (the peer-review
+// fairness cap, see pickReviewer()) read from, so "quota" means the same
+// thing in both places.
+function teacherQuotaTargets(){
   const targets = {};
   assignments.forEach(a=>{
     Object.entries(a.quotas||{}).forEach(([email,units])=>{
       targets[email] = (targets[email]||0) + Object.values(units).reduce((s,n)=>s+n,0);
     });
   });
+  return targets;
+}
+// Review completion is part of "how much is this teacher actually doing"
+// just as much as creation -- reviewsDone feeds both the admin chart's and
+// the teacher-facing leaderboard's trailing value text.
+function teacherComparisonData(){
+  const targets = teacherQuotaTargets();
   return allTeachers
     // Allowlist, not a denylist -- same reasoning as isProducingTeacher_()
     // above and pickReviewer()'s candidate filter: teacher/qb_lead always
@@ -3691,17 +3734,47 @@ function eligibleReviewerCandidates(authorEmail, excludeAlso){
     assignedEmails.has(t.email)
   );
 }
-function pickReviewer(authorEmail, excludeAlso){
-  const candidates = eligibleReviewerCandidates(authorEmail, excludeAlso);
-  if(candidates.length===0) return null;
+// Lifetime review load per candidate -- every peerReview currently
+// pointing at them across the whole bank, any outcome. Shared by
+// pickReviewer() (the live auto-assign pick) and the Admin "Review
+// workload" panel (just a readout there, no selection to make).
+function reviewLoadFor(candidates){
   const load = {};
   candidates.forEach(t=>load[t.email]=0);
   questions.forEach(q=>{
     const r = q.peerReview;
     if(r && load[r.reviewerEmail]!=null) load[r.reviewerEmail]++;
   });
-  const minLoad = Math.min(...candidates.map(t=>load[t.email]));
-  const leastLoaded = candidates.filter(t=>load[t.email]===minLoad);
+  return load;
+}
+// Fairness cap, per explicit request: nobody should be asked to review
+// more than the team's average authoring load -- the total quota every
+// eligible reviewer is collectively assigned to author, divided by how
+// many of them there are (e.g. 4 teachers x 180 quota each = 720 total /
+// 4 = a 180 review cap for each of them). Recomputed live from
+// assignments.quotas on every call, same "no persisted counter" approach
+// as reviewLoadFor() -- if quotas change, the cap moves with them
+// immediately, no migration step. Infinity (no cap) only when there's
+// nothing to divide by, so this never accidentally blocks every pick.
+function reviewCapFor(candidates){
+  if(candidates.length===0) return Infinity;
+  const targets = teacherQuotaTargets();
+  const totalQuota = candidates.reduce((s,t)=>s+(targets[t.email]||0), 0);
+  return totalQuota>0 ? Math.round(totalQuota/candidates.length) : Infinity;
+}
+function pickReviewer(authorEmail, excludeAlso){
+  const candidates = eligibleReviewerCandidates(authorEmail, excludeAlso);
+  if(candidates.length===0) return null;
+  const load = reviewLoadFor(candidates);
+  const cap = reviewCapFor(candidates);
+  // Prefer candidates still under the fairness cap; if literally everyone
+  // eligible is already at or past it (the whole team is overloaded, or
+  // there are only one or two candidates total), fall back to the full
+  // pool rather than leaving a question permanently unassignable.
+  const underCap = candidates.filter(t=>load[t.email]<cap);
+  const pool = underCap.length>0 ? underCap : candidates;
+  const minLoad = Math.min(...pool.map(t=>load[t.email]));
+  const leastLoaded = pool.filter(t=>load[t.email]===minLoad);
   return leastLoaded[Math.floor(Math.random()*leastLoaded.length)];
 }
 function freshPeerReview(reviewer){
@@ -3711,6 +3784,39 @@ function freshPeerReview(reviewer){
     reviewerOptionId: null, reviewerNote: "", reviewTimeMinutes: null, outcome: "pending",
     issueFlag: null, issueNote: "",
   };
+}
+// Admin release valve for the Review Workload panel: moves `count` of
+// `fromEmail`'s OLDEST pending reviews (the most overdue, so clearing
+// those does the most good) to other eligible reviewers -- spread across
+// whoever currently has the least load as each one shifts, not dumped
+// entirely on a single other person, same least-loaded logic pickReviewer()
+// itself uses. Lets an admin correct an existing backlog right now,
+// separate from the fairness cap above (which only prevents FUTURE
+// assignment from building up the same way again -- it never strips
+// already-assigned work from anyone on its own).
+async function shiftReviewsToOthers(fromEmail, count){
+  const others = eligibleReviewerCandidates(null, null).filter(t=>t.email!==fromEmail);
+  if(others.length===0){ toast("No one else eligible to shift reviews to"); return; }
+  const pending = pendingReviewsFor(fromEmail).sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
+  const toShift = pending.slice(0, Math.max(1,count));
+  if(toShift.length===0){ toast("Nothing pending to shift for this person"); return; }
+  const fromName = allTeachers.find(t=>t.email===fromEmail)?.name || fromEmail;
+  if(!(await confirmDialog(`Shift ${toShift.length} pending review${toShift.length===1?"":"s"} away from ${fromName} to whoever currently has the least load?`))) return;
+  try{
+    const load = reviewLoadFor(others);
+    const batch = writeBatch(db);
+    toShift.forEach(q=>{
+      const minLoad = Math.min(...others.map(t=>load[t.email]));
+      const least = others.filter(t=>load[t.email]===minLoad);
+      const picked = least[Math.floor(Math.random()*least.length)];
+      batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
+      load[picked.email]++;
+    });
+    await batch.commit();
+    logActivity("review_assigned", `Shifted ${toShift.length} pending review(s) away from ${fromName}`, null);
+    toast(`Shifted ${toShift.length} review${toShift.length===1?"":"s"}`);
+    renderTab();
+  }catch(err){ console.error(err); toast("Couldn't shift reviews ("+err.code+")"); }
 }
 
 function progressCard(label, actual, target, sublabel){
@@ -5734,6 +5840,21 @@ function renderAdmin(){
   const teamRows = teacherComparisonData();
   const pendingReviews = questions.filter(q=>q.peerReview?.outcome==="pending")
     .sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
+  // Review workload: everyone pickReviewer() can auto-assign to (same pool
+  // as eligibleReviewerCandidates() with no author to exclude), each with
+  // their live lifetime load against the shared fairness cap, plus both
+  // progress pies side by side -- authored (made/reviewed OK/locked) and
+  // reviews (assigned/done) -- so an admin can see both at a glance per
+  // person, not just the raw pending-reviews list above.
+  const reviewCandidates = eligibleReviewerCandidates(null, null);
+  const reviewLoad = reviewLoadFor(reviewCandidates);
+  const reviewCap = reviewCapFor(reviewCandidates);
+  const reviewWorkloadRows = reviewCandidates.map(t=>{
+    const tr = teamRows.find(r=>r.email===t.email) || {draft:0, inReview:0, reviewed:0, done:0};
+    const rv = myReviewStats(t.email);
+    const pendingCount = pendingReviewsFor(t.email).length;
+    return { t, load: reviewLoad[t.email]||0, tr, rv, pendingCount, authorTotal: tr.draft+tr.inReview+tr.reviewed+tr.done };
+  }).sort((a,b)=> b.load-a.load);
   main.innerHTML = `
     <div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
     <p class="desc">Enter post-test performance per question to compute p-value and discrimination index (Teacher Guide §10).</p>
@@ -5804,14 +5925,47 @@ function renderAdmin(){
         </tbody>
       </table></div>`}
     </details>
+    <details class="records-details">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Review workload (${reviewWorkloadRows.length})</summary>
+      <p class="desc">Everyone eligible for peer-review auto-assignment, with their current lifetime review load against the fairness cap — right now <b>${reviewCap===Infinity?"no cap (no quotas assigned yet)":reviewCap}</b>, the team's total authoring quota divided by how many reviewers share it. Past the cap, new reviews stop going to that person automatically until others catch up. If someone's still stuck with a backlog from before this cap existed, shift a few of their oldest pending reviews to whoever currently has the least load.</p>
+      ${reviewWorkloadRows.length===0 ? emptyState("No one is currently eligible for peer-review assignment — give someone a chapter quota first.") : `
+      <div class="review-workload-grid">
+        ${reviewWorkloadRows.map(({t,load,tr,rv,pendingCount,authorTotal})=>{
+          const over = reviewCap!==Infinity && load>reviewCap;
+          const suggestedShift = over ? Math.min(pendingCount, load-reviewCap) : Math.min(pendingCount,1);
+          return `
+          <div class="dash-chart-card" data-workload-card="${escapeHtml(t.email)}">
+            <b style="display:block; text-align:center;">${escapeHtml(t.name||t.email)}</b>
+            <div style="display:flex; gap:10px; justify-content:center; margin-top:6px;">
+              <div style="width:92px; text-align:center;">
+                ${donutChartSvg([{value:tr.done,cls:"bar-done"},{value:tr.reviewed,cls:"bar-reviewed"},{value:tr.inReview,cls:"bar-inreview"},{value:tr.draft,cls:"bar-draft"}], authorTotal, "locked")}
+                <div class="hint" style="margin-top:2px;">Authored (${authorTotal})</div>
+              </div>
+              <div style="width:92px; text-align:center;">
+                ${donutChartSvg([{value:rv.total,cls:"bar-done"},{value:pendingCount,cls:"bar-inreview"}], rv.total+pendingCount, "done")}
+                <div class="hint" style="margin-top:2px;">Reviews (${rv.total+pendingCount})</div>
+              </div>
+            </div>
+            <div class="mono" style="text-align:center; margin-top:8px; ${over?"color:var(--red); font-weight:700;":""}">${load}${reviewCap!==Infinity?` / ${reviewCap}`:""} total reviews${over?" ⚠ over cap":""}</div>
+            ${pendingCount>0 ? `
+            <div style="display:flex; gap:6px; align-items:center; margin-top:8px; justify-content:center; flex-wrap:wrap;">
+              <input type="number" min="1" max="${pendingCount}" value="${suggestedShift}" data-shift-count="${escapeHtml(t.email)}" style="width:55px; padding:4px 6px; font-size:12px;" />
+              <button class="btn small" data-shift-btn="${escapeHtml(t.email)}">Shift to others</button>
+            </div>` : ""}
+          </div>`;
+        }).join("")}
+      </div>`}
+    </details>
     <div class="section-label">Daily limits</div>
     <p class="desc">Caps how many questions a teacher can create, and how many peer reviews they can submit, per day — keeps quality up by preventing a rush of low-effort questions. The 15/20 split is just the suggested target shown on each teacher's dashboard (hit 15 to keep a streak); the cap below is the hard stop.</p>
     <div class="filters" style="align-items:flex-end;">
       <div class="field" style="margin:0;"><label>Daily creation target</label><input type="number" id="limit-target" min="1" value="${dailyLimits.dailyCreationTarget}" style="width:90px;" /></div>
       <div class="field" style="margin:0;"><label>Daily creation cap</label><input type="number" id="limit-creation" min="1" value="${dailyLimits.dailyCreationLimit}" style="width:90px;" /></div>
       <div class="field" style="margin:0;"><label>Daily review cap</label><input type="number" id="limit-review" min="1" value="${dailyLimits.dailyReviewLimit}" style="width:90px;" /></div>
+      <div class="field" style="margin:0;"><label>Review backlog block</label><input type="number" id="limit-backlog" min="1" value="${dailyLimits.reviewBacklogBlockThreshold}" style="width:90px;" /></div>
       <button class="btn primary" id="save-limits">Save limits</button>
     </div>
+    <p class="hint" style="margin-top:4px;">"Review backlog block": once a teacher has more than this many peer reviews waiting on them, they can't start a new question until they clear some — review first, write second. An admin can also pause a specific teacher's question-making directly, regardless of their backlog — see the "Paused" column in Teacher accounts below.</p>
     <div class="section-label">Backup</div>
     <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
     <button class="btn" id="export-data">⬇ Export all data as JSON</button>
@@ -5885,8 +6039,8 @@ function renderAdmin(){
     <details class="records-details" open style="margin-top:12px;">
       <summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">Teacher accounts</summary>
       <div class="table-wrap"><table class="data">
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th title="Independent of role -- can be ticked on any account">Student reviewer</th><th>Added</th><th></th></tr></thead>
-        <tbody id="teachers-tbody"><tr><td colspan="6" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th title="Independent of role -- can be ticked on any account">Student reviewer</th><th title="Blocks them from starting a NEW question (editing existing drafts still works) regardless of their review backlog">Paused</th><th>Added</th><th></th></tr></thead>
+        <tbody id="teachers-tbody"><tr><td colspan="7" class="hint" style="padding:14px;">Loading…</td></tr></tbody>
       </table></div>
     </details>
     <div class="section-label">Enter post-test statistics</div>
@@ -5940,14 +6094,21 @@ function renderAdmin(){
       toast("Taken back — now unassigned");
     }catch(err){ console.error(err); toast("Couldn't update"); }
   }));
+  document.querySelectorAll("[data-shift-btn]").forEach(b=>b.addEventListener("click", async ()=>{
+    const email = b.dataset.shiftBtn;
+    const countInput = document.querySelector(`[data-shift-count="${CSS.escape(email)}"]`);
+    const count = parseInt(countInput?.value,10) || 1;
+    await shiftReviewsToOthers(email, count);
+  }));
   document.getElementById("export-data").addEventListener("click", exportAllData);
   document.getElementById("save-limits").addEventListener("click", async ()=>{
     const dailyCreationTarget = parseInt(document.getElementById("limit-target").value,10)||15;
     const dailyCreationLimit = parseInt(document.getElementById("limit-creation").value,10)||20;
     const dailyReviewLimit = parseInt(document.getElementById("limit-review").value,10)||20;
+    const reviewBacklogBlockThreshold = parseInt(document.getElementById("limit-backlog").value,10)||50;
     try{
-      await setDoc(doc(db,"settings","limits"), {dailyCreationTarget, dailyCreationLimit, dailyReviewLimit}, {merge:true});
-      logActivity("limits_updated", `Set daily limits to target ${dailyCreationTarget}, creation cap ${dailyCreationLimit}, review cap ${dailyReviewLimit}`, null);
+      await setDoc(doc(db,"settings","limits"), {dailyCreationTarget, dailyCreationLimit, dailyReviewLimit, reviewBacklogBlockThreshold}, {merge:true});
+      logActivity("limits_updated", `Set daily limits to target ${dailyCreationTarget}, creation cap ${dailyCreationLimit}, review cap ${dailyReviewLimit}, review backlog block ${reviewBacklogBlockThreshold}`, null);
       toast("Limits saved");
     }catch(err){ console.error(err); toast("Couldn't save limits"); }
   });
@@ -6083,7 +6244,7 @@ function renderTeachersTable(list){
   allTeachers = list;
   const tbody = document.getElementById("teachers-tbody");
   if(!tbody) return;
-  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="6" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
+  if(list.length===0){ tbody.innerHTML = `<tr><td colspan="7" class="hint" style="padding:14px;">No teachers added yet.</td></tr>`; return; }
   list.sort((a,b)=> a.email.localeCompare(b.email));
   tbody.innerHTML = list.map(t=>`
     <tr>
@@ -6091,6 +6252,7 @@ function renderTeachersTable(list){
       <td>${escapeHtml(t.email)}</td>
       <td><span class="pill role-${t.role}">${ROLE_LABEL[t.role]||t.role}</span></td>
       <td><input type="checkbox" data-toggle-reviewer="${escapeHtml(t.email)}" ${t.isStudentReviewer?"checked":""} title="Can also review student submissions for integrity, regardless of their role above" /></td>
+      <td><input type="checkbox" data-toggle-paused="${escapeHtml(t.email)}" ${t.questionMakingPaused?"checked":""} title="Pause new question creation for this account" /></td>
       <td class="mono">${t.addedAt? fmtDate(t.addedAt): "—"}</td>
       <td style="white-space:nowrap; display:flex; gap:6px; align-items:center;">
         <select data-role-select="${escapeHtml(t.email)}" style="padding:4px 6px; font-size:12px;">
@@ -6115,6 +6277,21 @@ function renderTeachersTable(list){
       await updateDoc(doc(db,"teachers",email), {isStudentReviewer:cb.checked});
       logActivity("teacher_role_changed", `${cb.checked?"Added":"Removed"} student-reviewer duty for ${email}`, email);
       toast(cb.checked ? "Now a student reviewer" : "No longer a student reviewer");
+    }catch(err){ console.error(err); toast("Couldn't update"); cb.checked = !cb.checked; }
+  }));
+  // Manual override, independent of the review-backlog auto-block below --
+  // an admin may want to pause someone's authoring for any reason (e.g.
+  // "focus on review this week"), not only because they crossed the
+  // backlog threshold. Checked live from the allTeachers array at the
+  // moment a teacher tries to start a new question (canMakeNewQuestions()),
+  // not just at sign-in, so a pause takes effect immediately without the
+  // teacher needing to sign out and back in.
+  tbody.querySelectorAll("[data-toggle-paused]").forEach(cb=>cb.addEventListener("change", async ()=>{
+    const email = cb.dataset.togglePaused;
+    try{
+      await updateDoc(doc(db,"teachers",email), {questionMakingPaused:cb.checked});
+      logActivity("teacher_role_changed", `${cb.checked?"Paused":"Unpaused"} new-question creation for ${email}`, email);
+      toast(cb.checked ? "Question-making paused for this account" : "Question-making resumed");
     }catch(err){ console.error(err); toast("Couldn't update"); cb.checked = !cb.checked; }
   }));
   // Inline rename -- the only way a teacher's display name was ever set was
