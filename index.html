@@ -890,7 +890,7 @@ let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubContestSessions = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null, unsubSop = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
-let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"" };
+let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"", usedIn:"" };
 let bankVisibleCount = 30;
 // One-shot (not live) per-question {comments, avgStars, ratingCount} cache
 // for the Bank tab's inline comments/ratings preview -- a getDocs() per
@@ -1475,6 +1475,8 @@ function filteredQuestions(){
     if(filters.mine && q.authorEmail!==currentUser.email) return false;
     if(filters.author && q.authorEmail!==filters.author) return false;
     if(filters.skill && !(Array.isArray(q.skills) && q.skills.includes(filters.skill))) return false;
+    if(filters.usedIn==="used" && !(Array.isArray(q.usedIn) && q.usedIn.length>0)) return false;
+    if(filters.usedIn==="unused" && Array.isArray(q.usedIn) && q.usedIn.length>0) return false;
     // Dates compare on the local calendar day, not a raw ISO-string prefix
     // match, so "before/after" reads naturally regardless of time-of-day.
     if(filters.dateFrom){
@@ -1515,6 +1517,7 @@ function activeFilterChips(){
   if(filters.unit) chips.push({k:"unit", l:`Chapter: ${chapterLabel(filters.unit)}`});
   if(filters.mine) chips.push({k:"mine", l:"Only mine"});
   if(filters.skill) chips.push({k:"skill", l:`Skill: ${filters.skill}`});
+  if(filters.usedIn) chips.push({k:"usedIn", l: filters.usedIn==="used" ? "Used in a contest" : "Not used yet"});
   if(filters.author) chips.push({k:"author", l:`Author: ${allAuthors().find(([e])=>e===filters.author)?.[1]||filters.author}`});
   if(filters.dateFrom) chips.push({k:"dateFrom", l:`After ${fmtDateOnly(filters.dateFrom)}`});
   if(filters.dateTo) chips.push({k:"dateTo", l:`Before ${fmtDateOnly(filters.dateTo)}`});
@@ -1553,6 +1556,7 @@ function renderBank(){
       <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
       <select id="f-skill"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}" ${filters.skill===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
       <select id="f-author"><option value="">All authors</option>${allAuthors().map(([email,name])=>`<option value="${escapeHtml(email)}" ${filters.author===email?"selected":""}>${escapeHtml(name)}</option>`).join("")}</select>
+      <select id="f-usedin"><option value="">Used in: any</option><option value="used" ${filters.usedIn==="used"?"selected":""}>Used in a contest</option><option value="unused" ${filters.usedIn==="unused"?"selected":""}>Not used yet</option></select>
       <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">Made after <input type="date" id="f-date-from" value="${escapeHtml(filters.dateFrom)}" style="padding:6px 8px;" /></label>
       <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">before <input type="date" id="f-date-to" value="${escapeHtml(filters.dateTo)}" style="padding:6px 8px;" /></label>
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
@@ -1570,6 +1574,7 @@ function renderBank(){
     document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
   document.getElementById("f-book").addEventListener("change", e=>{ filters.book = e.target.value; filters.unit = ""; bankVisibleCount = 30; renderBank(); });
+  document.getElementById("f-usedin").addEventListener("change", e=>{ filters.usedIn = e.target.value; bankVisibleCount = 30; renderBank(); });
   document.getElementById("f-q").addEventListener("input", e=>{ filters.q = e.target.value; bankVisibleCount = 30; renderBank(); });
   document.getElementById("f-mine")?.addEventListener("change", e=>{ filters.mine = e.target.checked; bankVisibleCount = 30; renderBank(); });
   document.getElementById("f-date-from").addEventListener("change", e=>{ filters.dateFrom = e.target.value; bankVisibleCount = 30; renderBank(); });
@@ -1580,7 +1585,7 @@ function renderBank(){
     bankVisibleCount = 30; renderBank();
   }));
   document.getElementById("clear-all-filters")?.addEventListener("click", ()=>{
-    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false, skill:"", author:"", dateFrom:"", dateTo:"" };
+    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false, skill:"", author:"", dateFrom:"", dateTo:"", usedIn:"" };
     bankVisibleCount = 30; renderBank();
   });
   if(list.length){
