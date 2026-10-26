@@ -4311,6 +4311,63 @@ function countByStatus(email, level, unit){
   const draft = mine.filter(q=>q.status==="draft").length;
   return {finalized, reviewed, inReview, draft, total:mine.length};
 }
+// Oct 2026: per-chapter difficulty-split breakdown for the admin end
+// (Assignment tab's per-teacher drill-down) -- a real request to catch a
+// teacher who's mistakenly made an uneven Medium/Hard/Very-Hard split for
+// an assigned chapter (e.g. all Medium, none of the other two) instead of
+// the ~even split the SOP expects (difficultyQuotas(), already enforced
+// as a live warning in the editor itself -- this is the ADMIN-side view
+// of the same imbalance, across every teacher/chapter at a glance).
+// Counts every question the teacher has authored for that chapter
+// regardless of status (draft included) -- the point is to catch the
+// imbalance as early as possible, before anything is even submitted for
+// review, not just among locked ones.
+function difficultyBreakdownForChapter(email, level, unit){
+  return {
+    medium: myDifficultyCountForChapter(email, level, unit, "medium"),
+    hard: myDifficultyCountForChapter(email, level, unit, "hard"),
+    very_hard: myDifficultyCountForChapter(email, level, unit, "very_hard"),
+  };
+}
+// Renders a one-line Medium/Hard/Very Hard "made/expected" readout,
+// color-coded red (short of that tier's quota)/gold (over it)/accent
+// (exactly matched) -- shared by the per-chapter row and the per-teacher
+// aggregate summary in openTeacherWorkloadDetail() below.
+function difficultySplitHtml(made, quota){
+  const DIFF_LABEL = {medium:"Medium", hard:"Hard", very_hard:"Very Hard"};
+  return ["medium","hard","very_hard"].map(d=>{
+    const m = made[d], q = quota[d];
+    const color = m<q ? "var(--red)" : m>q ? "var(--gold)" : "var(--accent)";
+    return `${DIFF_LABEL[d]} <span class="mono" style="color:${color}; font-weight:700;">${m}/${q}</span>`;
+  }).join(" &middot; ");
+}
+// Sums difficultyBreakdownForChapter()/difficultyQuotas() across every
+// chapter a teacher is assigned at this level -- the aggregate used by
+// both the roster-row imbalance flag and the drill-down modal's summary.
+function teacherDifficultySummary(email, level){
+  const totalMade = {medium:0,hard:0,very_hard:0}, totalQuota = {medium:0,hard:0,very_hard:0};
+  assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
+    Object.entries(a.quotas[email]).forEach(([unit,target])=>{
+      const made = difficultyBreakdownForChapter(email, level, unit);
+      const quota = difficultyQuotas(target);
+      ["medium","hard","very_hard"].forEach(d=>{ totalMade[d]+=made[d]; totalQuota[d]+=quota[d]; });
+    });
+  });
+  return {made:totalMade, quota:totalQuota};
+}
+// Flags a teacher whose difficulty split, summed across every chapter
+// they're assigned at this level, is notably uneven -- specifically, any
+// tier with an expected quota >0 but zero made yet, while at least one
+// OTHER tier already has some made. A teacher who simply hasn't started
+// (0 made everywhere) is NOT flagged -- that's "not started," not
+// "uneven" -- only an actual lopsided pattern is.
+function teacherDifficultyImbalanced(email, level){
+  const {made, quota} = teacherDifficultySummary(email, level);
+  const tiers = ["medium","hard","very_hard"];
+  const anyMade = tiers.some(d=>made[d]>0);
+  if(!anyMade) return false;
+  return tiers.some(d=>quota[d]>0 && made[d]===0);
+}
 
 /* ---------------- daily limits, streaks, gamification ----------------
    All pure functions over the already-subscribed `questions` array --
@@ -4935,9 +4992,10 @@ function renderLevelRoster(){
         const t = allTeachers.find(x=>x.email===r.email);
         const pct = r.target>0 ? Math.round(r.done/r.target*100) : 0;
         const complete = r.target>0 && r.done>=r.target;
+        const imbalanced = teacherDifficultyImbalanced(r.email, level);
         return `<div>
           <button type="button" class="teacher-roster-row" data-teacher-detail="${r.email}" data-teacher-level="${level}">
-            <span class="teacher-roster-name">${escapeHtml(t?.name||r.email)}</span>
+            <span class="teacher-roster-name">${escapeHtml(t?.name||r.email)}${imbalanced?` <span class="hint" style="color:var(--gold);" title="Uneven difficulty split -- click for details">⚠ uneven difficulty</span>`:""}</span>
             <div class="progress-bar" style="flex:1; margin:0 12px;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div>
             <span class="hint mono">${r.done}/${r.target}${complete?" ✓":""}</span>
           </button>
@@ -4955,14 +5013,17 @@ function openTeacherWorkloadDetail(email, level){
   const rows = [];
   assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
     Object.entries(a.quotas[email]).forEach(([unit,target])=>{
-      rows.push({unit, target, c: countByStatus(email, level, unit)});
+      rows.push({unit, target, c: countByStatus(email, level, unit), made: difficultyBreakdownForChapter(email, level, unit), quota: difficultyQuotas(target)});
     });
   });
+  const summary = teacherDifficultySummary(email, level);
   root.innerHTML = `<div class="overlay" id="ov"><div class="drawer">
     <div class="drawer-head"><h2>${escapeHtml(t?.name||email)} — ${escapeHtml(level)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
-    <p class="hint" style="margin:0 0 14px;">${escapeHtml(email)}</p>
+    <p class="hint" style="margin:0 0 10px;">${escapeHtml(email)}</p>
+    ${rows.length>0 ? `<div class="callout" style="margin-bottom:14px;"><b>Difficulty split (all assigned chapters, ${escapeHtml(level)}):</b> ${difficultySplitHtml(summary.made, summary.quota)}<div class="hint" style="margin-top:4px;">Made vs. the ~even Medium/Hard/Very-Hard split the SOP expects for their total quota (red = short, gold = over, green = on target). Counts every question they've authored for this level regardless of status, including drafts.</div></div>` : ""}
     ${rows.length===0 ? emptyState("No chapters assigned for this level.") : rows.map(r=>
       progressCard(`${r.unit} — ${chapterByCode(r.unit)?.title||""}`, r.c.finalized, r.target, `${r.c.draft} draft &middot; ${r.c.inReview} in review &middot; ${r.c.reviewed} reviewed (awaiting lock) &middot; ${r.c.finalized} locked`)
+      + `<div class="hint" style="margin:2px 0 10px 2px;">${difficultySplitHtml(r.made, r.quota)}</div>`
     ).join("")}
   </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);

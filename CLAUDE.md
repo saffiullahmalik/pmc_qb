@@ -706,6 +706,36 @@ Difficulty balance (Oct 2026, no new doc -- derived from assignments.quotas):
   shows this live (updateDifficultyBalanceHint(), triggered on chapter/
   level/difficulty change) before the teacher ever tries to save.
 
+Admin-side difficulty-split visibility (Oct 2026, Assignment tab, a real
+  request: "so we can see how many out of assigned questions are made in
+  different difficulty level [in case teachers] mistakenly made uneven
+  difficulty level"). The editor's own live balance hint above only ever
+  showed ONE teacher their OWN split, one chapter at a time, while they're
+  actively saving -- nothing let an admin review it after the fact, across
+  every teacher/chapter at once. Three additions, all pure read-only
+  computations over already-subscribed `questions`/`assignments` data (no
+  new Firestore field, no write path):
+  - `difficultyBreakdownForChapter(email, level, unit)` -- how many
+    Medium/Hard/Very-Hard questions this teacher has authored for this
+    chapter, counting EVERY status including drafts (the point is to
+    catch an imbalance as early as possible, not just among locked ones).
+  - `difficultySplitHtml(made, quota)` -- a shared "Medium 8/5 · Hard 2/5
+    · Very Hard 0/5" readout, each tier colored red (short)/gold (over)/
+    accent (exact match against `difficultyQuotas(target)`).
+  - `openTeacherWorkloadDetail(email, level)` (the Assignment tab's
+    per-teacher drill-down, opened by clicking a roster row) now shows
+    this split under EVERY per-chapter progress card, plus one aggregate
+    "Difficulty split (all assigned chapters, PMC-X)" summary
+    (`teacherDifficultySummary()`, same per-tier sum/compare) at the top
+    of the modal so an admin doesn't have to add it up chapter by chapter.
+  - `renderLevelRoster()`'s roster row (before drilling into a teacher)
+    gets a small "⚠ uneven difficulty" badge next to their name
+    (`teacherDifficultyImbalanced()`) when any tier with a nonzero quota
+    has ZERO made while another tier already has some -- a teacher who
+    simply hasn't started yet (nothing made anywhere) is deliberately NOT
+    flagged, since that's "not started," not "uneven." This is the one
+    thing visible without clicking into every teacher one at a time.
+
 Progress breakdown (Oct 2026, no new field -- derived from status +
 peerReview.outcome): countByStatus() returns FOUR mutually-exclusive,
 sum-to-total buckets, not the 3 raw status values -- {draft, inReview,
