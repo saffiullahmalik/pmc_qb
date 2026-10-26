@@ -3259,6 +3259,23 @@ function fixedBlueprint6x12(){
 function defaultPerChapterTotal(chapters, numPapers, questionsPerPaper){
   return Math.round((questionsPerPaper*numPapers)/chapters.length);
 }
+// Fixed Oct 2026 after a real report: without a per-tier phase offset,
+// chapter ci's medium/hard/very_hard slots all used the IDENTICAL cyclic
+// formula (ci*m+k)%numPapers -- since m is the same value for all three
+// tiers whenever a chapter's total splits evenly, the three tiers skip
+// the EXACT SAME paper for that chapter, leaving it completely absent
+// from that one paper (not just missing one difficulty, missing
+// entirely) -- confirmed by simulation: every one of 12 chapters was
+// fully absent from exactly one of 6 papers. TIER_OFFSETS staggers each
+// tier's cycle by a small, distinct amount so the three tiers skip
+// DIFFERENT papers for the same chapter instead -- confirmed by
+// simulation (several shapes, including with chapters excluded) that
+// this reduces "chapter fully absent from a paper" to zero while leaving
+// each chapter's own total (and the overall per-paper/per-tier balance)
+// unchanged -- matches the literal hand-specified table's own guarantee
+// that every chapter appears in every paper, just not always at all
+// three difficulties.
+const TIER_OFFSETS = {medium:0, hard:1, very_hard:2};
 function buildGeneralBlueprint(chapters, numPapers, questionsPerPaper, chapterTotals){
   const C = chapters.length;
   const uniform = defaultPerChapterTotal(chapters, numPapers, questionsPerPaper);
@@ -3268,8 +3285,9 @@ function buildGeneralBlueprint(chapters, numPapers, questionsPerPaper, chapterTo
     const perChapterDiff = difficultyQuotas(totals[ci]);
     ["medium","hard","very_hard"].forEach(diff=>{
       const m = perChapterDiff[diff];
+      const phase = TIER_OFFSETS[diff] % Math.max(1,numPapers);
       for(let k=0; k<m; k++){
-        const paperIdx = (ci*m+k) % numPapers;
+        const paperIdx = (ci*m+k+phase) % numPapers;
         grid[ci][paperIdx].push(diff);
       }
     });
@@ -3303,8 +3321,20 @@ function sessionEligibleQuestions(){
 // batch (kept separate from the Firestore write itself so a live "preview
 // how many are eligible right now" view can call the counting logic
 // without ever writing anything).
+// Which chapters actually count for this session -- excludedChapters
+// (Oct 2026, admin-ticked per category) drops a chapter entirely, e.g. a
+// duplicate/junk curriculum entry, or a topic deliberately skipped this
+// round. Shared by every function that needs "the chapter list this
+// session is actually built from", so a chapter ticked off is consistently
+// invisible everywhere (the blueprint, the eligible-count preview, the
+// dry-run summary) rather than silently still showing up in some of them.
+function sessionChapters(pmcType, excludedChapters){
+  if(!excludedChapters || excludedChapters.length===0) return chaptersForLevel(pmcType);
+  const excluded = new Set(excludedChapters);
+  return chaptersForLevel(pmcType).filter(ch=>!excluded.has(ch.code));
+}
 function computeSessionBuild(session){
-  const chapters = chaptersForLevel(session.pmcType);
+  const chapters = sessionChapters(session.pmcType, session.excludedChapters);
   const numPapers = session.days*session.slotsPerDay;
   const chapterTotals = session.chapterTotals ? chapters.map(ch=>session.chapterTotals[ch.code]??defaultPerChapterTotal(chapters,numPapers,session.questionsPerPaper)) : null;
   const blueprint = buildBlueprint(numPapers, session.questionsPerPaper, chapters, chapterTotals);
@@ -3356,8 +3386,8 @@ function computeSessionBuild(session){
 // Counts, for the "before you build" preview -- how many LOCKED-eligible
 // questions exist right now per chapter/difficulty vs. what the blueprint
 // needs in total across the whole session, without touching Firestore.
-function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper, chapterTotalsMap){
-  const chapters = chaptersForLevel(pmcType);
+function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper, chapterTotalsMap, excludedChapters){
+  const chapters = sessionChapters(pmcType, excludedChapters);
   const numPapers = days*slotsPerDay;
   const chapterTotals = chapterTotalsMap ? chapters.map(ch=>chapterTotalsMap[ch.code]??defaultPerChapterTotal(chapters,numPapers,questionsPerPaper)) : null;
   const blueprint = buildBlueprint(numPapers, questionsPerPaper, chapters, chapterTotals);
@@ -3423,7 +3453,7 @@ async function commitSessionBuild(session, build){
   const sessionBody = {
     name:session.name, pmcType:session.pmcType, days:session.days, slotsPerDay:session.slotsPerDay,
     questionsPerPaper:session.questionsPerPaper, overlapMode:session.overlapMode,
-    chapterTotals: session.chapterTotals||null,
+    chapterTotals: session.chapterTotals||null, excludedChapters: session.excludedChapters||[],
     placements: build.placements, shortfalls: build.shortfalls, contestIds,
     status: build.shortfalls.length===0 ? "complete" : "pending",
     createdAt: session.createdAt||new Date().toISOString(), createdBy: session.createdBy||currentUser.email,
@@ -3443,8 +3473,8 @@ async function commitSessionBuild(session, build){
 // Oct 2026, replacing the old sessionCanBuildOnePaper() proxy check --
 // this is strictly more accurate since it's the literal build, not a
 // stand-in for "paper 1 only".
-function sessionDryRunSummary(pmcType, g, chapterTotals){
-  const draft = { pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper, overlapMode:g.overlapMode, chapterTotals: chapterTotals||null, placements:{} };
+function sessionDryRunSummary(pmcType, g, chapterTotals, excludedChapters){
+  const draft = { pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper, overlapMode:g.overlapMode, chapterTotals: chapterTotals||null, excludedChapters, placements:{} };
   const build = computeSessionBuild(draft);
   const totalPapers = g.days*g.slotsPerDay;
   const shortfallPapers = new Set(build.shortfalls.map(sf=>paperKey(sf.day,sf.slot)));
@@ -3460,12 +3490,13 @@ function openSessionForm(){
   // useful immediately; tick more to build several categories' sessions
   // from this one form in a single "Build now".
   const selectedCategories = new Set(["PMC-4"]);
-  // Per-category editable chapter totals -- {[pmcType]: {[chapterCode]: n}}
-  // -- stays EMPTY (meaning "plain even split, 15/5/5/5 for a standard
-  // round") unless the admin deliberately opens a category's "Advanced"
-  // section and changes something; this is deliberately NOT front-and-
-  // center -- most builds never need it, and showing a 12-row editable
-  // table by default was exactly what made the simple path confusing.
+  // Per-category chapter inclusion/totals -- {[pmcType]: Set(excludedCodes)}
+  // and {[pmcType]: {[chapterCode]: n}}. Both start EMPTY (meaning "every
+  // chapter included, plain even split") and only ever get populated the
+  // moment the admin actually ticks a chapter off or edits a total --
+  // this is deliberately NOT front-and-center (lives behind "Advanced",
+  // closed by default) since most builds never need it.
+  const excludedChaptersByCategory = {};
   const chapterTotalsByCategory = {};
   let activeCategoryTab = "PMC-4";
   root.innerHTML = `
@@ -3504,6 +3535,24 @@ function openSessionForm(){
       overlapMode: document.getElementById("sf-overlap").checked ? "overlapping" : "non_overlapping",
     };
   }
+  // The single source of truth for "what chapters, and how many questions
+  // each, does this category actually use right now" -- always derived
+  // fresh from the current exclusions + (touched or default) totals, so
+  // every caller (the table, the mismatch check, the actual build) agrees.
+  // Always returns a REAL totals map (never null) specifically so the
+  // mismatch check below also catches a rounding-drift case the old code
+  // missed: excluding chapters can make the plain total NOT divide evenly
+  // (e.g. 180/11 chapters), which needs the same visible "doesn't quite
+  // add up" warning a manual edit would get, not silent under-building.
+  function effectiveChaptersAndTotals(pmcType, g){
+    const excludedCodes = Array.from(excludedChaptersByCategory[pmcType]||[]);
+    const chapters = sessionChapters(pmcType, excludedCodes);
+    const numPapers = g.days*g.slotsPerDay;
+    if(chapterTotalsByCategory[pmcType]) return { chapters, totalsMap: chapterTotalsByCategory[pmcType] };
+    const uniform = defaultPerChapterTotal(chapters, numPapers, g.questionsPerPaper);
+    const map = {}; chapters.forEach(ch=>map[ch.code]=uniform);
+    return { chapters, totalsMap: map };
+  }
   function renderTabs(){
     document.getElementById("sf-cat-tabs").innerHTML = Array.from(selectedCategories).map(l=>
       `<button type="button" class="${l===activeCategoryTab?"active":""}" data-sf-tab="${l}">${l}</button>`
@@ -3517,17 +3566,19 @@ function openSessionForm(){
     const panel = document.getElementById("sf-category-panel");
     if(!selectedCategories.has(activeCategoryTab)){ panel.innerHTML = `<div class="hint">Tick at least one PMC category above.</div>`; return; }
     const pmcType = activeCategoryTab;
+    const excludedSet = excludedChaptersByCategory[pmcType]||new Set();
     const touchedTotals = chapterTotalsByCategory[pmcType]||null;
-    const summary = sessionDryRunSummary(pmcType, g, touchedTotals);
+    const summary = sessionDryRunSummary(pmcType, g, touchedTotals, Array.from(excludedSet));
     const allComplete = summary.completePapers===summary.totalPapers;
     const noneComplete = summary.completePapers===0;
-    const chapters = chaptersForLevel(pmcType);
     const numPapers = g.days*g.slotsPerDay;
     const sessionTarget = g.questionsPerPaper*numPapers;
-    const totalsMap = touchedTotals || (()=>{ const m={}; chapters.forEach(ch=>m[ch.code]=defaultPerChapterTotal(chapters,numPapers,g.questionsPerPaper)); return m; })();
+    const { chapters, totalsMap } = effectiveChaptersAndTotals(pmcType, g);
     const sumTotals = Object.values(totalsMap).reduce((s,n)=>s+(n||0), 0);
-    const totalsMismatch = touchedTotals && sumTotals!==sessionTarget;
-    const rows = sessionEligiblePreview(pmcType, g.days, g.slotsPerDay, g.questionsPerPaper, totalsMap);
+    const totalsMismatch = sumTotals!==sessionTarget;
+    const allChapters = chaptersForLevel(pmcType); // unfiltered -- the checkbox list shows every chapter, ticked or not
+    const rows = sessionEligiblePreview(pmcType, g.days, g.slotsPerDay, g.questionsPerPaper, totalsMap, Array.from(excludedSet));
+    const rowByCode = {}; rows.forEach(r=>rowByCode[r.chapter.code]=r);
     panel.innerHTML = `
       <div class="progress-card" style="${allComplete?"border-color:var(--accent);":noneComplete?"border-color:var(--red);":"border-color:var(--gold);"}">
         <div style="font-weight:600;">${pmcType}: ${summary.totalEligible} locked/reviewed-OK question${summary.totalEligible===1?"":"s"} available right now.</div>
@@ -3539,28 +3590,48 @@ function openSessionForm(){
         ${!allComplete ? `<div class="hint" style="margin-top:4px;">Short on: ${summary.shortChapters.map(u=>escapeHtml(chapterLabel(u))).join(", ")}. You can still build now — finished papers save immediately, the rest stay "Pending" and you can top them up any time later (Contests → that session → "Add more now") once more questions are locked, without disturbing anything already built.</div>` : ""}
       </div>
       <details style="margin-top:10px;">
-        <summary style="cursor:pointer; font-size:12.5px; font-weight:600; color:var(--accent);">Advanced: customize ${pmcType}'s chapter distribution</summary>
+        <summary style="cursor:pointer; font-size:12.5px; font-weight:600; color:var(--accent);">Advanced: pick ${pmcType}'s chapters &amp; customize totals</summary>
         <div style="margin-top:8px;">
-          <p class="hint" style="margin-top:0;">By default every chapter contributes an even share — 15 questions (5 Medium, 5 Hard, 5 Very Hard) for a standard 6-paper round. Only change this if a specific chapter should count for more or less this round.</p>
+          <p class="hint" style="margin-top:0;">Every chapter is ticked (included) by default, with an even share — 15 questions (5 Medium, 5 Hard, 5 Very Hard) for a standard 6-paper round. Untick a chapter to leave it out entirely (e.g. a duplicate or a topic skipped this round), or edit its total if one chapter should count for more or less.</p>
           <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
-            <thead><tr><th style="text-align:left; padding:4px;">Chapter</th><th style="text-align:right; padding:4px; width:70px;">Total</th><th style="text-align:right; padding:4px;">Medium</th><th style="text-align:right; padding:4px;">Hard</th><th style="text-align:right; padding:4px;">Very Hard</th></tr></thead>
+            <thead><tr><th style="padding:4px;"></th><th style="text-align:left; padding:4px;">Chapter</th><th style="text-align:right; padding:4px; width:70px;">Total</th><th style="text-align:right; padding:4px;">Medium</th><th style="text-align:right; padding:4px;">Hard</th><th style="text-align:right; padding:4px;">Very Hard</th></tr></thead>
             <tbody>
-              ${rows.map(r=>`<tr style="border-top:1px solid var(--border);">
-                <td style="padding:4px;">${escapeHtml(chapterLabel(r.chapter.code))}</td>
-                <td style="padding:4px; text-align:right;"><input type="number" min="0" value="${totalsMap[r.chapter.code]}" data-sf-chtotal="${escapeHtml(r.chapter.code)}" style="width:60px; padding:3px 5px; font-size:12px; text-align:right;" /></td>
-                ${["medium","hard","very_hard"].map(d=>`<td class="mono" style="padding:4px; text-align:right; ${r.have[d]<r.need[d]?"color:var(--red); font-weight:700;":""}">${r.have[d]} / ${r.need[d]}</td>`).join("")}
-              </tr>`).join("")}
+              ${allChapters.map(ch=>{
+                const included = !excludedSet.has(ch.code);
+                const r = rowByCode[ch.code];
+                return `<tr style="border-top:1px solid var(--border); ${included?"":"opacity:0.5;"}">
+                  <td style="padding:4px;"><input type="checkbox" data-sf-chinclude="${escapeHtml(ch.code)}" ${included?"checked":""} /></td>
+                  <td style="padding:4px;">${escapeHtml(chapterLabel(ch.code))}</td>
+                  <td style="padding:4px; text-align:right;">${included ? `<input type="number" min="0" value="${totalsMap[ch.code]}" data-sf-chtotal="${escapeHtml(ch.code)}" style="width:60px; padding:3px 5px; font-size:12px; text-align:right;" />` : `<span class="hint">excluded</span>`}</td>
+                  ${["medium","hard","very_hard"].map(d=>included && r ? `<td class="mono" style="padding:4px; text-align:right; ${r.have[d]<r.need[d]?"color:var(--red); font-weight:700;":""}">${r.have[d]} / ${r.need[d]}</td>` : `<td style="padding:4px;"></td>`).join("")}
+                </tr>`;
+              }).join("")}
             </tbody>
           </table>
           <div class="callout ${totalsMismatch?"warn":""}" style="margin-top:8px; ${totalsMismatch?"border-left-color:var(--red);":""}">
             ${totalsMismatch
-              ? `⚠ Chapter totals add up to <b>${sumTotals}</b>, but this session needs exactly <b>${sessionTarget}</b> (${g.questionsPerPaper} per paper × ${numPapers} paper${numPapers===1?"":"s"}). ${sumTotals<sessionTarget?`Add ${sessionTarget-sumTotals} more question(s)`:`Remove ${sumTotals-sessionTarget} question(s)`} across other chapters to match — "Build now" is disabled for ${pmcType} until this balances.`
+              ? `⚠ Chapter totals add up to <b>${sumTotals}</b>, but this session needs exactly <b>${sessionTarget}</b> (${g.questionsPerPaper} per paper × ${numPapers} paper${numPapers===1?"":"s"}). ${sumTotals<sessionTarget?`Add ${sessionTarget-sumTotals} more question(s)`:`Remove ${sumTotals-sessionTarget} question(s)`} across included chapters to match — "Build now" is disabled for ${pmcType} until this balances.`
               : `Chapter totals add up to ${sumTotals} — matches the ${sessionTarget} this session needs.`}
           </div>
-          ${touchedTotals ? `<button type="button" class="btn small" id="sf-reset-totals" style="margin-top:6px;">Reset ${pmcType} to even split</button>` : ""}
+          ${(touchedTotals || excludedSet.size>0) ? `<button type="button" class="btn small" id="sf-reset-totals" style="margin-top:6px;">Reset ${pmcType} — include every chapter, even split</button>` : ""}
         </div>
       </details>
     `;
+    panel.querySelectorAll("[data-sf-chinclude]").forEach(cb=>cb.addEventListener("change", ()=>{
+      const code = cb.dataset.sfChinclude;
+      const set = excludedChaptersByCategory[pmcType] = excludedChaptersByCategory[pmcType]||new Set();
+      if(cb.checked) set.delete(code); else set.add(code);
+      // Re-materialize totals fresh over the NEW chapter set -- keeps the
+      // mismatch check meaningful immediately, rather than silently
+      // carrying over totals keyed to chapters that may no longer exist
+      // in the selection (or missing one that just got re-included).
+      const { chapters: newChapters } = effectiveChaptersAndTotals(pmcType, g);
+      const uniform = defaultPerChapterTotal(newChapters, g.days*g.slotsPerDay, g.questionsPerPaper);
+      const map = {}; newChapters.forEach(c=>map[c.code]=uniform);
+      chapterTotalsByCategory[pmcType] = map;
+      renderCategoryPanel();
+      updateBuildButton();
+    }));
     panel.querySelectorAll("[data-sf-chtotal]").forEach(inp=>inp.addEventListener("input", ()=>{
       const map = chapterTotalsByCategory[pmcType] || {...totalsMap};
       map[inp.dataset.sfChtotal] = Math.max(0, parseInt(inp.value,10)||0);
@@ -3570,6 +3641,7 @@ function openSessionForm(){
     }));
     document.getElementById("sf-reset-totals")?.addEventListener("click", ()=>{
       delete chapterTotalsByCategory[pmcType];
+      delete excludedChaptersByCategory[pmcType];
       renderCategoryPanel();
       updateBuildButton();
     });
@@ -3579,8 +3651,7 @@ function openSessionForm(){
     const numPapers = g.days*g.slotsPerDay;
     const sessionTarget = g.questionsPerPaper*numPapers;
     return Array.from(selectedCategories).some(pmcType=>{
-      const totalsMap = chapterTotalsByCategory[pmcType];
-      if(!totalsMap) return false; // never touched -- still the even default, always valid
+      const { totalsMap } = effectiveChaptersAndTotals(pmcType, g);
       const sum = Object.values(totalsMap).reduce((s,n)=>s+(n||0), 0);
       return sum!==sessionTarget;
     });
@@ -3620,6 +3691,7 @@ function openSessionForm(){
         const draft = {
           name, pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper,
           overlapMode:g.overlapMode, chapterTotals: chapterTotalsByCategory[pmcType]||null,
+          excludedChapters: Array.from(excludedChaptersByCategory[pmcType]||[]),
           placements:{}, contestIds:{},
         };
         const build = computeSessionBuild(draft);

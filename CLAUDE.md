@@ -377,7 +377,28 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- (days x slotsPerDay) -- "Build now" is disabled per-category with an
   -- explicit "add/remove N question(s)" message until it balances, so
   -- reducing one chapter (e.g. dropping a topic) always has to be made up
-  -- elsewhere rather than silently shrinking the paper.
+  -- elsewhere rather than silently shrinking the paper. The mismatch
+  -- check runs even when chapterTotals was never touched (a real gap
+  -- fixed Oct 2026): excluding a chapter (below) can make the plain even
+  -- split not divide evenly (e.g. 180 / 11 chapters), which needs the
+  -- same visible warning a manual edit gets, not silent under-building.
+  excludedChapters: [chapterCode, ...],   -- admin-ticked (Oct 2026) list
+  -- of chapters to leave OUT of this session entirely -- every chapter is
+  -- included by default (empty array); unticking one in the "Build a
+  -- session" form's chapter table (a checkbox per row, now shown
+  -- alongside every OTHER chapter at that PMC level, not just ones with a
+  -- nonzero total) drops it from sessionChapters() everywhere -- the
+  -- blueprint, the eligible-count preview, and the dry-run summary all
+  -- agree on the same effective chapter list. Added after a real report
+  -- of a PMC level's chapter list containing several duplicate custom
+  -- entries (same curriculumExtra "chapter" `code`, e.g. several "IQ —
+  -- Spatial reasoning" rows) with no way to exclude the extras from a
+  -- build -- this is the workaround; the underlying duplicate curriculum
+  -- entries are still worth cleaning up via Admin -> Curriculum, since
+  -- rows sharing one `code` are the same logical chapter here (toggling
+  -- one toggles all of them together, by design -- unit tagging on
+  -- questions is keyed by code, not by which duplicate doc they came
+  -- from).
   status: "pending" | "complete",   -- "complete" once every blueprint
   -- cell across every paper has a question placed; "pending" means at
   -- least one cell is still short (see shortfalls).
@@ -416,7 +437,21 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- across only 6 papers) correctly lets some paper get 2 questions of
   -- the same difficulty from that chapter rather than losing the excess
   -- -- the chapter's OWN total is always honored exactly, confirmed by
-  -- simulation. "Build a session" supports ticking several PMC categories
+  -- simulation. TIER_OFFSETS (medium:0, hard:1, very_hard:2) staggers
+  -- each difficulty tier's cyclic placement by a small distinct amount --
+  -- fixed Oct 2026 after a real, confirmed-by-simulation bug: without
+  -- this offset, a chapter's medium/hard/very_hard slots all used the
+  -- IDENTICAL (ci*m+k)%numPapers formula (m is the same value for all
+  -- three tiers whenever a chapter's total splits evenly), so all three
+  -- tiers skipped the EXACT SAME paper for that chapter -- it was
+  -- completely ABSENT from that paper, not just missing one difficulty.
+  -- Confirmed by simulation: every one of 12 chapters was fully absent
+  -- from exactly one of 6 papers before this fix; zero fully-absent
+  -- cells after, across several shapes including with chapters excluded,
+  -- with per-chapter totals and overall balance unchanged. Matches the
+  -- literal hand-specified table's own guarantee -- every chapter
+  -- appears in every paper, just not always at all three difficulties.
+  -- "Build a session" supports ticking several PMC categories
   -- (LEVELS checkboxes) at once -- one full session per ticked category,
   -- each with its own tab, built in sequence inside a single "Build now"
   -- click; each category's state is independent. computeSessionBuild()
