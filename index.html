@@ -2733,7 +2733,7 @@ function questionPreviewHtml(q, config={}){
 // showAnswerOption=false hides the answer toggle entirely (used from the
 // Quilgo tab, where accidentally baking the answer into an exam-facing
 // image would be a real problem, not just an unwanted default).
-function openDownloadOptionsPopup(q, {showAnswerOption=true}={}){
+function openDownloadOptionsPopup(q, {showAnswerOption=true, filenameBase=null}={}){
   const root = document.getElementById("confirm-root");
   root.innerHTML = `
     <div class="overlay" id="dl-opts-ov" style="z-index:210;">
@@ -2757,7 +2757,7 @@ function openDownloadOptionsPopup(q, {showAnswerOption=true}={}){
     const includeAnswer = showAnswerOption && document.getElementById("dl-opt-answer").checked;
     if(!includeQuestion && !includeOptions){ toast("Pick at least one of question or options"); return; }
     close();
-    downloadQuestionImage(q, {includeQuestion, includeOptions, includeAnswer});
+    downloadQuestionImage(q, {includeQuestion, includeOptions, includeAnswer, filenameBase});
   });
 }
 // html2canvas cannot be trusted to capture MathJax's rendered output
@@ -2803,8 +2803,9 @@ async function downloadQuestionImage(q, config={includeQuestion:true, includeOpt
     // same "question_name.png" and silently clobber each other.
     const part = config.includeQuestion && config.includeOptions ? "" :
       config.includeQuestion ? "_question" : config.includeOptions ? "_options" : "";
+    const base = config.filenameBase || (q.titleEn||"question").replace(/[^a-z0-9]+/gi,"_").toLowerCase();
     const a = document.createElement("a");
-    a.download = (q.titleEn||"question").replace(/[^a-z0-9]+/gi,"_").toLowerCase()+part+(config.includeAnswer?"_answer":"")+".png";
+    a.download = base+part+(config.includeAnswer?"_answer":"")+".png";
     a.href = canvas.toDataURL("image/png");
     a.click();
   }catch(err){ console.error(err); toast("Couldn't generate image"); }
@@ -4428,6 +4429,19 @@ function renderQuilgo(){
   renderQuilgoBody();
 }
 
+// Builds a safe, human filename for a downloaded question image --
+// "<contest name> Day<N> Slot<N> Q<NN>", sanitized -- so an uploader with
+// many files sitting in their Downloads folder can tell at a glance which
+// paper and which numbered slot each one belongs to, instead of every
+// file being named after the question's own title (which says nothing
+// about WHERE it goes). filenameBase is optional on both
+// openDownloadOptionsPopup()/downloadQuestionImage() -- the drawer's own
+// "Download as image" button (not tied to any one paper) keeps using the
+// question-title-based name when this isn't passed.
+function paperFilenameBase(contest, qNum){
+  return [contest.name, `Day${contest.day}`, `Slot${contest.slot}`, `Q${String(qNum).padStart(2,"0")}`]
+    .filter(Boolean).join(" ").replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").toLowerCase();
+}
 function renderQuilgoBody(){
   const body = document.getElementById("quilgo-body");
   if(!body) return;
@@ -4435,18 +4449,33 @@ function renderQuilgoBody(){
   if(!c){ body.innerHTML = emptyState("Pick a category, day, and slot above to see that paper's questions."); return; }
   const qs = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean);
   const uploadStatus = c.uploadStatus || {};
+  // Correct-option letter per question, shown plainly on this screen (NOT
+  // baked into any downloaded image -- that stays exam-safe by default,
+  // same revealAnswer rule as everywhere else) since an uploader needs it
+  // to set the right answer in Quilgo itself, and this tab -- unlike the
+  // rest of the app -- is the ONLY thing a plain `uploader` account can
+  // see, so there was previously no way for them to find this out at all.
+  const correctLetter = (q)=>{
+    const opts = getQuestionOptions(q);
+    const idx = opts.findIndex(o=>o.id===getCorrectOptionId(q));
+    return idx>=0 ? String.fromCharCode(65+idx) : "?";
+  };
   const row = (q)=>{
     const info = uploadStatus[q.id];
+    const num = qs.indexOf(q)+1;
     return `
     <div class="progress-card" style="display:flex; align-items:center; gap:12px;">
-      <span class="mono" style="width:26px; flex:0 0 auto;">${qs.indexOf(q)+1}.</span>
+      <span class="mono" style="width:26px; flex:0 0 auto;">${num}.</span>
       <div style="flex:1; min-width:0;">
         <div style="font-weight:600; font-size:13.5px;">${escapeHtml(q.titleEn||"Untitled")}</div>
         <div class="hint">${escapeHtml((q.promptEn||"").slice(0,90))}${(q.promptEn||"").length>90?"…":""}</div>
-        ${info ? `<div class="hint">Uploaded by <b>${escapeHtml(info.uploadedByName||"—")}</b> · ${fmtDate(info.uploadedAt)}</div>` : ""}
+        <div class="hint">Correct answer: <b class="mono" style="color:var(--accent);">${correctLetter(q)}</b></div>
+        ${info ? `<div class="hint">Uploaded by <b>${escapeHtml(info.uploadedByName||"—")}</b> · ${fmtDate(info.uploadedAt)}${info.answerMarked?` · answer set in Quilgo by <b>${escapeHtml(info.answerMarkedByName||"—")}</b>`:""}</div>` : ""}
       </div>
-      <button class="btn small" data-dl="${q.id}">Download image…</button>
-      ${info ? `<button class="btn small" data-undo="${q.id}">Undo</button>` : `<button class="btn small primary" data-mark="${q.id}">Mark uploaded</button>`}
+      <button class="btn small" data-dl="${q.id}" data-dl-num="${num}">Download image…</button>
+      ${info
+        ? `${info.answerMarked ? `<span class="pill status-uploaded">Answer set</span>` : `<button class="btn small primary" data-mark-answer="${q.id}">Mark answer set</button>`}<button class="btn small" data-undo="${q.id}">Undo</button>`
+        : `<button class="btn small primary" data-mark="${q.id}">Mark uploaded</button>`}
     </div>`;
   };
   const pending = qs.filter(q=>!uploadStatus[q.id]);
@@ -4458,6 +4487,13 @@ function renderQuilgoBody(){
       ? `<div class="progress-card" style="border-color:var(--accent);"><span class="pill status-uploaded">Complete</span> <span class="hint">This contest's upload work is marked done.</span></div>`
       : isAdminUser ? `<button class="btn small" id="quilgo-mark-complete" style="margin-bottom:14px;" ${pending.length>0?`disabled title="${pending.length} question${pending.length===1?"":"s"} still pending upload"`:""}>Mark this contest's upload complete</button>` : ""}
     ${pending.length>0 ? `<div class="callout">Up next: <b>${qs.indexOf(pending[0])+1}. ${escapeHtml(pending[0].titleEn||"Untitled")}</b></div>` : ""}
+    ${qs.length>0 ? `
+    <details>
+      <summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">Answer key (${qs.length})</summary>
+      <div class="answer-key-grid" style="margin:8px 0 14px;">
+        ${qs.map((q,i)=>`<div><b>Q${i+1}.</b> <span class="mono">${correctLetter(q)}</span></div>`).join("")}
+      </div>
+    </details>` : ""}
     <div class="section-label">Pending upload (${pending.length})</div>
     ${pending.length===0 ? `<div class="empty">${qs.length===0?"This contest has no questions.":"All questions in this contest are uploaded."}</div>` : pending.map(row).join("")}
     <div class="section-label" style="margin-top:22px;">Already uploaded (${done.length})</div>
@@ -4472,7 +4508,8 @@ function renderQuilgoBody(){
     catch(err){ toast("Couldn't update contest"); }
   });
   body.querySelectorAll("[data-dl]").forEach(b=>b.addEventListener("click", ()=>{
-    const q = questions.find(x=>x.id===b.dataset.dl); if(q) openDownloadOptionsPopup(q, {showAnswerOption:false});
+    const q = questions.find(x=>x.id===b.dataset.dl);
+    if(q) openDownloadOptionsPopup(q, {showAnswerOption:false, filenameBase:paperFilenameBase(c, b.dataset.dlNum)});
   }));
   body.querySelectorAll("[data-mark]").forEach(b=>b.addEventListener("click", async ()=>{
     try{
@@ -4480,6 +4517,17 @@ function renderQuilgoBody(){
         [`uploadStatus.${b.dataset.mark}`]: { uploadedBy: currentUser.email, uploadedByName: currentUser.displayName||currentUser.email, uploadedAt: new Date().toISOString() }
       });
       toast("Marked as uploaded");
+    }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
+  }));
+  body.querySelectorAll("[data-mark-answer]").forEach(b=>b.addEventListener("click", async ()=>{
+    try{
+      await updateDoc(doc(db,"contests",c.id), {
+        [`uploadStatus.${b.dataset.markAnswer}.answerMarked`]: true,
+        [`uploadStatus.${b.dataset.markAnswer}.answerMarkedBy`]: currentUser.email,
+        [`uploadStatus.${b.dataset.markAnswer}.answerMarkedByName`]: currentUser.displayName||currentUser.email,
+        [`uploadStatus.${b.dataset.markAnswer}.answerMarkedAt`]: new Date().toISOString(),
+      });
+      toast("Marked answer set in Quilgo");
     }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
   }));
   body.querySelectorAll("[data-undo]").forEach(b=>b.addEventListener("click", async ()=>{
