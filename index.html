@@ -1525,6 +1525,19 @@ function renderBank(){
   const list = filteredQuestions();
   const chips = activeFilterChips();
   const main = document.getElementById("main");
+  // Preserve the search box's focus/cursor position across the innerHTML
+  // rebuild below -- fixed Oct 2026 after a real report that typing in
+  // the search field lost focus after every single character. Every
+  // filter change, including each keystroke here, calls renderBank(),
+  // which rebuilds this ENTIRE tab (filters bar included) via innerHTML
+  // -- that destroys and recreates #f-q as a brand-new DOM node each
+  // time, which drops browser focus even though the new element has the
+  // same id. Restoring focus + selection onto the new node after render
+  // is the standard fix for this class of bug without restructuring the
+  // render into a partial update.
+  const wasSearchFocused = document.activeElement?.id==="f-q";
+  const searchSelStart = wasSearchFocused ? document.activeElement.selectionStart : null;
+  const searchSelEnd = wasSearchFocused ? document.activeElement.selectionEnd : null;
   main.innerHTML = `
     <div class="pagehead"><h1>Question Bank</h1>${isExternalReviewerUser ? "" : `<button class="btn primary" id="new-q">+ New Question</button>`}</div>
     <p class="desc">${isExternalReviewerUser
@@ -1595,6 +1608,11 @@ function renderBank(){
     grid.querySelectorAll("[data-quickfilter-unit]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.unit = b.dataset.quickfilterUnit; bankVisibleCount = 30; renderBank(); }));
     grid.querySelectorAll("[data-quickfilter-skill]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.skill = b.dataset.quickfilterSkill; bankVisibleCount = 30; renderBank(); }));
     grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
+  }
+  if(wasSearchFocused){
+    const el = document.getElementById("f-q");
+    el.focus();
+    if(searchSelStart!=null) el.setSelectionRange(searchSelStart, searchSelEnd);
   }
   animateProgressBars();
 }
@@ -3498,6 +3516,17 @@ function openSessionForm(){
   // closed by default) since most builds never need it.
   const excludedChaptersByCategory = {};
   const chapterTotalsByCategory = {};
+  // Per-category open/closed state for the two <details> blocks below --
+  // fixed Oct 2026 after a real report that the "Advanced" panel closed
+  // itself after every single click inside it. renderCategoryPanel()
+  // rebuilds the whole panel's innerHTML on every chapter-total edit/
+  // checkbox toggle, which recreates <details> as a brand-new DOM node
+  // each time -- a plain static `open` attribute (or none at all) means
+  // it always starts closed again regardless of what the admin just did.
+  // Tracking state explicitly and re-applying it on every render is the
+  // fix, same pattern as the focus-preservation fix below.
+  const uiStateByCategory = {};
+  function uiState(pmcType){ return uiStateByCategory[pmcType] = uiStateByCategory[pmcType]||{advancedOpen:false, shortOnOpen:false}; }
   let activeCategoryTab = "PMC-4";
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
@@ -3579,6 +3608,15 @@ function openSessionForm(){
     const allChapters = chaptersForLevel(pmcType); // unfiltered -- the checkbox list shows every chapter, ticked or not
     const rows = sessionEligiblePreview(pmcType, g.days, g.slotsPerDay, g.questionsPerPaper, totalsMap, Array.from(excludedSet));
     const rowByCode = {}; rows.forEach(r=>rowByCode[r.chapter.code]=r);
+    const state = uiState(pmcType);
+    // Preserve whichever chapter-total input had focus (and its cursor
+    // position) across the innerHTML rebuild below -- same focus-loss bug
+    // as the Bank tab search box, same fix: these inputs trigger their
+    // OWN re-render on every keystroke, which recreates them as brand-new
+    // DOM nodes each time.
+    const focusedChCode = document.activeElement?.dataset?.sfChtotal;
+    const focusedSelStart = focusedChCode!=null ? document.activeElement.selectionStart : null;
+    const focusedSelEnd = focusedChCode!=null ? document.activeElement.selectionEnd : null;
     panel.innerHTML = `
       <div class="progress-card" style="${allComplete?"border-color:var(--accent);":noneComplete?"border-color:var(--red);":"border-color:var(--gold);"}">
         <div style="font-weight:600;">${pmcType}: ${summary.totalEligible} locked/reviewed-OK question${summary.totalEligible===1?"":"s"} available right now.</div>
@@ -3587,9 +3625,14 @@ function openSessionForm(){
             : noneComplete ? `Not enough yet to complete even 1 of the ${summary.totalPapers} paper${summary.totalPapers===1?"":"s"} requested.`
             : `Enough to complete ${summary.completePapers} of ${summary.totalPapers} paper${summary.totalPapers===1?"":"s"} right now.`}
         </div>
-        ${!allComplete ? `<div class="hint" style="margin-top:4px;">Short on: ${summary.shortChapters.map(u=>escapeHtml(chapterLabel(u))).join(", ")}. You can still build now — finished papers save immediately, the rest stay "Pending" and you can top them up any time later (Contests → that session → "Add more now") once more questions are locked, without disturbing anything already built.</div>` : ""}
+        ${!allComplete ? `
+        <details id="sf-shorton-details" ${state.shortOnOpen?"open":""} style="margin-top:6px;">
+          <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-dim);">Short on ${summary.shortChapters.length} chapter${summary.shortChapters.length===1?"":"s"} — click to see which</summary>
+          <div class="hint" style="margin-top:4px;">${summary.shortChapters.map(u=>escapeHtml(chapterLabel(u))).join(", ")}</div>
+        </details>
+        <div class="hint" style="margin-top:4px;">You can still build now — finished papers save immediately, the rest stay "Pending" and you can top them up any time later (Contests → that session → "Add more now") once more questions are locked, without disturbing anything already built.</div>` : ""}
       </div>
-      <details style="margin-top:10px;">
+      <details id="sf-advanced-details" ${state.advancedOpen?"open":""} style="margin-top:10px;">
         <summary style="cursor:pointer; font-size:12.5px; font-weight:600; color:var(--accent);">Advanced: pick ${pmcType}'s chapters &amp; customize totals</summary>
         <div style="margin-top:8px;">
           <p class="hint" style="margin-top:0;">Every chapter is ticked (included) by default, with an even share — 15 questions (5 Medium, 5 Hard, 5 Very Hard) for a standard 6-paper round. Untick a chapter to leave it out entirely (e.g. a duplicate or a topic skipped this round), or edit its total if one chapter should count for more or less.</p>
@@ -3617,6 +3660,16 @@ function openSessionForm(){
         </div>
       </details>
     `;
+    if(focusedChCode!=null){
+      const el = panel.querySelector(`[data-sf-chtotal="${CSS.escape(focusedChCode)}"]`);
+      // type="number" inputs throw InvalidStateError on setSelectionRange
+      // (Chrome doesn't support text selection on them at all) -- focus()
+      // alone is enough to keep typing uninterrupted; wrap the rest so a
+      // thrown error here can never skip the listener-wiring below it.
+      if(el){ el.focus(); try{ if(focusedSelStart!=null) el.setSelectionRange(focusedSelStart, focusedSelEnd); }catch(_e){} }
+    }
+    document.getElementById("sf-shorton-details")?.addEventListener("toggle", e=>{ state.shortOnOpen = e.target.open; });
+    document.getElementById("sf-advanced-details")?.addEventListener("toggle", e=>{ state.advancedOpen = e.target.open; });
     panel.querySelectorAll("[data-sf-chinclude]").forEach(cb=>cb.addEventListener("change", ()=>{
       const code = cb.dataset.sfChinclude;
       const set = excludedChaptersByCategory[pmcType] = excludedChaptersByCategory[pmcType]||new Set();

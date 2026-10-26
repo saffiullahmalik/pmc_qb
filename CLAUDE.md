@@ -493,6 +493,41 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- meaningful) to "N/M papers complete" -- the same vocabulary the
   -- dry-run headline uses, so a pending session's state reads the same
   -- way whether you're looking at the list or the detail view.
+  -- Two real bugs fixed in openSessionForm()/renderCategoryPanel() (Oct
+  -- 2026), both the same root cause as a focus-loss bug already fixed
+  -- elsewhere (see the Bank tab note below): renderCategoryPanel() does a
+  -- full `panel.innerHTML = ...` rebuild on EVERY interaction inside it
+  -- (a chapter checkbox toggle, a chapter-total edit), which destroys and
+  -- recreates every child DOM node, including a <details> element's
+  -- open-state and whatever input had focus -- browsers don't preserve
+  -- either across an innerHTML replacement. (1) The "Advanced: pick
+  -- chapters & customize totals" <details> was closing itself after every
+  -- single click inside it, since a plain <details> with no `open`
+  -- attribute always starts closed on a freshly-created node -- fixed
+  -- with a per-category `uiStateByCategory`/`uiState(pmcType)` object
+  -- (`{advancedOpen, shortOnOpen}`) that the template reads an `open`
+  -- attribute from and a `toggle` listener keeps in sync with the admin's
+  -- own clicks. The previously-plain "Short on: <long chapter list>"
+  -- hint (which "covered a lot of space" per real feedback) got the same
+  -- treatment, moved behind its own closed-by-default <details
+  -- id="sf-shorton-details"> ("Short on N chapters — click to see
+  -- which"), tracked via `uiState(pmcType).shortOnOpen`. (2) The
+  -- per-chapter total `<input data-sf-chtotal>` fields lost focus after
+  -- every digit typed, for the identical reason the Bank search box did.
+  -- Fixed the same way: capture `document.activeElement`'s
+  -- `data-sf-chtotal` code + `selectionStart`/`selectionEnd` BEFORE the
+  -- `panel.innerHTML` reassignment, then `.focus()` the matching new node
+  -- (found via `CSS.escape()`'d attribute selector, since these inputs
+  -- share no unique `id`) after. One real wrinkle found via headless-
+  -- Chrome testing: these are `type="number"` inputs, and Chrome throws
+  -- `InvalidStateError` if `setSelectionRange()` is ever actually called
+  -- on one (`selectionStart`/`selectionEnd` return `null` instead of
+  -- throwing, which is what keeps the call guarded-off in practice, but
+  -- the `setSelectionRange()` call itself is still wrapped in a
+  -- try/catch as a second layer -- an uncaught throw there would abort
+  -- `renderCategoryPanel()` before it reaches the listener-wiring calls
+  -- just below, leaving the freshly-rendered checkboxes/inputs with NO
+  -- event listeners at all).
 
 assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   name, contestLevel, units: [{unit, targetCount}], teacherEmails: [...],
@@ -1083,6 +1118,8 @@ activityLog/{entryId}    -- admin-only audit trail (Admin tab's "Activity Log")
 ```
 
 Filtering in the UI (level, type, difficulty, status, unit, search) is done **client-side** over the full `questions` collection (subscribed via `onSnapshot`, ordered by `createdAt desc`, capped at 500) — deliberately not server-side compound queries, since the dataset is small (a school's worth of exam questions, not a large-scale product).
+
+**The Bank tab's search box (`#f-q`) used to lose focus after every single character typed** (real bug report, fixed Oct 2026) — `renderBank()`'s `"input"` listener calls `renderBank()` on every keystroke, and `renderBank()` does a full `main.innerHTML = ...` rebuild of the whole tab, which destroys and recreates `#f-q` as a brand-new DOM node each time; browsers don't preserve `document.activeElement` across an `innerHTML` replacement, so typing a second character required clicking back into the box first. Fixed by capturing `wasSearchFocused`/`searchSelStart`/`searchSelEnd` from `document.activeElement` right before the `innerHTML` reassignment, then re-querying `#f-q` on the new DOM and calling `.focus()`/`.setSelectionRange()` on it at the very end of `renderBank()`. The session builder's chapter-total inputs had the identical bug for the identical reason — see the `contestSessions` entry above for that fix (and a real wrinkle it hit that this one didn't: those are `type="number"` inputs, which throw if `setSelectionRange()` is actually called on them).
 
 The Bank tab's status filter (`#f-status`) is driven by `BANK_STATUS_FILTERS`, not `STATUSES` directly (Oct 2026) — it's the same four raw status values PLUS one derived "Reviewed — ready to lock" option (`matchesStatusFilter(q, "reviewed")` → `q.status==="in_review" && q.peerReview?.outcome==="agree"`), so admins/QB Leads can isolate exactly the subset of in-review questions a reviewer already agreed with and is just waiting on a lock. This is additive: the plain "In Review" filter option and every status-pill quick-filter (clicking a card's own status pill) still match ALL `in_review` questions regardless of review outcome, exactly as before — `STATUSES` itself (used by the editor's actual Status field and card status pills) is untouched.
 
