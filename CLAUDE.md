@@ -366,6 +366,18 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- either way -- that's not what overlapMode controls -- it's just
   -- recorded in the question's usageHistory (below) so there's a full
   -- record of where it's been used, overlapping round or not.
+  chapterTotals: { [chapterCode]: number } | null,   -- admin-editable
+  -- override (Oct 2026) of how many questions each chapter contributes
+  -- ACROSS THE WHOLE SESSION -- null (the default) means every chapter
+  -- gets the same even share (defaultPerChapterTotal() in index.html).
+  -- Set from the "Build a session" form's per-category chapter-totals
+  -- table -- each row's "Total" input, live-recomputing that row's own
+  -- Medium/Hard/Very-Hard need via difficultyQuotas() as it changes. The
+  -- sum of every chapter's total must exactly equal questionsPerPaper x
+  -- (days x slotsPerDay) -- "Build now" is disabled per-category with an
+  -- explicit "add/remove N question(s)" message until it balances, so
+  -- reducing one chapter (e.g. dropping a topic) always has to be made up
+  -- elsewhere rather than silently shrinking the paper.
   status: "pending" | "complete",   -- "complete" once every blueprint
   -- cell across every paper has a question placed; "pending" means at
   -- least one cell is still short (see shortfalls).
@@ -384,29 +396,50 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   contestIds: { "<day>_<slot>": contestId },
   createdAt, createdBy, lastBuiltAt, lastBuiltBy
   -- Selection logic (index.html): buildBlueprint(numPapers,
-  -- questionsPerPaper, chapters) returns fixedBlueprint6x12() -- the
-  -- project owner's own hand-specified table, verified by direct
+  -- questionsPerPaper, chapters, chapterTotals) returns fixedBlueprint6x12()
+  -- -- the project owner's own hand-specified table, verified by direct
   -- simulation to sum to exactly 10 medium + 10 hard + 10 very_hard per
   -- paper and 5+5+5 per chapter -- ONLY when the shape is literally 6
-  -- papers x 30 questions x 12 chapters (the standard 3-day x 2-slot
-  -- round every PMC category uses); any OTHER days/slotsPerDay/
-  -- questionsPerPaper combination falls through to
-  -- buildGeneralBlueprint(), a cyclic/rotating construction (chapter ci's
-  -- k-th "medium" slot goes to paper (ci*m+k) % numPapers, same pattern
-  -- independently per difficulty tier) that's well-balanced in aggregate
-  -- but NOT a hand-proven exact balance for every possible combination
+  -- papers x 30 questions x 12 chapters AND chapterTotals is null/uniform
+  -- (a customized chapter total has no literal table to represent it, so
+  -- it falls through to the general algorithm even at the standard
+  -- shape). Any other days/slotsPerDay/questionsPerPaper combination, or
+  -- any customized chapterTotals, uses buildGeneralBlueprint() instead --
+  -- a cyclic/rotating construction (chapter ci's k-th "medium" slot goes
+  -- to paper (ci*m+k) % numPapers, same pattern independently per
+  -- difficulty tier, m = that chapter's OWN total via difficultyQuotas())
+  -- that's well-balanced in aggregate but NOT a hand-proven exact balance
   -- the way the literal table is -- confirmed by simulation: a 4-paper/
-  -- 20-question/10-chapter test case lands within 1 question of the
-  -- ideal per-paper split (21/21/19/19 against a target of 20), not
-  -- perfectly even. computeSessionBuild() does the actual cell-by-cell
-  -- random pick (Math.random() among that cell's eligible, not-yet-used
-  -- pool) and returns a plan; commitSessionBuild() is the only part that
-  -- writes to Firestore (one writeBatch: create/update every paper,
+  -- 20-question/10-chapter test case lands within 1 question of the ideal
+  -- per-paper split (21/21/19/19 against a target of 20), not perfectly
+  -- even; and a chapter total large enough to exceed numPapers (e.g. 21
+  -- across only 6 papers) correctly lets some paper get 2 questions of
+  -- the same difficulty from that chapter rather than losing the excess
+  -- -- the chapter's OWN total is always honored exactly, confirmed by
+  -- simulation. sessionCanBuildOnePaper() checks blueprint[*][0] (paper 1
+  -- only, representative) against raw eligible counts and surfaces a
+  -- "can't even build ONE complete paper" warning per category before the
+  -- admin commits to anything -- distinct from the per-chapter shortfall
+  -- table, which is about the whole session's worth of need. "Build a
+  -- session" supports ticking several PMC categories (LEVELS checkboxes)
+  -- at once -- one full session per ticked category, each with its own
+  -- chapter-totals tab/table, built in sequence inside a single "Build
+  -- now" click; each category's shortfall/mismatch state is independent.
+  -- computeSessionBuild() does the actual cell-by-cell random pick
+  -- (Math.random() among that cell's eligible, not-yet-used pool) and
+  -- returns a plan; commitSessionBuild() is the only part that writes to
+  -- Firestore (one writeBatch per category: create/update every paper,
   -- arrayUnion onto every newly-placed question's usedIn AND
   -- usageHistory, write the session doc) -- kept separate so the "Build a
   -- session" form's live eligible-count preview (sessionEligiblePreview())
   -- can show chapter x difficulty need-vs-have counts before committing
-  -- anything.
+  -- anything. commitSessionBuild() resolves its own Firestore doc
+  -- reference (and reads back its .id) BEFORE either write loop runs --
+  -- fixed Oct 2026 after a real "invalid argument" error on every first
+  -- build: writing the not-yet-assigned `session.id` directly into
+  -- contests.sessionId and the usageHistory entry's sessionId meant both
+  -- were literally `undefined` on a brand-new session, which Firestore's
+  -- arrayUnion()/set() reject outright.
 
 assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   name, contestLevel, units: [{unit, targetCount}], teacherEmails: [...],
