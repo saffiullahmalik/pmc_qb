@@ -493,6 +493,24 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- meaningful) to "N/M papers complete" -- the same vocabulary the
   -- dry-run headline uses, so a pending session's state reads the same
   -- way whether you're looking at the list or the detail view.
+  -- "Add more now" live diagnostic (Oct 2026, openSessionResultsView()):
+  -- real report of clicking "Add more now" after locking more questions
+  -- and getting "0 question(s) added", with no way to tell from the UI
+  -- whether that's because the newly-locked questions genuinely don't
+  -- match any still-short cell (wrong chapter/difficulty/PMC-level tag --
+  -- an easy mistake, not a bug) or because a matching pool DOES exist and
+  -- the rebuild is somehow still not picking it up (an actual bug).
+  -- sessionLiveShortfallCounts(session) answers this directly: for every
+  -- (chapter, difficulty) the session still lists as short, it counts how
+  -- many CURRENTLY eligible, not-yet-used-in-this-session questions exist
+  -- for that exact combination right now (same eligibility/overlap-
+  -- exclusion logic computeSessionBuild() itself uses). Each "Short: ..."
+  -- line in the results view now appends "— N eligible available" per
+  -- item; 0 means lock a question matching that EXACT chapter+difficulty+
+  -- PMC level to fill it; a count >0 immediately after a rebuild that
+  -- still lists the cell as short would mean something is genuinely wrong
+  -- in the fill logic and needs further debugging, not just "lock more
+  -- questions and wait."
   -- Two real bugs fixed in openSessionForm()/renderCategoryPanel() (Oct
   -- 2026), both the same root cause as a focus-loss bug already fixed
   -- elsewhere (see the Bank tab note below): renderCategoryPanel() does a

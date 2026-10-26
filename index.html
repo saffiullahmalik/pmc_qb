@@ -3423,6 +3423,31 @@ function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper, c
     return { chapter:ch, need, have };
   });
 }
+// Live diagnostic for a session's results view -- for every still-short
+// (chapter, difficulty) cell, how many currently-eligible, not-yet-used
+// questions actually exist for it right now. Lets an admin tell "I locked
+// more questions but they're the wrong chapter/difficulty/level" (count
+// stays 0) apart from "a real bug -- a pool exists but still isn't being
+// picked" (count is >0 immediately after a rebuild that still lists this
+// cell as short) without needing to inspect Firestore by hand.
+function sessionLiveShortfallCounts(session){
+  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType));
+  const usedThisSession = new Set();
+  if(session.overlapMode!=="overlapping"){
+    Object.values(session.placements||{}).forEach(byChapter=>{
+      Object.values(byChapter||{}).forEach(byDiff=>{
+        Object.values(byDiff||{}).forEach(qid=>{ if(qid) usedThisSession.add(qid); });
+      });
+    });
+  }
+  const counts = {};
+  eligible.forEach(q=>{
+    if(usedThisSession.has(q.id)) return;
+    const k = `${q.unit}|${q.difficulty}`;
+    counts[k] = (counts[k]||0)+1;
+  });
+  return counts;
+}
 async function commitSessionBuild(session, build){
   const batch = writeBatch(db);
   // Resolve the session's own id FIRST, before either write loop -- on a
@@ -3766,6 +3791,7 @@ function openSessionResultsView(session){
   for(let d=1; d<=session.days; d++) for(let s=1; s<=session.slotsPerDay; s++) papers.push({day:d, slot:s, key:paperKey(d,s)});
   const shortfallsByKey = {};
   (session.shortfalls||[]).forEach(sf=>{ const k=paperKey(sf.day,sf.slot); (shortfallsByKey[k]=shortfallsByKey[k]||[]).push(sf); });
+  const liveCounts = sessionLiveShortfallCounts(session);
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>${escapeHtml(session.name)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
@@ -3777,7 +3803,11 @@ function openSessionResultsView(session){
         return `
         <div class="progress-card" style="margin-bottom:8px;">
           <div class="row"><b>Day ${p.day}, Slot ${p.slot}</b><span class="mono">${c?(c.questionIds||[]).length:0} / ${session.questionsPerPaper}</span></div>
-          ${sf.length>0 ? `<div class="hint" style="color:var(--gold); margin-top:4px;">Short: ${sf.map(x=>`${escapeHtml(chapterLabel(x.unit))} (${DIFFS.find(d=>d.v===x.difficulty)?.l||x.difficulty})`).join(", ")}</div>` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
+          ${sf.length>0 ? `<div class="hint" style="color:var(--gold); margin-top:4px;">Short: ${sf.map(x=>{
+            const n = liveCounts[`${x.unit}|${x.difficulty}`]||0;
+            return `${escapeHtml(chapterLabel(x.unit))} (${DIFFS.find(d=>d.v===x.difficulty)?.l||x.difficulty}) — <span style="${n>0?"color:var(--red); font-weight:700;":""}">${n} eligible available</span>`;
+          }).join(", ")}</div>
+          ${sf.some(x=>(liveCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">⚠ Some of these show eligible questions available but still unfilled — click "Add more now" below to pick them up.</div>` : `<div class="hint" style="margin-top:2px;">No eligible question exists yet for any of these — lock a question matching that exact chapter, difficulty, and PMC level (${escapeHtml(session.pmcType)}) to fill it.</div>`}` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
           ${c ? `<div style="margin-top:8px; display:flex; gap:6px;">
             <button type="button" class="btn small" data-sr-edit="${c.id}">Edit</button>
             <button type="button" class="btn small" data-sr-print="${c.id}">Print / Export PDF</button>
