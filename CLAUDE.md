@@ -177,6 +177,21 @@ questions/{questionId}
     -- already lets any teacher write to a non-finalized question
     -- regardless of authorship, which is exactly what a reviewer updating
     -- someone else's question needs.
+    -- isReReview: true (Oct 2026) marks ONLY this specific reset -- never
+    -- a brand-new assignment -- root-caused after a real report of a
+    -- reviewer's "Done" count dropping overnight (180 -> 178, no data
+    -- actually lost): myReviewStats() counts questions whose CURRENT
+    -- peerReview.submittedAt is set, and this reset deliberately nulls
+    -- that back out so the SAME reviewer looks at the author's fix again
+    -- -- correct, but with nothing visible explaining why a "completed"
+    -- review reappeared as "to do" and the completed count fell.
+    -- openMyReviewsPanel()'s "To review" list and openReviewForm()'s
+    -- header both now show an explicit "Re-review" badge/callout when
+    -- this flag is set, with copy that says plainly nothing was lost --
+    -- it's just waiting on a second look. Carried through unchanged when
+    -- the reviewer resubmits (the submit handler spreads
+    -- {...q.peerReview, ...} rather than calling freshPeerReview() again),
+    -- so it survives as a harmless marker on the completed record too.
     -- Review flow (Oct 2026 rewrite): openReviewForm() is now two steps,
     -- not one blind submit. Step 1 is unchanged in spirit (pick your own
     -- answer blind, optional working/solution text, optional time) but now

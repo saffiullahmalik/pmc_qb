@@ -2404,7 +2404,7 @@ function openForm(existing){
     // The author revising a question a reviewer disagreed with re-queues it
     // for the *same* reviewer (continuity) rather than a fresh random pick.
     if(isEdit && existing.peerReview?.outcome==="disagree"){
-      body.peerReview = freshPeerReview({email:existing.peerReview.reviewerEmail, name:existing.peerReview.reviewerName});
+      body.peerReview = freshPeerReview({email:existing.peerReview.reviewerEmail, name:existing.peerReview.reviewerName}, {isReReview:true});
     }
     // Moving into "in_review" for the first time auto-assigns a reviewer --
     // same balanced-random pick the drawer's quick-status buttons use.
@@ -2842,6 +2842,7 @@ function openReviewForm(q){
         ${(q.skills||[]).map(s=>`<span class="pill skill-chip">${escapeHtml(s)}</span>`).join("")}
       </div>
       <div class="hint" style="margin-bottom:12px;">By <b>${escapeHtml(q.authorName||"—")}</b> · posted ${fmtDate(q.createdAt)}${q.updatedAt && q.updatedAt!==q.createdAt ? " · updated "+fmtDate(q.updatedAt) : ""} · ${escapeHtml(chapterLabel(q.unit))} / ${escapeHtml(q.subtopic||"—")}</div>
+      ${q.peerReview?.isReReview ? `<div class="callout" style="margin-bottom:12px;">↻ You already reviewed this once and sent it back — the author has since updated it, so it's here for another look. Your earlier review won't count again toward "Reviewed" until you resubmit this one.</div>` : ""}
       <div id="review-step1">
         <p class="hint">Solve it yourself first — this only works if you don't peek at the marked answer beforehand.</p>
         <div id="review-preview">${questionPreviewHtml(q, {includeOptions:false})}</div>
@@ -2968,12 +2969,13 @@ function openMyReviewsPanel(){
           <button type="button" class="btn small ${tab==="todo"?"primary":""}" data-mr-tab="todo">To review (${todo.length})</button>
           <button type="button" class="btn small ${tab==="done"?"primary":""}" data-mr-tab="done">Reviewed (${done.length})</button>
         </div>
+        ${tab==="todo" && todo.some(q=>q.peerReview.isReReview) ? `<p class="hint" style="margin:-4px 0 10px;">A "Re-review" tag means you already reviewed this once and sent it back — the author has since updated it, so it's back for another look. Your earlier review no longer counts toward "Reviewed" until you resubmit this one — nothing was lost, it's just waiting on you again.</p>` : ""}
         ${list.length===0 ? `<div class="empty">${tab==="todo"?"Nothing assigned to you right now.":"You haven't submitted any reviews yet."}</div>` : `
         <table class="data">
           <thead><tr><th>Question</th><th>Author</th><th>${tab==="todo"?"Assigned":"Reviewed"}</th>${tab==="done"?"<th>Outcome</th>":""}<th></th></tr></thead>
           <tbody>
             ${list.map(q=>`<tr>
-              <td>${escapeHtml(q.titleEn||"Untitled")}</td>
+              <td>${escapeHtml(q.titleEn||"Untitled")}${tab==="todo" && q.peerReview.isReReview ? ` <span class="pill" style="background:var(--gold-soft); color:var(--gold);">Re-review</span>` : ""}</td>
               <td>${escapeHtml(q.authorName||"—")}</td>
               <td>${fmtDate(tab==="todo"?q.peerReview.assignedAt:q.peerReview.submittedAt)}</td>
               ${tab==="done" ? `<td>${q.peerReview.outcome==="agree" ? `<span class="pill status-uploaded">OK</span>` : `<span class="pill" style="background:var(--red-soft); color:var(--red);">${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short||"Sent back")}</span>`}</td>` : ""}
@@ -3777,12 +3779,26 @@ function pickReviewer(authorEmail, excludeAlso){
   const leastLoaded = pool.filter(t=>load[t.email]===minLoad);
   return leastLoaded[Math.floor(Math.random()*leastLoaded.length)];
 }
-function freshPeerReview(reviewer){
+// isReReview (Oct 2026): true only when this fresh pending object is the
+// "editing a disagreed question re-queues it for the SAME reviewer"
+// continuity reset, never for a brand-new assignment. Root-caused a real
+// report of a reviewer's "Done" count dropping overnight (180 -> 178,
+// with no data actually lost): myReviewStats()'s total only counts
+// questions whose CURRENT peerReview.submittedAt is set, and this reset
+// deliberately nulls that back out so the SAME reviewer looks at the
+// fixed version again -- correct behavior, but with nothing visible
+// explaining why a "completed" review reappeared as "to do" and the
+// completed count fell. isReReview lets the UI (openMyReviewsPanel(),
+// openReviewForm()) say so explicitly instead of looking like silent data
+// loss. Carried through unchanged when the reviewer resubmits (the submit
+// handler spreads {...q.peerReview, ...} rather than calling this again),
+// so it stays as a harmless historical marker on the completed record too.
+function freshPeerReview(reviewer, opts={}){
   return {
     reviewerEmail: reviewer.email, reviewerName: reviewer.name||reviewer.email,
     assignedAt: new Date().toISOString(), submittedAt: null,
     reviewerOptionId: null, reviewerNote: "", reviewTimeMinutes: null, outcome: "pending",
-    issueFlag: null, issueNote: "",
+    issueFlag: null, issueNote: "", isReReview: opts.isReReview||false,
   };
 }
 // Admin release valve for the Review Workload panel: moves `count` of
