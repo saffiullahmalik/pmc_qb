@@ -3375,31 +3375,6 @@ function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper, c
     return { chapter:ch, need, have };
   });
 }
-// "From all categories, check whether we cannot make even one contest" --
-// a category can still be worth building even when most of its papers
-// will come out short, but if it can't fill paper #1's blueprint even
-// once, a build for that category is pointless right now. Checks every
-// (chapter, difficulty) cell blueprint[*][0] (the first paper only --
-// representative, since the fixed table's papers differ only in WHICH
-// chapters skip a difficulty, not in total demand) against raw eligible
-// counts; overlap/reuse doesn't matter for a single paper's own cells,
-// they're always distinct (chapter,difficulty) pairs.
-function sessionCanBuildOnePaper(pmcType, days, slotsPerDay, questionsPerPaper, chapterTotalsMap){
-  const chapters = chaptersForLevel(pmcType);
-  const numPapers = days*slotsPerDay;
-  const chapterTotals = chapterTotalsMap ? chapters.map(ch=>chapterTotalsMap[ch.code]??defaultPerChapterTotal(chapters,numPapers,questionsPerPaper)) : null;
-  const blueprint = buildBlueprint(numPapers, questionsPerPaper, chapters, chapterTotals);
-  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType));
-  const haveByCell = {};
-  eligible.forEach(q=>{ const k=`${q.unit}|${q.difficulty}`; haveByCell[k]=(haveByCell[k]||0)+1; });
-  const missing = [];
-  chapters.forEach((ch,ci)=>{
-    (blueprint[ci][0]||[]).forEach(diff=>{
-      if(!(haveByCell[`${ch.code}|${diff}`]>0)) missing.push({unit:ch.code, difficulty:diff});
-    });
-  });
-  return { ok: missing.length===0, missing };
-}
 async function commitSessionBuild(session, build){
   const batch = writeBatch(db);
   // Resolve the session's own id FIRST, before either write loop -- on a
@@ -3459,16 +3434,38 @@ async function commitSessionBuild(session, build){
   return { ...sessionBody, id: sessionRef.id };
 }
 
+// Dry-run summary for the "Build a session" preview -- runs the REAL
+// build logic (computeSessionBuild() never writes anything, only
+// commitSessionBuild() does) against an empty, throwaway draft, then
+// reports what actually happened in plain language: how many of the
+// requested papers would come out fully complete right now, not just a
+// raw "need vs have" count the admin has to do the math on themselves.
+// Oct 2026, replacing the old sessionCanBuildOnePaper() proxy check --
+// this is strictly more accurate since it's the literal build, not a
+// stand-in for "paper 1 only".
+function sessionDryRunSummary(pmcType, g, chapterTotals){
+  const draft = { pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper, overlapMode:g.overlapMode, chapterTotals: chapterTotals||null, placements:{} };
+  const build = computeSessionBuild(draft);
+  const totalPapers = g.days*g.slotsPerDay;
+  const shortfallPapers = new Set(build.shortfalls.map(sf=>paperKey(sf.day,sf.slot)));
+  const totalEligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType)).length;
+  return {
+    totalEligible, totalPapers, completePapers: totalPapers-shortfallPapers.size,
+    shortChapters: Array.from(new Set(build.shortfalls.map(sf=>sf.unit))),
+  };
+}
 function openSessionForm(){
   const root = document.getElementById("modal-root");
-  // One ticked category by default (PMC-4) so the preview shows something
+  // One ticked category by default (PMC-4) so the summary shows something
   // useful immediately; tick more to build several categories' sessions
   // from this one form in a single "Build now".
   const selectedCategories = new Set(["PMC-4"]);
   // Per-category editable chapter totals -- {[pmcType]: {[chapterCode]: n}}
-  // -- lazily seeded with the uniform default the first time that
-  // category's tab is opened, so untouched categories just use the plain
-  // even split (same behavior as before this was ever editable).
+  // -- stays EMPTY (meaning "plain even split, 15/5/5/5 for a standard
+  // round") unless the admin deliberately opens a category's "Advanced"
+  // section and changes something; this is deliberately NOT front-and-
+  // center -- most builds never need it, and showing a 12-row editable
+  // table by default was exactly what made the simple path confusing.
   const chapterTotalsByCategory = {};
   let activeCategoryTab = "PMC-4";
   root.innerHTML = `
@@ -3487,11 +3484,11 @@ function openSessionForm(){
         </div>
         <div class="field"><label>Questions per paper</label><input type="number" id="sf-qpp" min="1" value="30" /></div>
       </div>
-      <div class="field"><label>Overlap mode</label><select id="sf-overlap">
-        <option value="non_overlapping">Non-overlapping — no question repeats within this session</option>
-        <option value="overlapping">Overlapping — a question can repeat across this session's own papers</option>
-      </select></div>
-      <div class="callout">A question already used in OTHER contests or sessions can still be picked here — the overlap mode above only affects reuse WITHIN each session's own papers. Every pick is recorded in that question's usage history either way, so there's always a full record of where it's been used.</div>
+      <label style="display:flex; align-items:center; gap:8px; font-weight:400; font-size:13px; margin:4px 0 10px;">
+        <input type="checkbox" id="sf-overlap" />
+        Allow the same question to repeat across this round's own papers <span class="hint">(leave unticked — the normal, safer choice)</span>
+      </label>
+      <div class="hint" style="margin:-4px 0 12px;">A question already used in an OTHER contest or an earlier round can still be picked here either way — this only controls repeats within this one round. Every pick is recorded on that question's own usage history, so there's always a full record of where it's been used.</div>
       <div class="level-tabs" id="sf-cat-tabs"></div>
       <div id="sf-category-panel"></div>
       <button class="btn primary" id="sf-build" style="width:100%; justify-content:center; margin-top:12px;">Build now</button>
@@ -3504,16 +3501,8 @@ function openSessionForm(){
       days: Math.max(1, parseInt(document.getElementById("sf-days").value,10)||1),
       slotsPerDay: Math.max(1, parseInt(document.getElementById("sf-slots").value,10)||1),
       questionsPerPaper: Math.max(1, parseInt(document.getElementById("sf-qpp").value,10)||1),
-      overlapMode: document.getElementById("sf-overlap").value,
+      overlapMode: document.getElementById("sf-overlap").checked ? "overlapping" : "non_overlapping",
     };
-  }
-  function ensureChapterTotals(pmcType, g){
-    if(chapterTotalsByCategory[pmcType]) return chapterTotalsByCategory[pmcType];
-    const chapters = chaptersForLevel(pmcType);
-    const uniform = defaultPerChapterTotal(chapters, g.days*g.slotsPerDay, g.questionsPerPaper);
-    const map = {}; chapters.forEach(ch=>map[ch.code]=uniform);
-    chapterTotalsByCategory[pmcType] = map;
-    return map;
   }
   function renderTabs(){
     document.getElementById("sf-cat-tabs").innerHTML = Array.from(selectedCategories).map(l=>
@@ -3528,39 +3517,58 @@ function openSessionForm(){
     const panel = document.getElementById("sf-category-panel");
     if(!selectedCategories.has(activeCategoryTab)){ panel.innerHTML = `<div class="hint">Tick at least one PMC category above.</div>`; return; }
     const pmcType = activeCategoryTab;
-    const totalsMap = ensureChapterTotals(pmcType, g);
+    const touchedTotals = chapterTotalsByCategory[pmcType]||null;
+    const summary = sessionDryRunSummary(pmcType, g, touchedTotals);
+    const allComplete = summary.completePapers===summary.totalPapers;
+    const noneComplete = summary.completePapers===0;
+    const chapters = chaptersForLevel(pmcType);
     const numPapers = g.days*g.slotsPerDay;
     const sessionTarget = g.questionsPerPaper*numPapers;
-    const rows = sessionEligiblePreview(pmcType, g.days, g.slotsPerDay, g.questionsPerPaper, totalsMap);
+    const totalsMap = touchedTotals || (()=>{ const m={}; chapters.forEach(ch=>m[ch.code]=defaultPerChapterTotal(chapters,numPapers,g.questionsPerPaper)); return m; })();
     const sumTotals = Object.values(totalsMap).reduce((s,n)=>s+(n||0), 0);
-    const totalsMismatch = sumTotals!==sessionTarget;
-    const feasibility = sessionCanBuildOnePaper(pmcType, g.days, g.slotsPerDay, g.questionsPerPaper, totalsMap);
+    const totalsMismatch = touchedTotals && sumTotals!==sessionTarget;
+    const rows = sessionEligiblePreview(pmcType, g.days, g.slotsPerDay, g.questionsPerPaper, totalsMap);
     panel.innerHTML = `
-      ${!feasibility.ok ? `<div class="callout warn">⚠ <b>${pmcType}</b> doesn't have enough locked questions right now to build even ONE complete paper — missing at least one question for: ${feasibility.missing.map(m=>`${escapeHtml(chapterLabel(m.unit))} (${DIFFS.find(d=>d.v===m.difficulty)?.l||m.difficulty})`).join(", ")}. You can still build — it'll just come out very incomplete — or lock more questions first.</div>` : ""}
-      <div class="section-label" style="margin-top:0;">Chapter totals for ${pmcType} <span class="hint">(editable — how many questions each chapter contributes across the whole session)</span></div>
-      <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
-        <thead><tr><th style="text-align:left; padding:4px;">Chapter</th><th style="text-align:right; padding:4px; width:70px;">Total</th><th style="text-align:right; padding:4px;">Medium</th><th style="text-align:right; padding:4px;">Hard</th><th style="text-align:right; padding:4px;">Very Hard</th></tr></thead>
-        <tbody>
-          ${rows.map(r=>`<tr style="border-top:1px solid var(--border);">
-            <td style="padding:4px;">${escapeHtml(chapterLabel(r.chapter.code))}</td>
-            <td style="padding:4px; text-align:right;"><input type="number" min="0" value="${totalsMap[r.chapter.code]}" data-sf-chtotal="${escapeHtml(r.chapter.code)}" style="width:60px; padding:3px 5px; font-size:12px; text-align:right;" /></td>
-            ${["medium","hard","very_hard"].map(d=>`<td class="mono" style="padding:4px; text-align:right; ${r.have[d]<r.need[d]?"color:var(--red); font-weight:700;":""}">${r.have[d]} / ${r.need[d]}</td>`).join("")}
-          </tr>`).join("")}
-        </tbody>
-      </table>
-      <div class="callout ${totalsMismatch?"warn":""}" style="margin-top:8px; ${totalsMismatch?"border-left-color:var(--red);":""}">
-        ${totalsMismatch
-          ? `⚠ Chapter totals add up to <b>${sumTotals}</b>, but this session needs exactly <b>${sessionTarget}</b> (${g.questionsPerPaper} per paper × ${numPapers} paper${numPapers===1?"":"s"}). ${sumTotals<sessionTarget?`Add ${sessionTarget-sumTotals} more question(s)`:`Remove ${sumTotals-sessionTarget} question(s)`} across other chapters to match — "Build now" is disabled for ${pmcType} until this balances.`
-          : `Chapter totals add up to ${sumTotals} — matches the ${sessionTarget} this session needs.`}
+      <div class="progress-card" style="${allComplete?"border-color:var(--accent);":noneComplete?"border-color:var(--red);":"border-color:var(--gold);"}">
+        <div style="font-weight:600;">${pmcType}: ${summary.totalEligible} locked/reviewed-OK question${summary.totalEligible===1?"":"s"} available right now.</div>
+        <div style="margin-top:4px; font-size:14px; font-weight:700; color:${allComplete?"var(--accent)":noneComplete?"var(--red)":"var(--gold)"};">
+          ${allComplete ? `✓ Enough to build all ${summary.totalPapers} paper${summary.totalPapers===1?"":"s"} completely.`
+            : noneComplete ? `Not enough yet to complete even 1 of the ${summary.totalPapers} paper${summary.totalPapers===1?"":"s"} requested.`
+            : `Enough to complete ${summary.completePapers} of ${summary.totalPapers} paper${summary.totalPapers===1?"":"s"} right now.`}
+        </div>
+        ${!allComplete ? `<div class="hint" style="margin-top:4px;">Short on: ${summary.shortChapters.map(u=>escapeHtml(chapterLabel(u))).join(", ")}. You can still build now — finished papers save immediately, the rest stay "Pending" and you can top them up any time later (Contests → that session → "Add more now") once more questions are locked, without disturbing anything already built.</div>` : ""}
       </div>
-      <button type="button" class="btn small" id="sf-reset-totals" style="margin-top:6px;">Reset ${pmcType} to even split</button>
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer; font-size:12.5px; font-weight:600; color:var(--accent);">Advanced: customize ${pmcType}'s chapter distribution</summary>
+        <div style="margin-top:8px;">
+          <p class="hint" style="margin-top:0;">By default every chapter contributes an even share — 15 questions (5 Medium, 5 Hard, 5 Very Hard) for a standard 6-paper round. Only change this if a specific chapter should count for more or less this round.</p>
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead><tr><th style="text-align:left; padding:4px;">Chapter</th><th style="text-align:right; padding:4px; width:70px;">Total</th><th style="text-align:right; padding:4px;">Medium</th><th style="text-align:right; padding:4px;">Hard</th><th style="text-align:right; padding:4px;">Very Hard</th></tr></thead>
+            <tbody>
+              ${rows.map(r=>`<tr style="border-top:1px solid var(--border);">
+                <td style="padding:4px;">${escapeHtml(chapterLabel(r.chapter.code))}</td>
+                <td style="padding:4px; text-align:right;"><input type="number" min="0" value="${totalsMap[r.chapter.code]}" data-sf-chtotal="${escapeHtml(r.chapter.code)}" style="width:60px; padding:3px 5px; font-size:12px; text-align:right;" /></td>
+                ${["medium","hard","very_hard"].map(d=>`<td class="mono" style="padding:4px; text-align:right; ${r.have[d]<r.need[d]?"color:var(--red); font-weight:700;":""}">${r.have[d]} / ${r.need[d]}</td>`).join("")}
+              </tr>`).join("")}
+            </tbody>
+          </table>
+          <div class="callout ${totalsMismatch?"warn":""}" style="margin-top:8px; ${totalsMismatch?"border-left-color:var(--red);":""}">
+            ${totalsMismatch
+              ? `⚠ Chapter totals add up to <b>${sumTotals}</b>, but this session needs exactly <b>${sessionTarget}</b> (${g.questionsPerPaper} per paper × ${numPapers} paper${numPapers===1?"":"s"}). ${sumTotals<sessionTarget?`Add ${sessionTarget-sumTotals} more question(s)`:`Remove ${sumTotals-sessionTarget} question(s)`} across other chapters to match — "Build now" is disabled for ${pmcType} until this balances.`
+              : `Chapter totals add up to ${sumTotals} — matches the ${sessionTarget} this session needs.`}
+          </div>
+          ${touchedTotals ? `<button type="button" class="btn small" id="sf-reset-totals" style="margin-top:6px;">Reset ${pmcType} to even split</button>` : ""}
+        </div>
+      </details>
     `;
     panel.querySelectorAll("[data-sf-chtotal]").forEach(inp=>inp.addEventListener("input", ()=>{
-      totalsMap[inp.dataset.sfChtotal] = Math.max(0, parseInt(inp.value,10)||0);
+      const map = chapterTotalsByCategory[pmcType] || {...totalsMap};
+      map[inp.dataset.sfChtotal] = Math.max(0, parseInt(inp.value,10)||0);
+      chapterTotalsByCategory[pmcType] = map;
       renderCategoryPanel();
       updateBuildButton();
     }));
-    document.getElementById("sf-reset-totals").addEventListener("click", ()=>{
+    document.getElementById("sf-reset-totals")?.addEventListener("click", ()=>{
       delete chapterTotalsByCategory[pmcType];
       renderCategoryPanel();
       updateBuildButton();
@@ -3589,12 +3597,12 @@ function openSessionForm(){
     if(!selectedCategories.has(activeCategoryTab)) activeCategoryTab = Array.from(selectedCategories)[0]||activeCategoryTab;
     renderAll();
   }));
+  document.getElementById("sf-overlap").addEventListener("change", renderAll);
   // Changing days/slots/questions-per-paper does NOT auto-reseed a
-  // category's chapter totals once the admin has edited them -- only
-  // ensureChapterTotals() seeds from scratch, and only for a category
-  // with no entry yet, so a hand-edited distribution is never silently
-  // overwritten by a later shape change (the mismatch warning above will
-  // just correctly flag it against the new target instead).
+  // category's chapter totals once the admin has edited them -- a hand-
+  // edited distribution is never silently overwritten by a later shape
+  // change (the mismatch warning above will just correctly flag it
+  // against the new target instead).
   ["sf-days","sf-slots","sf-qpp"].forEach(id=>document.getElementById(id).addEventListener("input", renderAll));
   renderAll();
   document.getElementById("sf-build").addEventListener("click", async ()=>{
@@ -3651,7 +3659,7 @@ function openSessionResultsView(session){
           </div>` : ""}
         </div>`;
       }).join("")}
-      ${session.status!=="complete" ? `<button class="btn primary" id="sr-fill" style="width:100%; justify-content:center; margin-top:8px;">Fill remaining slots</button>` : ""}
+      ${session.status!=="complete" ? `<button class="btn primary" id="sr-fill" style="width:100%; justify-content:center; margin-top:8px;">Add more now</button>` : ""}
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
@@ -3669,7 +3677,7 @@ function openSessionResultsView(session){
       logActivity("session_built", `Filled more slots for "${session.name}" — ${build.newlyPlaced.length} question(s) added, ${build.shortfalls.length} slot(s) still short`, saved.id);
       toast(build.shortfalls.length===0 ? "Session complete!" : `Added ${build.newlyPlaced.length} question(s) — ${build.shortfalls.length} slot(s) still need more locked questions`);
       openSessionResultsView(saved);
-    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); btn.disabled=false; btn.textContent="Fill remaining slots"; }
+    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); btn.disabled=false; btn.textContent="Add more now"; }
   });
 }
 
@@ -3688,19 +3696,23 @@ function renderContests(){
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Questions/paper</th><th>Overlap</th><th>Status</th><th></th></tr></thead>
       <tbody>
-        ${contestSessions.map(s=>`
+        ${contestSessions.map(s=>{
+          const totalPapers = s.days*s.slotsPerDay;
+          const shortPapers = new Set((s.shortfalls||[]).map(sf=>paperKey(sf.day,sf.slot))).size;
+          const completePapers = totalPapers-shortPapers;
+          return `
         <tr>
           <td>${escapeHtml(s.name)}</td>
           <td class="mono">${escapeHtml(s.pmcType)}</td>
           <td class="mono">${s.days} × ${s.slotsPerDay}</td>
           <td class="mono">${s.questionsPerPaper}</td>
           <td>${s.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}</td>
-          <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending — ${(s.shortfalls||[]).length} slot${(s.shortfalls||[]).length===1?"":"s"} short</span>`}</td>
+          <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}</td>
           <td style="white-space:nowrap;">
             <button class="btn small" data-view-session="${s.id}">View</button>
-            ${s.status!=="complete" ? `<button class="btn small primary" data-fill-session="${s.id}">Fill remaining slots</button>` : ""}
+            ${s.status!=="complete" ? `<button class="btn small primary" data-fill-session="${s.id}">Add more now</button>` : ""}
           </td>
-        </tr>`).join("")}
+        </tr>`;}).join("")}
       </tbody>
     </table></div>` : ""}
     <div class="section-label">Papers</div>
@@ -3746,7 +3758,7 @@ function renderContests(){
       logActivity("session_built", `Filled more slots for "${s.name}" — ${build.newlyPlaced.length} question(s) added, ${build.shortfalls.length} slot(s) still short`, saved.id);
       toast(build.shortfalls.length===0 ? "Session complete!" : `Added ${build.newlyPlaced.length} question(s) — ${build.shortfalls.length} slot(s) still need more locked questions`);
       openSessionResultsView(saved);
-    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); b.disabled=false; b.textContent="Fill remaining slots"; }
+    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); b.disabled=false; b.textContent="Add more now"; }
   }));
   main.querySelectorAll("[data-edit-contest]").forEach(b=>b.addEventListener("click", ()=>{
     const c = contests.find(x=>x.id===b.dataset.editContest);

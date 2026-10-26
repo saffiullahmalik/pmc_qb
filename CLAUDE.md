@@ -416,30 +416,48 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- across only 6 papers) correctly lets some paper get 2 questions of
   -- the same difficulty from that chapter rather than losing the excess
   -- -- the chapter's OWN total is always honored exactly, confirmed by
-  -- simulation. sessionCanBuildOnePaper() checks blueprint[*][0] (paper 1
-  -- only, representative) against raw eligible counts and surfaces a
-  -- "can't even build ONE complete paper" warning per category before the
-  -- admin commits to anything -- distinct from the per-chapter shortfall
-  -- table, which is about the whole session's worth of need. "Build a
-  -- session" supports ticking several PMC categories (LEVELS checkboxes)
-  -- at once -- one full session per ticked category, each with its own
-  -- chapter-totals tab/table, built in sequence inside a single "Build
-  -- now" click; each category's shortfall/mismatch state is independent.
-  -- computeSessionBuild() does the actual cell-by-cell random pick
-  -- (Math.random() among that cell's eligible, not-yet-used pool) and
-  -- returns a plan; commitSessionBuild() is the only part that writes to
-  -- Firestore (one writeBatch per category: create/update every paper,
-  -- arrayUnion onto every newly-placed question's usedIn AND
-  -- usageHistory, write the session doc) -- kept separate so the "Build a
-  -- session" form's live eligible-count preview (sessionEligiblePreview())
-  -- can show chapter x difficulty need-vs-have counts before committing
-  -- anything. commitSessionBuild() resolves its own Firestore doc
-  -- reference (and reads back its .id) BEFORE either write loop runs --
-  -- fixed Oct 2026 after a real "invalid argument" error on every first
-  -- build: writing the not-yet-assigned `session.id` directly into
-  -- contests.sessionId and the usageHistory entry's sessionId meant both
-  -- were literally `undefined` on a brand-new session, which Firestore's
-  -- arrayUnion()/set() reject outright.
+  -- simulation. "Build a session" supports ticking several PMC categories
+  -- (LEVELS checkboxes) at once -- one full session per ticked category,
+  -- each with its own tab, built in sequence inside a single "Build now"
+  -- click; each category's state is independent. computeSessionBuild()
+  -- does the actual cell-by-cell random pick (Math.random() among that
+  -- cell's eligible, not-yet-used pool) and returns a plan;
+  -- commitSessionBuild() is the only part that writes to Firestore (one
+  -- writeBatch per category) -- kept separate so the form can call
+  -- computeSessionBuild() as a pure, non-writing dry run for its preview.
+  -- commitSessionBuild() resolves its own Firestore doc reference (and
+  -- reads back its .id) BEFORE either write loop runs -- fixed Oct 2026
+  -- after a real "invalid argument" error on every first build: writing
+  -- the not-yet-assigned `session.id` directly into contests.sessionId
+  -- and the usageHistory entry's sessionId meant both were literally
+  -- `undefined` on a brand-new session, which Firestore's arrayUnion()/
+  -- set() reject outright.
+  -- UX rewrite (Oct 2026, after real feedback the form was "too
+  -- confusing" -- it led with "needs 180 questions" and a 12-row need-
+  -- vs-have table the admin had to do math on themselves to answer the
+  -- one question that actually matters: "with what I have right now, how
+  -- many of my papers can I actually finish?"). sessionDryRunSummary()
+  -- answers that directly and HONESTLY -- it runs computeSessionBuild()
+  -- itself (a real dry run, not an estimate) against an empty draft and
+  -- reports what actually happened: "Enough to complete N of M papers
+  -- right now" (or "all M" / "not even 1"), plus which chapters are
+  -- short, in one sentence. This replaced sessionEligiblePreview()'s
+  -- raw table AND the old sessionCanBuildOnePaper() "paper 1 only" proxy
+  -- check as the PRIMARY thing shown -- sessionEligiblePreview() still
+  -- exists and still feeds the detailed chapter x difficulty table, but
+  -- that table (and the editable chapterTotals inputs) now live inside a
+  -- collapsed "Advanced: customize chapter distribution" <details>,
+  -- closed by default, since most builds never touch it and showing it
+  -- open by default was exactly what competed with the one-sentence
+  -- answer for attention. The overlap-mode <select> (two jargon-y named
+  -- options) became a single plain checkbox, unticked by default ("leave
+  -- unticked -- the normal, safer choice"). The "Fill remaining slots"
+  -- action (Sessions list row, session results view) was renamed "Add
+  -- more now" everywhere it appears, and the Sessions list's status pill
+  -- changed from "Pending -- N slots short" (cell-level, not obviously
+  -- meaningful) to "N/M papers complete" -- the same vocabulary the
+  -- dry-run headline uses, so a pending session's state reads the same
+  -- way whether you're looking at the list or the detail view.
 
 assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   name, contestLevel, units: [{unit, targetCount}], teacherEmails: [...],
