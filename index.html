@@ -3354,6 +3354,16 @@ function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper){
 }
 async function commitSessionBuild(session, build){
   const batch = writeBatch(db);
+  // Resolve the session's own id FIRST, before either write loop -- on a
+  // brand-new session (session.id is undefined, this is its first build)
+  // there is no id yet to stamp onto its papers/questions otherwise.
+  // Firestore's arrayUnion()/set() reject a field whose value is literally
+  // `undefined` ("invalid argument"), which is exactly what writing
+  // `session.id` directly here used to do on a first build -- always use
+  // this resolved `sessionId`, never `session.id`, for the rest of this
+  // function.
+  const sessionRef = session.id ? doc(db,"contestSessions",session.id) : doc(collection(db,"contestSessions"));
+  const sessionId = sessionRef.id;
   const contestIds = { ...(session.contestIds||{}) };
   for(const p of build.papers){
     const ids = build.paperQuestionIds[p.key];
@@ -3366,7 +3376,7 @@ async function commitSessionBuild(session, build){
       batch.set(ref, {
         name, headerText: session.name, contestLevel: session.pmcType, day:p.day, slot:p.slot,
         durationMinutes: null, totalMarks: null, questionIds: ids,
-        sessionId: session.id, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+        sessionId, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
         createdAt: new Date().toISOString(),
       });
       contestIds[p.key] = ref.id;
@@ -3382,12 +3392,11 @@ async function commitSessionBuild(session, build){
     batch.update(doc(db,"questions",questionId), {
       usedIn: arrayUnion(name),
       usageHistory: arrayUnion({
-        contestId, contestName:name, sessionId:session.id, sessionName:session.name,
+        contestId, contestName:name, sessionId, sessionName:session.name,
         pmcType:session.pmcType, day, slot, overlapMode:session.overlapMode, usedAt:new Date().toISOString(),
       }),
     });
   });
-  const sessionRef = session.id ? doc(db,"contestSessions",session.id) : doc(collection(db,"contestSessions"));
   const sessionBody = {
     name:session.name, pmcType:session.pmcType, days:session.days, slotsPerDay:session.slotsPerDay,
     questionsPerPaper:session.questionsPerPaper, overlapMode:session.overlapMode,
