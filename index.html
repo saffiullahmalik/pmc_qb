@@ -794,6 +794,15 @@ function allCurriculum(){
 function allChapters(){ return allCurriculum().flatMap(b=>b.chapters); }
 function chapterByCode(code){ return allChapters().find(c=>c.code===code); }
 function chapterLabel(code){ const c=chapterByCode(code); return c ? `${c.code} — ${c.title}` : (code||"—"); }
+// Enriches a bare "Used in: <contest name>" pill with day/slot/overlap-mode
+// detail from the structured usageHistory array (Oct 2026, session
+// builder) when a matching entry exists -- usedIn itself stays the plain
+// list of names it's always been, this is purely an additive tooltip.
+function usageHistoryTitle(q, contestName){
+  const h = (q.usageHistory||[]).find(x=>x.contestName===contestName);
+  if(!h) return "";
+  return `${h.pmcType||""} Day ${h.day}, Slot ${h.slot}${h.sessionName?` — session: ${h.sessionName}`:""}${h.overlapMode?` (${h.overlapMode==="overlapping"?"overlapping":"non-overlapping"} session)`:""} — ${fmtDate(h.usedAt)}`;
+}
 // .filter+.flatMap, not .find -- more than one curriculum book can cover
 // the same level (e.g. a cross-level "IQ & Logic Reasoning" book added via
 // Admin -> Curriculum -> Add a whole new book, alongside the normal
@@ -872,12 +881,13 @@ let isStudentReviewerOnlyUser = false;
 
 let questions = [];
 let contests = [];
+let contestSessions = [];
 let assignments = [];
 let allTeachers = [];
 let activityLogEntries = [];
 let currentTab = "bank";
 let openQuestionId = null;
-let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null, unsubSop = null;
+let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubContestSessions = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null, unsubSop = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
 let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"" };
@@ -1177,6 +1187,7 @@ onAuthStateChanged(auth, user=>{
   if(unsubQuestions){ unsubQuestions(); unsubQuestions=null; }
   if(unsubTeachers){ unsubTeachers(); unsubTeachers=null; }
   if(unsubContests){ unsubContests(); unsubContests=null; }
+  if(unsubContestSessions){ unsubContestSessions(); unsubContestSessions=null; }
   if(unsubAssignments){ unsubAssignments(); unsubAssignments=null; }
   if(unsubCurriculumExtra){ unsubCurriculumExtra(); unsubCurriculumExtra=null; }
   if(unsubActivityLog){ unsubActivityLog(); unsubActivityLog=null; }
@@ -1232,6 +1243,11 @@ function startDataSubscriptions(){
     dataReady.contests = true;
     if(currentTab==="contests" || currentTab==="quilgo") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contests ("+err.code+")"); });
+  const csy = query(collection(db,"contestSessions"), orderBy("createdAt","desc"), limit(100));
+  unsubContestSessions = onSnapshot(csy, snap=>{
+    contestSessions = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(currentTab==="contests") renderTab();
+  }, err=>{ console.error(err); toast("Couldn't load contest sessions ("+err.code+")"); });
   const ay = query(collection(db,"assignments"), orderBy("createdAt","desc"), limit(200));
   unsubAssignments = onSnapshot(ay, snap=>{
     assignments = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -1725,7 +1741,7 @@ function cardHtml(q){
           <button type="button" class="pill status-${statusInfo.v}" data-quickfilter-status="${q.status}" title="Filter by status">${escapeHtml(statusInfo.l)}</button>
           ${q.peerReview?.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);" title="A reviewer sent this back">⚠ ${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Sent back")}</span>` : ""}
           ${(q.skills||[]).map(s=>`<button type="button" class="pill skill-chip" data-quickfilter-skill="${escapeHtml(s)}" title="Filter by skill">${escapeHtml(s)}</button>`).join("")}
-          ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}</span>`).join("")}
+          ${(q.usedIn||[]).map(u=>`<span class="pill level" title="${escapeHtml(usageHistoryTitle(q,u))}">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>
         <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
         <div class="qprompt">${escapeHtml(q.promptEn || "")}</div>
@@ -3027,7 +3043,7 @@ function renderDrawerBody(){
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
           <span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span>
           ${(q.skills||[]).map(s=>`<span class="pill skill-chip">${escapeHtml(s)}</span>`).join("")}
-          ${(q.usedIn||[]).map(u=>`<span class="pill level">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
+          ${(q.usedIn||[]).map(u=>`<span class="pill level" title="${escapeHtml(usageHistoryTitle(q,u))}">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
         </div>
         ${quilgo ? `<div class="hint" style="margin-top:4px;">Uploaded by <b>${escapeHtml(quilgo.uploadedByName||"—")}</b> on ${fmtDate(quilgo.uploadedAt)} — manage this from the Upload tab.</div>` : ""}
         <div class="engagement-summary mono">💬 ${_comments.length} &middot; ♥ ${(q.likes||[]).length} &middot; ${avg?"★ "+avg.toFixed(1):"★ —"}</div>
@@ -3184,11 +3200,357 @@ function contestPendingCount(c){
   const uploadStatus = c.uploadStatus || {};
   return qs.filter(q=>!uploadStatus[q.id]).length;
 }
+
+/* ================= AUTOMATIC CONTEST SESSION BUILDER (Oct 2026) =================
+   Builds a whole round (N days x M slots) of papers in one pass, randomly
+   filling each paper from LOCKED-eligible questions according to a fixed
+   chapter/difficulty blueprint, instead of picking every paper by hand.
+   Session key = "<day>_<slot>". A session's `placements` map is the
+   authoritative record of what's filled -- contests.questionIds is always
+   DERIVED from it (chapter order, then difficulty order), never the other
+   way around, which is what makes re-running a build on a partially-filled
+   session safe: every already-filled cell is skipped untouched, only
+   still-empty cells (recorded in session.shortfalls) are retried, so
+   "build now, finish later once more questions are locked" just means
+   clicking the same build action again. */
+function paperKey(day, slot){ return `${day}_${slot}`; }
+// Project owner's exact hand-specified table for the standard 3-day x
+// 2-slot x 30-question x 12-chapter shape (papers in V11,V12,V21,V22,V31,V32
+// order -- day-major, slot-minor, matching the nested day/slot loop below).
+// Verified by hand: every paper column sums to 10 medium + 10 hard +
+// 10 very_hard = 30, and every chapter row sums to 5+5+5=15 across the six
+// papers. Any OTHER day/slot/question-count combination falls back to
+// buildGeneralBlueprint() instead of this literal table.
+function fixedBlueprint6x12(){
+  const M="medium", H="hard", V="very_hard";
+  return [
+    [[M,H,V],[M,H],  [M,H,V],[M,V],  [M,H,V],[H,V]  ],
+    [[M,H,V],[M,H],  [M,H,V],[M,V],  [M,H,V],[H,V]  ],
+    [[M,H,V],[M,V],  [M,H,V],[H,V],  [M,H,V],[M,H]  ],
+    [[M,H,V],[M,V],  [M,H,V],[H,V],  [M,H,V],[M,H]  ],
+    [[M,H,V],[H,V],  [M,H,V],[M,H],  [M,H,V],[M,V]  ],
+    [[M,H,V],[H,V],  [M,H,V],[M,H],  [M,H,V],[M,V]  ],
+    [[M,H],  [M,H,V],[M,V],  [M,H,V],[H,V],  [M,H,V]],
+    [[M,H],  [M,H,V],[M,V],  [M,H,V],[H,V],  [M,H,V]],
+    [[M,V],  [M,H,V],[H,V],  [M,H,V],[M,H],  [M,H,V]],
+    [[M,V],  [M,H,V],[H,V],  [M,H,V],[M,H],  [M,H,V]],
+    [[H,V],  [M,H,V],[M,H],  [M,H,V],[M,V],  [M,H,V]],
+    [[H,V],  [M,H,V],[M,H],  [M,H,V],[M,V],  [M,H,V]],
+  ];
+}
+// General fallback for any day/slot/question-count combination other than
+// the literal 6-paper/30-question/12-chapter shape above. Builds the same
+// kind of (chapter x paper) grid -- each chapter contributes AT MOST one
+// question of each difficulty to each paper -- using a cyclic/rotating
+// assignment per difficulty tier (chapter ci's m-th "medium" slot goes to
+// paper (ci*m+k) % numPapers), which is well-balanced in aggregate (every
+// paper ends up close to questionsPerPaper/3 of each difficulty) but is a
+// best-effort construction, not a hand-proven exact balance for every
+// possible combination the way the literal table above is -- the actual
+// resulting per-paper totals are shown in the build results so any
+// imbalance is visible rather than hidden.
+function buildGeneralBlueprint(chapters, numPapers, questionsPerPaper){
+  const C = chapters.length;
+  const totalQuestions = questionsPerPaper*numPapers;
+  const perChapterTotal = Math.round(totalQuestions/C);
+  const perChapterDiff = difficultyQuotas(perChapterTotal);
+  const grid = chapters.map(()=>Array.from({length:numPapers}, ()=>[]));
+  ["medium","hard","very_hard"].forEach(diff=>{
+    const m = perChapterDiff[diff];
+    for(let ci=0; ci<C; ci++){
+      for(let k=0; k<m; k++){
+        const paperIdx = (ci*m+k) % numPapers;
+        grid[ci][paperIdx].push(diff);
+      }
+    }
+  });
+  return grid;
+}
+function buildBlueprint(numPapers, questionsPerPaper, chapters){
+  if(numPapers===6 && questionsPerPaper===30 && chapters.length===12) return fixedBlueprint6x12();
+  return buildGeneralBlueprint(chapters, numPapers, questionsPerPaper);
+}
+// Same contest-eligibility rule openContestForm()'s manual picker already
+// uses (locked, uploaded, or peer-reviewed-and-agreed) -- a session build
+// only ever draws from the same pool a human picker could have chosen from.
+function sessionEligibleQuestions(){
+  return questions.filter(q=>q.status==="finalized"||q.status==="uploaded"||(q.status==="in_review"&&q.peerReview?.outcome==="agree"));
+}
+// The actual build/rebuild -- safe to call repeatedly on the same session
+// as more questions get locked between runs. Returns {placements,
+// shortfalls, contestWrites, questionTags} for the caller to commit in one
+// batch (kept separate from the Firestore write itself so a live "preview
+// how many are eligible right now" view can call the counting logic
+// without ever writing anything).
+function computeSessionBuild(session){
+  const chapters = chaptersForLevel(session.pmcType);
+  const numPapers = session.days*session.slotsPerDay;
+  const blueprint = buildBlueprint(numPapers, session.questionsPerPaper, chapters);
+  const papers = []; // {day, slot, key}
+  for(let d=1; d<=session.days; d++) for(let s=1; s<=session.slotsPerDay; s++) papers.push({day:d, slot:s, key:paperKey(d,s)});
+  const placements = JSON.parse(JSON.stringify(session.placements||{}));
+  const usedThisSession = new Set();
+  papers.forEach(p=>{
+    Object.values(placements[p.key]||{}).forEach(byDiff=>{
+      Object.values(byDiff||{}).forEach(qid=>{ if(qid) usedThisSession.add(qid); });
+    });
+  });
+  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType));
+  const shortfalls = [];
+  const newlyPlaced = []; // {questionId, day, slot}
+  chapters.forEach((ch,ci)=>{
+    papers.forEach((p,pi)=>{
+      const cell = blueprint[ci][pi]||[];
+      cell.forEach(diff=>{
+        placements[p.key] = placements[p.key]||{};
+        placements[p.key][ch.code] = placements[p.key][ch.code]||{medium:null,hard:null,very_hard:null};
+        if(placements[p.key][ch.code][diff]) return; // already filled -- incremental rebuild skips it
+        let pool = eligible.filter(q=>q.unit===ch.code && q.difficulty===diff);
+        if(session.overlapMode!=="overlapping") pool = pool.filter(q=>!usedThisSession.has(q.id));
+        if(pool.length===0){ shortfalls.push({day:p.day, slot:p.slot, unit:ch.code, difficulty:diff}); return; }
+        const picked = pool[Math.floor(Math.random()*pool.length)];
+        placements[p.key][ch.code][diff] = picked.id;
+        usedThisSession.add(picked.id);
+        newlyPlaced.push({questionId:picked.id, day:p.day, slot:p.slot});
+      });
+    });
+  });
+  // Derive each paper's questionIds in chapter order, then difficulty
+  // order within chapter -- a deterministic, sensible default print order;
+  // the existing Edit screen's drag-and-drop can still reorder afterward.
+  const paperQuestionIds = {};
+  papers.forEach(p=>{
+    const ids = [];
+    chapters.forEach(ch=>{
+      ["medium","hard","very_hard"].forEach(diff=>{
+        const qid = placements[p.key]?.[ch.code]?.[diff];
+        if(qid) ids.push(qid);
+      });
+    });
+    paperQuestionIds[p.key] = ids;
+  });
+  return { papers, placements, shortfalls, newlyPlaced, paperQuestionIds };
+}
+// Counts, for the "before you build" preview -- how many LOCKED-eligible
+// questions exist right now per chapter/difficulty vs. what the blueprint
+// needs in total across the whole session, without touching Firestore.
+function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper){
+  const chapters = chaptersForLevel(pmcType);
+  const numPapers = days*slotsPerDay;
+  const blueprint = buildBlueprint(numPapers, questionsPerPaper, chapters);
+  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType));
+  const haveByCell = {}; // `${chapterCode}|${diff}` -> count
+  eligible.forEach(q=>{ const k=`${q.unit}|${q.difficulty}`; haveByCell[k]=(haveByCell[k]||0)+1; });
+  return chapters.map((ch,ci)=>{
+    const need = {medium:0,hard:0,very_hard:0};
+    for(let pi=0; pi<numPapers; pi++) (blueprint[ci][pi]||[]).forEach(d=>need[d]++);
+    const have = {
+      medium: haveByCell[`${ch.code}|medium`]||0,
+      hard: haveByCell[`${ch.code}|hard`]||0,
+      very_hard: haveByCell[`${ch.code}|very_hard`]||0,
+    };
+    return { chapter:ch, need, have };
+  });
+}
+async function commitSessionBuild(session, build){
+  const batch = writeBatch(db);
+  const contestIds = { ...(session.contestIds||{}) };
+  for(const p of build.papers){
+    const ids = build.paperQuestionIds[p.key];
+    const existingId = contestIds[p.key];
+    const name = `${session.name} — Day ${p.day}, Slot ${p.slot}`;
+    if(existingId){
+      batch.update(doc(db,"contests",existingId), { questionIds: ids });
+    } else {
+      const ref = doc(collection(db,"contests"));
+      batch.set(ref, {
+        name, headerText: session.name, contestLevel: session.pmcType, day:p.day, slot:p.slot,
+        durationMinutes: null, totalMarks: null, questionIds: ids,
+        sessionId: session.id, createdBy: currentUser.email, createdByName: currentUser.displayName||currentUser.email,
+        createdAt: new Date().toISOString(),
+      });
+      contestIds[p.key] = ref.id;
+    }
+  }
+  // Tag every newly-placed question -- usedIn (existing field, same
+  // contest-name-pill pattern every other contest-creation path already
+  // uses) PLUS the new structured usageHistory entry, so "how many times,
+  // and where" is answerable without re-deriving it from placements.
+  build.newlyPlaced.forEach(({questionId, day, slot})=>{
+    const contestId = contestIds[paperKey(day,slot)];
+    const name = `${session.name} — Day ${day}, Slot ${slot}`;
+    batch.update(doc(db,"questions",questionId), {
+      usedIn: arrayUnion(name),
+      usageHistory: arrayUnion({
+        contestId, contestName:name, sessionId:session.id, sessionName:session.name,
+        pmcType:session.pmcType, day, slot, overlapMode:session.overlapMode, usedAt:new Date().toISOString(),
+      }),
+    });
+  });
+  const sessionRef = session.id ? doc(db,"contestSessions",session.id) : doc(collection(db,"contestSessions"));
+  const sessionBody = {
+    name:session.name, pmcType:session.pmcType, days:session.days, slotsPerDay:session.slotsPerDay,
+    questionsPerPaper:session.questionsPerPaper, overlapMode:session.overlapMode,
+    placements: build.placements, shortfalls: build.shortfalls, contestIds,
+    status: build.shortfalls.length===0 ? "complete" : "pending",
+    createdAt: session.createdAt||new Date().toISOString(), createdBy: session.createdBy||currentUser.email,
+    lastBuiltAt: new Date().toISOString(), lastBuiltBy: currentUser.email,
+  };
+  if(session.id) batch.update(sessionRef, sessionBody); else batch.set(sessionRef, sessionBody);
+  await batch.commit();
+  return { ...sessionBody, id: sessionRef.id };
+}
+
+function openSessionForm(){
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+    <div class="overlay" id="ov"><div class="drawer wide">
+      <div class="drawer-head"><h2>Build a contest session</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <div class="field"><label>Session name</label><input type="text" id="sf-name" placeholder="e.g. PMC Fall 2026 — Round 1" /></div>
+      <div class="row2">
+        <div class="field"><label>PMC type</label><select id="sf-pmctype">${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join("")}</select></div>
+        <div class="row2" style="grid-template-columns:1fr 1fr;">
+          <div class="field"><label>Days</label><input type="number" id="sf-days" min="1" value="3" /></div>
+          <div class="field"><label>Slots per day</label><input type="number" id="sf-slots" min="1" value="2" /></div>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Questions per paper</label><input type="number" id="sf-qpp" min="1" value="30" /></div>
+        <div class="field"><label>Overlap mode</label><select id="sf-overlap">
+          <option value="non_overlapping">Non-overlapping — no question repeats within this session</option>
+          <option value="overlapping">Overlapping — a question can repeat across this session's own papers</option>
+        </select></div>
+      </div>
+      <div class="callout">A question already used in OTHER contests or sessions can still be picked here — the overlap mode above only affects reuse WITHIN this session's own papers. Every pick is recorded in that question's usage history either way, so there's always a full record of where it's been used.</div>
+      <div class="section-label">Eligible questions right now <span class="hint">(locked, uploaded, or reviewed OK)</span></div>
+      <div id="sf-preview"></div>
+      <button class="btn primary" id="sf-build" style="width:100%; justify-content:center; margin-top:12px;">Build now</button>
+    </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  function readForm(){
+    return {
+      name: document.getElementById("sf-name").value.trim(),
+      pmcType: document.getElementById("sf-pmctype").value,
+      days: Math.max(1, parseInt(document.getElementById("sf-days").value,10)||1),
+      slotsPerDay: Math.max(1, parseInt(document.getElementById("sf-slots").value,10)||1),
+      questionsPerPaper: Math.max(1, parseInt(document.getElementById("sf-qpp").value,10)||1),
+      overlapMode: document.getElementById("sf-overlap").value,
+    };
+  }
+  function renderPreview(){
+    const f = readForm();
+    const rows = sessionEligiblePreview(f.pmcType, f.days, f.slotsPerDay, f.questionsPerPaper);
+    const shortRows = rows.filter(r=>["medium","hard","very_hard"].some(d=>r.have[d]<r.need[d]));
+    document.getElementById("sf-preview").innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+        <thead><tr><th style="text-align:left; padding:4px;">Chapter</th><th style="text-align:right; padding:4px;">Medium</th><th style="text-align:right; padding:4px;">Hard</th><th style="text-align:right; padding:4px;">Very Hard</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr style="border-top:1px solid var(--border);">
+            <td style="padding:4px;">${escapeHtml(chapterLabel(r.chapter.code))}</td>
+            ${["medium","hard","very_hard"].map(d=>`<td class="mono" style="padding:4px; text-align:right; ${r.have[d]<r.need[d]?"color:var(--red); font-weight:700;":""}">${r.have[d]} / ${r.need[d]}</td>`).join("")}
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      ${shortRows.length>0 ? `<div class="callout warn" style="margin-top:8px;">${shortRows.length} chapter(s) don't have enough locked questions yet for a complete session — the build will still run and fill everything it can, leaving the rest as a "Pending" session you can fill later once more questions are locked.</div>` : `<div class="callout" style="margin-top:8px;">Enough locked questions exist right now to build this session completely.</div>`}
+    `;
+  }
+  ["sf-pmctype","sf-days","sf-slots","sf-qpp"].forEach(id=>document.getElementById(id).addEventListener("input", renderPreview));
+  renderPreview();
+  document.getElementById("sf-build").addEventListener("click", async ()=>{
+    const f = readForm();
+    if(!f.name){ toast("Give the session a name"); return; }
+    const btn = document.getElementById("sf-build");
+    btn.disabled = true; btn.textContent = "Building…";
+    try{
+      const draft = { ...f, placements:{}, contestIds:{} };
+      const build = computeSessionBuild(draft);
+      const saved = await commitSessionBuild(draft, build);
+      logActivity("session_built", `Built session "${f.name}" (${f.pmcType}, ${f.days}×${f.slotsPerDay}) — ${build.newlyPlaced.length} question(s) placed, ${build.shortfalls.length} slot(s) short`, saved.id);
+      toast(build.shortfalls.length===0 ? "Session built — fully complete!" : `Session built — ${build.shortfalls.length} slot(s) still need more locked questions`);
+      closeModal();
+      openSessionResultsView(saved);
+    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); btn.disabled=false; btn.textContent="Build now"; }
+  });
+}
+
+function openSessionResultsView(session){
+  const root = document.getElementById("modal-root");
+  const papers = [];
+  for(let d=1; d<=session.days; d++) for(let s=1; s<=session.slotsPerDay; s++) papers.push({day:d, slot:s, key:paperKey(d,s)});
+  const shortfallsByKey = {};
+  (session.shortfalls||[]).forEach(sf=>{ const k=paperKey(sf.day,sf.slot); (shortfallsByKey[k]=shortfallsByKey[k]||[]).push(sf); });
+  root.innerHTML = `
+    <div class="overlay" id="ov"><div class="drawer wide">
+      <div class="drawer-head"><h2>${escapeHtml(session.name)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <div class="hint" style="margin-bottom:10px;">${escapeHtml(session.pmcType)} · ${session.days} day(s) × ${session.slotsPerDay} slot(s) · ${session.questionsPerPaper} questions/paper · ${session.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"} · ${session.status==="complete"?`<span class="pill status-uploaded">Complete</span>`:`<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending</span>`}</div>
+      ${papers.map(p=>{
+        const contestId = (session.contestIds||{})[p.key];
+        const c = contestId ? contests.find(x=>x.id===contestId) : null;
+        const sf = shortfallsByKey[p.key]||[];
+        return `
+        <div class="progress-card" style="margin-bottom:8px;">
+          <div class="row"><b>Day ${p.day}, Slot ${p.slot}</b><span class="mono">${c?(c.questionIds||[]).length:0} / ${session.questionsPerPaper}</span></div>
+          ${sf.length>0 ? `<div class="hint" style="color:var(--gold); margin-top:4px;">Short: ${sf.map(x=>`${escapeHtml(chapterLabel(x.unit))} (${DIFFS.find(d=>d.v===x.difficulty)?.l||x.difficulty})`).join(", ")}</div>` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
+          ${c ? `<div style="margin-top:8px; display:flex; gap:6px;">
+            <button type="button" class="btn small" data-sr-edit="${c.id}">Edit</button>
+            <button type="button" class="btn small" data-sr-print="${c.id}">Print / Export PDF</button>
+          </div>` : ""}
+        </div>`;
+      }).join("")}
+      ${session.status!=="complete" ? `<button class="btn primary" id="sr-fill" style="width:100%; justify-content:center; margin-top:8px;">Fill remaining slots</button>` : ""}
+    </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  root.querySelectorAll("[data-sr-edit]").forEach(b=>b.addEventListener("click", ()=>{
+    const c = contests.find(x=>x.id===b.dataset.srEdit);
+    if(c) openContestForm(c);
+  }));
+  root.querySelectorAll("[data-sr-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.srPrint)));
+  document.getElementById("sr-fill")?.addEventListener("click", async ()=>{
+    const btn = document.getElementById("sr-fill");
+    btn.disabled = true; btn.textContent = "Building…";
+    try{
+      const build = computeSessionBuild(session);
+      const saved = await commitSessionBuild(session, build);
+      logActivity("session_built", `Filled more slots for "${session.name}" — ${build.newlyPlaced.length} question(s) added, ${build.shortfalls.length} slot(s) still short`, saved.id);
+      toast(build.shortfalls.length===0 ? "Session complete!" : `Added ${build.newlyPlaced.length} question(s) — ${build.shortfalls.length} slot(s) still need more locked questions`);
+      openSessionResultsView(saved);
+    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); btn.disabled=false; btn.textContent="Fill remaining slots"; }
+  });
+}
+
 function renderContests(){
   const main = document.getElementById("main");
   main.innerHTML = `
-    <div class="pagehead"><h1>Contests</h1><button class="btn primary" id="new-contest">+ Create New Contest</button></div>
+    <div class="pagehead"><h1>Contests</h1>
+      <div style="display:flex; gap:8px;">
+        <button class="btn" id="new-session">⚡ Build session automatically</button>
+        <button class="btn primary" id="new-contest">+ Create New Contest</button>
+      </div>
+    </div>
     <p class="desc">Assemble a paper from contest-ready questions — locked, uploaded, or peer-reviewed and agreed ("Reviewed OK," even before a QB Lead has locked it) — then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
+    ${contestSessions.length>0 ? `
+    <div class="section-label" style="margin-top:0;">Sessions</div>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Questions/paper</th><th>Overlap</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        ${contestSessions.map(s=>`
+        <tr>
+          <td>${escapeHtml(s.name)}</td>
+          <td class="mono">${escapeHtml(s.pmcType)}</td>
+          <td class="mono">${s.days} × ${s.slotsPerDay}</td>
+          <td class="mono">${s.questionsPerPaper}</td>
+          <td>${s.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}</td>
+          <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending — ${(s.shortfalls||[]).length} slot${(s.shortfalls||[]).length===1?"":"s"} short</span>`}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn small" data-view-session="${s.id}">View</button>
+            ${s.status!=="complete" ? `<button class="btn small primary" data-fill-session="${s.id}">Fill remaining slots</button>` : ""}
+          </td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>` : ""}
+    <div class="section-label">Papers</div>
     ${!dataReady.contests ? loadingState("Loading contests…") : contests.length===0 ? emptyState("No contests created yet.") : `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Upload</th><th></th></tr></thead>
@@ -3216,6 +3578,23 @@ function renderContests(){
     </table></div>`}
   `;
   document.getElementById("new-contest").addEventListener("click", ()=>openContestForm());
+  document.getElementById("new-session").addEventListener("click", ()=>openSessionForm());
+  main.querySelectorAll("[data-view-session]").forEach(b=>b.addEventListener("click", ()=>{
+    const s = contestSessions.find(x=>x.id===b.dataset.viewSession);
+    if(s) openSessionResultsView(s);
+  }));
+  main.querySelectorAll("[data-fill-session]").forEach(b=>b.addEventListener("click", async ()=>{
+    const s = contestSessions.find(x=>x.id===b.dataset.fillSession);
+    if(!s) return;
+    b.disabled = true; b.textContent = "Building…";
+    try{
+      const build = computeSessionBuild(s);
+      const saved = await commitSessionBuild(s, build);
+      logActivity("session_built", `Filled more slots for "${s.name}" — ${build.newlyPlaced.length} question(s) added, ${build.shortfalls.length} slot(s) still short`, saved.id);
+      toast(build.shortfalls.length===0 ? "Session complete!" : `Added ${build.newlyPlaced.length} question(s) — ${build.shortfalls.length} slot(s) still need more locked questions`);
+      openSessionResultsView(saved);
+    }catch(err){ console.error(err); toast("Couldn't build session ("+err.code+")"); b.disabled=false; b.textContent="Fill remaining slots"; }
+  }));
   main.querySelectorAll("[data-edit-contest]").forEach(b=>b.addEventListener("click", ()=>{
     const c = contests.find(x=>x.id===b.dataset.editContest);
     if(c) openContestForm(c);

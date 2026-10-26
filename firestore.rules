@@ -89,6 +89,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Automatic contest-session builder (Oct 2026) -- a session owns a
+    // whole round of `contests` papers (its own build/rebuild writes those
+    // papers directly, same isContentTeacher() rule above). Same
+    // read/write shape as `contests` itself -- whoever can build a manual
+    // contest can build an automatic session too.
+    match /contestSessions/{sessionId} {
+      allow read: if isTeacher();
+      allow create, update: if isContentTeacher();
+      allow delete: if isAdmin();
+    }
+
     // Admins design workload assignments; every teacher can read the
     // collection to see their own quota/progress on the Workload tab.
     match /assignments/{assignmentId} {
@@ -170,10 +181,12 @@ service cloud.firestore {
       // usage/engagement tracking, not content editing — any teacher may do
       // this even on a locked question, since building a contest from locked
       // questions (Contests tab) and liking a locked question are both
-      // everyday, non-admin actions.
+      // everyday, non-admin actions. usageHistory (Oct 2026) is the
+      // session builder's structured counterpart to usedIn -- same
+      // reasoning, same allowance.
       function isMetadataOnlyChange() {
         return request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(["usedIn", "updatedAt", "likes"]);
+          .hasOnly(["usedIn", "usageHistory", "updatedAt", "likes"]);
       }
       // Once a question IS locked, only an admin may touch it further,
       // except a QB Lead may still unlock it (move it back off "finalized")

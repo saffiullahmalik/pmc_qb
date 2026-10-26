@@ -125,6 +125,19 @@ questions/{questionId}
   -- from the UI — Quilgo upload status now lives on contests/{id}.uploadStatus
   -- instead (see below), since "uploaded" only makes sense per contest paper.
   -- Old docs may still carry a stray uploadedToQuilgo field; it's just ignored.
+  usageHistory: [{contestId, contestName, sessionId, sessionName, pmcType,
+    day, slot, overlapMode, usedAt}, ...]   -- Oct 2026, written by the
+  -- automatic session builder's commitSessionBuild() (see the
+  -- contestSessions entry below) ALONGSIDE usedIn, never replacing it --
+  -- every existing usedIn-reading call site (the "Used in: X" pills on
+  -- cards/drawer, the manual contest picker's hide-already-used/already-
+  -- used-in warning, contest delete/rename cleanup) is untouched.
+  -- usageHistory is the richer, structured answer to "how many times, and
+  -- where" -- usageHistoryTitle(q, contestName) in index.html looks up
+  -- the matching entry and renders it as that pill's hover tooltip
+  -- (day/slot/session/overlap-mode/date), so the existing pills got
+  -- richer without a UI redesign. A manually-created contest (no session)
+  -- never writes usageHistory, only usedIn -- exactly as before.
   likes: [teacherEmail, ...],   -- a lightweight ♥ toggle, separate from the
   -- 5-star rating below; arrayUnion/arrayRemove, allowed even on a locked
   -- question (see isMetadataOnlyChange() in firestore.rules).
@@ -324,6 +337,76 @@ contests/{contestId}
     -- together, deliberately not split into two separate undos) -- it
     -- means "start over on this question."
   createdBy, createdByName, createdAt
+  sessionId (null for a manually-created paper) -- links back to the
+  -- contestSessions doc that generated it, if any (see below). The paper
+  -- itself is otherwise a completely ordinary `contests` doc -- same
+  -- shape openContestForm()'s manual save already writes -- so Print,
+  -- Upload, Edit (reorder/rename/retime), and Delete all work on a
+  -- session-built paper exactly as they do on a hand-built one, no
+  -- special-casing anywhere downstream of creation.
+
+contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
+  (Contests tab -> "⚡ Build session automatically"). Owns a whole round --
+  N days x M slots of `contests` papers -- built in one pass by randomly
+  filling every paper from LOCKED-eligible questions (same eligibility
+  rule openContestForm()'s manual picker already uses: finalized,
+  uploaded, or in_review+peerReview.outcome==="agree") according to a
+  fixed chapter/difficulty blueprint, instead of picking every paper by
+  hand. Exists because building a full round by hand doesn't scale -- a
+  real round is 4 PMC categories x 3 days x 2 slots x 30 questions = 720
+  questions picked one at a time -- and there was no tracking of which
+  questions had already been used where, or any way to know "we don't
+  have enough locked questions yet to finish this round."
+  name, pmcType (one of LEVELS), days, slotsPerDay, questionsPerPaper (default 30),
+  overlapMode: "non_overlapping" | "overlapping",
+  -- overlapMode is scoped to THIS session's own set of papers only --
+  -- "non_overlapping" (the normal case) means no question repeats across
+  -- any of this session's papers; "overlapping" allows it. Reusing a
+  -- question from a DIFFERENT, earlier session/contest is always allowed
+  -- either way -- that's not what overlapMode controls -- it's just
+  -- recorded in the question's usageHistory (below) so there's a full
+  -- record of where it's been used, overlapping round or not.
+  status: "pending" | "complete",   -- "complete" once every blueprint
+  -- cell across every paper has a question placed; "pending" means at
+  -- least one cell is still short (see shortfalls).
+  shortfalls: [{day, slot, unit, difficulty}],   -- every still-empty cell
+  -- as of the last build/rebuild -- shown in the session's results view
+  -- and on its row in the Sessions list ("Pending — N slots short") so an
+  -- admin can see exactly what's missing without re-deriving it.
+  placements: { "<day>_<slot>": { "<chapterCode>": {medium, hard, very_hard} } },
+  -- the AUTHORITATIVE record of what's filled -- each value is a
+  -- questionId or null. contests.questionIds is always DERIVED from this
+  -- (chapter order, then difficulty order within chapter), never written
+  -- independently, which is what makes rebuilding safe: computeSessionBuild()
+  -- skips any cell that already has a non-null questionId here, so
+  -- clicking "Fill remaining slots" after more questions get locked only
+  -- touches the still-empty cells, never disturbs what's already placed.
+  contestIds: { "<day>_<slot>": contestId },
+  createdAt, createdBy, lastBuiltAt, lastBuiltBy
+  -- Selection logic (index.html): buildBlueprint(numPapers,
+  -- questionsPerPaper, chapters) returns fixedBlueprint6x12() -- the
+  -- project owner's own hand-specified table, verified by direct
+  -- simulation to sum to exactly 10 medium + 10 hard + 10 very_hard per
+  -- paper and 5+5+5 per chapter -- ONLY when the shape is literally 6
+  -- papers x 30 questions x 12 chapters (the standard 3-day x 2-slot
+  -- round every PMC category uses); any OTHER days/slotsPerDay/
+  -- questionsPerPaper combination falls through to
+  -- buildGeneralBlueprint(), a cyclic/rotating construction (chapter ci's
+  -- k-th "medium" slot goes to paper (ci*m+k) % numPapers, same pattern
+  -- independently per difficulty tier) that's well-balanced in aggregate
+  -- but NOT a hand-proven exact balance for every possible combination
+  -- the way the literal table is -- confirmed by simulation: a 4-paper/
+  -- 20-question/10-chapter test case lands within 1 question of the
+  -- ideal per-paper split (21/21/19/19 against a target of 20), not
+  -- perfectly even. computeSessionBuild() does the actual cell-by-cell
+  -- random pick (Math.random() among that cell's eligible, not-yet-used
+  -- pool) and returns a plan; commitSessionBuild() is the only part that
+  -- writes to Firestore (one writeBatch: create/update every paper,
+  -- arrayUnion onto every newly-placed question's usedIn AND
+  -- usageHistory, write the session doc) -- kept separate so the "Build a
+  -- session" form's live eligible-count preview (sessionEligiblePreview())
+  -- can show chapter x difficulty need-vs-have counts before committing
+  -- anything.
 
 assignments/{assignmentId}    -- the "Assignment" tab (workload distribution)
   name, contestLevel, units: [{unit, targetCount}], teacherEmails: [...],
