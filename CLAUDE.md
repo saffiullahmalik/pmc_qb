@@ -511,6 +511,25 @@ contestSessions/{sessionId}    -- Oct 2026, the automatic session builder
   -- still lists the cell as short would mean something is genuinely wrong
   -- in the fill logic and needs further debugging, not just "lock more
   -- questions and wait."
+  -- Chapter breakdown table (Oct 2026, same results view, a collapsed
+  -- "Chapter breakdown -- needed vs. locked right now" <details>, via
+  -- sessionChapterBreakdown()): a real, non-bug gap the above diagnostic
+  -- alone doesn't explain -- a real report of "we have exactly 720
+  -- questions total, every one should have a position, but some don't."
+  -- The fixed blueprint needs an EXACT count PER (chapter, difficulty)
+  -- cell (5 Medium + 5 Hard + 5 Very Hard per chapter for the standard
+  -- round) -- NOT just a matching grand total. 720 questions overall can
+  -- still leave some chapters short (not enough locked for that cell --
+  -- the live-shortfall-counts diagnostic above shows this) WHILE other
+  -- chapters are over-supplied (more locked for that cell than the fixed
+  -- quota will ever use THIS session -- shows here as "+N extra"), even
+  -- though the two imbalances cancel out in the grand total. An "extra"
+  -- question isn't lost or broken -- it simply has no slot in THIS
+  -- session's fixed quota; cross-session reuse is always allowed, so it
+  -- remains fully available for a later round. Table columns are
+  -- Medium/Hard/Very Hard per chapter, each cell showing `have / need`
+  -- plus an inline "(N short)"/"(+N extra)" note, red/gold/accent colored
+  -- by whether that cell is under, over, or exactly matched.
   -- Two real bugs fixed in openSessionForm()/renderCategoryPanel() (Oct
   -- 2026), both the same root cause as a focus-loss bug already fixed
   -- elsewhere (see the Bank tab note below): renderCategoryPanel() does a

@@ -3448,6 +3448,45 @@ function sessionLiveShortfallCounts(session){
   });
   return counts;
 }
+// Per-chapter need vs. locked-available breakdown for a session -- the
+// direct answer to "I have exactly enough questions in total, so why do
+// some have nowhere to land?": the blueprint needs an EXACT count per
+// (chapter, difficulty) cell (5 Medium + 5 Hard + 5 Very Hard per chapter
+// for the standard 6-paper round), not just a matching GRAND total. If
+// the real locked distribution is uneven across chapters -- one chapter
+// over-supplied, another under-supplied -- the grand total can still
+// equal exactly what's needed (e.g. 720) while some chapters run short
+// (shortfalls) and others have leftover questions this session's fixed
+// quota simply has no slot for (not lost -- still fully usable in a
+// LATER round/session, cross-session reuse is always allowed -- just not
+// placed by THIS build). `have` counts every locked-eligible question for
+// that cell regardless of whether it's already placed; `used` is how many
+// of those this session's own placements currently consume.
+function sessionChapterBreakdown(session){
+  const chapters = sessionChapters(session.pmcType, session.excludedChapters);
+  const numPapers = session.days*session.slotsPerDay;
+  const chapterTotals = session.chapterTotals ? chapters.map(ch=>session.chapterTotals[ch.code]??defaultPerChapterTotal(chapters,numPapers,session.questionsPerPaper)) : null;
+  const blueprint = buildBlueprint(numPapers, session.questionsPerPaper, chapters, chapterTotals);
+  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType));
+  const haveByCell = {};
+  eligible.forEach(q=>{ const k=`${q.unit}|${q.difficulty}`; haveByCell[k]=(haveByCell[k]||0)+1; });
+  return chapters.map((ch,ci)=>{
+    const need = {medium:0,hard:0,very_hard:0};
+    for(let pi=0; pi<numPapers; pi++) (blueprint[ci][pi]||[]).forEach(d=>need[d]++);
+    const used = {medium:0,hard:0,very_hard:0};
+    Object.values(session.placements||{}).forEach(byChapter=>{
+      const cell = byChapter?.[ch.code];
+      if(!cell) return;
+      ["medium","hard","very_hard"].forEach(d=>{ if(cell[d]) used[d]++; });
+    });
+    const have = {
+      medium: haveByCell[`${ch.code}|medium`]||0,
+      hard: haveByCell[`${ch.code}|hard`]||0,
+      very_hard: haveByCell[`${ch.code}|very_hard`]||0,
+    };
+    return { chapter:ch, need, have, used };
+  });
+}
 async function commitSessionBuild(session, build){
   const batch = writeBatch(db);
   // Resolve the session's own id FIRST, before either write loop -- on a
@@ -3814,6 +3853,27 @@ function openSessionResultsView(session){
           </div>` : ""}
         </div>`;
       }).join("")}
+      <details id="sr-breakdown-details" style="margin-top:10px;">
+        <summary style="cursor:pointer; font-size:12.5px; font-weight:600; color:var(--accent);">Chapter breakdown — needed vs. locked right now</summary>
+        <div style="margin-top:8px;">
+          <p class="hint" style="margin-top:0;">This session's blueprint needs an EXACT count per chapter and difficulty (e.g. 5 Medium + 5 Hard + 5 Very Hard per chapter for a standard round) — having the right TOTAL locked overall doesn't guarantee that, if some chapters are over-supplied and others under-supplied. A chapter showing "+N extra" below has locked questions this session's fixed quota has no slot for — they're not lost, they're simply available for a later round/session instead.</p>
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead><tr><th style="text-align:left; padding:4px;">Chapter</th><th style="text-align:right; padding:4px;">Medium</th><th style="text-align:right; padding:4px;">Hard</th><th style="text-align:right; padding:4px;">Very Hard</th></tr></thead>
+            <tbody>
+              ${sessionChapterBreakdown(session).map(r=>`<tr style="border-top:1px solid var(--border);">
+                <td style="padding:4px;">${escapeHtml(chapterLabel(r.chapter.code))}</td>
+                ${["medium","hard","very_hard"].map(d=>{
+                  const need=r.need[d], have=r.have[d];
+                  const diff = have-need;
+                  const color = diff<0 ? "var(--red)" : diff>0 ? "var(--gold)" : "var(--accent)";
+                  const note = diff<0 ? ` (${-diff} short)` : diff>0 ? ` (+${diff} extra)` : "";
+                  return `<td class="mono" style="padding:4px; text-align:right; color:${color}; ${diff!==0?"font-weight:700;":""}">${have} / ${need}${note}</td>`;
+                }).join("")}
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </details>
       ${session.status!=="complete" ? `<button class="btn primary" id="sr-fill" style="width:100%; justify-content:center; margin-top:8px;">Add more now</button>` : ""}
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
