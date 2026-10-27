@@ -4671,26 +4671,38 @@ function freshPeerReview(reviewer, opts={}){
 // assignment from building up the same way again -- it never strips
 // already-assigned work from anyone on its own).
 async function shiftReviewsToOthers(fromEmail, count){
-  const others = eligibleReviewerCandidates(null, null).filter(t=>t.email!==fromEmail);
-  if(others.length===0){ toast("No one else eligible to shift reviews to"); return; }
+  // Base pool excludes only the person being relieved -- each question's
+  // own AUTHOR is excluded per-question below, not here, since different
+  // shifted questions can have different authors. Fixed Oct 2026 after a
+  // real report: the old code computed one `others` list filtered only
+  // by `fromEmail` and reused it for every question, so an author who
+  // happened to be an eligible reviewer could end up reassigned their
+  // OWN question -- exactly the thing pickReviewer() already guards
+  // against for a normal assignment, just missed here.
+  const basePool = eligibleReviewerCandidates(null, fromEmail);
+  if(basePool.length===0){ toast("No one else eligible to shift reviews to"); return; }
   const pending = pendingReviewsFor(fromEmail).sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
   const toShift = pending.slice(0, Math.max(1,count));
   if(toShift.length===0){ toast("Nothing pending to shift for this person"); return; }
   const fromName = allTeachers.find(t=>t.email===fromEmail)?.name || fromEmail;
   if(!(await confirmDialog(`Shift ${toShift.length} pending review${toShift.length===1?"":"s"} away from ${fromName} to whoever currently has the least load?`))) return;
   try{
-    const load = reviewLoadFor(others);
+    const load = reviewLoadFor(basePool);
     const batch = writeBatch(db);
+    let skipped = 0;
     toShift.forEach(q=>{
-      const minLoad = Math.min(...others.map(t=>load[t.email]));
-      const least = others.filter(t=>load[t.email]===minLoad);
+      const candidates = basePool.filter(t=>t.email!==q.authorEmail);
+      if(candidates.length===0){ skipped++; return; } // only eligible people left are this question's own author -- leave it with its current reviewer rather than assign it to them
+      const minLoad = Math.min(...candidates.map(t=>load[t.email]));
+      const least = candidates.filter(t=>load[t.email]===minLoad);
       const picked = least[Math.floor(Math.random()*least.length)];
       batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
       load[picked.email]++;
     });
     await batch.commit();
-    logActivity("review_assigned", `Shifted ${toShift.length} pending review(s) away from ${fromName}`, null);
-    toast(`Shifted ${toShift.length} review${toShift.length===1?"":"s"}`);
+    const shifted = toShift.length-skipped;
+    logActivity("review_assigned", `Shifted ${shifted} pending review(s) away from ${fromName}`, null);
+    toast(skipped>0 ? `Shifted ${shifted} review${shifted===1?"":"s"} — ${skipped} left in place (only eligible reviewer left was the question's own author)` : `Shifted ${shifted} review${shifted===1?"":"s"}`);
     renderTab();
   }catch(err){ console.error(err); toast("Couldn't shift reviews ("+err.code+")"); }
 }

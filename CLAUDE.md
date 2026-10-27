@@ -835,8 +835,22 @@ overdue first) to other eligible candidates, spreading them across
 whoever currently has the least load as each one shifts (recomputed
 after each pick, not dumped on a single other person) rather than picking
 one fixed destination -- same least-loaded shape `pickReviewer()` itself
-uses, just scoped to "everyone except the one being relieved." This is
-the admin's actual lever for correcting a backlog that already exists:
+uses, just scoped to "everyone except the one being relieved." Fixed Oct
+2026 after a real bug report: the candidate pool used to be computed
+ONCE (`eligibleReviewerCandidates(null,null)` filtered by `fromEmail`
+only) and reused as-is for every question being shifted, so a question
+could get reassigned to its OWN author if they happened to be an
+eligible reviewer -- exactly the thing `pickReviewer()` already excludes
+for a normal assignment (`eligibleReviewerCandidates(authorEmail,...)`),
+just missed here since this path never threaded `authorEmail` through at
+all. Now computes a `basePool` excluding only `fromEmail`, then filters
+out `q.authorEmail` PER QUESTION inside the loop (each shifted question
+can have a different author) before picking least-loaded among what's
+left; if the only eligible people remaining for a given question turn
+out to be just its own author, that one question is left in place with
+its current reviewer rather than being reassigned to them, and the
+toast says so ("N left in place -- only eligible reviewer left was the
+question's own author"). This is the admin's actual lever for correcting a backlog that already exists:
 the fairness cap above only stops it from growing FURTHER, it never
 strips already-assigned work from anyone by itself -- per explicit
 request ("allow me at admin to shift a few questions to another
