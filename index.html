@@ -1782,6 +1782,29 @@ function cardHtml(q){
     </div>`;
 }
 
+// Builds <option> tags for a numeric dropdown spanning min..max in `step`
+// increments -- the exact-value pick alongside a +/- stepper, so jumping
+// to a specific size/line-height doesn't mean clicking "+" a dozen times.
+// `current` is rounded to the nearest step-aligned value first so a
+// value saved before this control existed (or nudged by the +/- buttons,
+// which already clamp to the same range) always matches one real option
+// instead of leaving the <select> showing nothing selected. `labelFn`
+// formats each option's visible text (default: the fixed-decimal string
+// itself, e.g. "2.0" not "2" -- bare number-to-string coercion drops
+// trailing zeros, which would make a line-height list read "2, 2.1, 2.2"
+// instead of a consistent one-decimal column).
+function rangeOptions(min, max, step, current, labelFn){
+  const decimals = step<1 ? String(step).split(".")[1].length : 0;
+  const opts = [];
+  for(let v=min; v<=max+1e-9; v=+(v+step).toFixed(decimals)){
+    opts.push(+v.toFixed(decimals));
+  }
+  const snapped = opts.reduce((best,v)=>Math.abs(v-current)<Math.abs(best-current)?v:best, opts[0]);
+  return opts.map(v=>{
+    const text = v.toFixed(decimals);
+    return `<option value="${v}" ${v===snapped?"selected":""}>${labelFn?labelFn(v,text):text}</option>`;
+  }).join("");
+}
 function openForm(existing){
   const isEdit = !!existing;
   const locked = isEdit && existing.status==="finalized" && !isAdminUser;
@@ -1981,15 +2004,19 @@ function openForm(existing){
             <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
               <span class="hint">English size:</span>
               <button type="button" class="btn small" id="preview-en-shrink" aria-label="Shrink English preview text">−</button>
+              <select id="preview-en-size-select" aria-label="English preview text size" style="padding:4px 6px; font-size:12px;">${rangeOptions(9,36,1,previewEnSize,v=>v+"px")}</select>
               <button type="button" class="btn small" id="preview-en-grow" aria-label="Enlarge English preview text">+</button>
               <span class="hint">Urdu size:</span>
               <button type="button" class="btn small" id="preview-ur-shrink" aria-label="Shrink Urdu preview text">−</button>
+              <select id="preview-ur-size-select" aria-label="Urdu preview text size" style="padding:4px 6px; font-size:12px;">${rangeOptions(9,40,1,previewUrSize,v=>v+"px")}</select>
               <button type="button" class="btn small" id="preview-ur-grow" aria-label="Enlarge Urdu preview text">+</button>
               <span class="hint">English line height:</span>
               <button type="button" class="btn small" id="preview-en-lh-shrink" aria-label="Tighten English line height">−</button>
+              <select id="preview-en-lh-select" aria-label="English line height" style="padding:4px 6px; font-size:12px;">${rangeOptions(1.0,3.0,0.1,previewEnLineHeight)}</select>
               <button type="button" class="btn small" id="preview-en-lh-grow" aria-label="Loosen English line height">+</button>
               <span class="hint">Urdu line height:</span>
               <button type="button" class="btn small" id="preview-ur-lh-shrink" aria-label="Tighten Urdu line height">−</button>
+              <select id="preview-ur-lh-select" aria-label="Urdu line height" style="padding:4px 6px; font-size:12px;">${rangeOptions(1.0,3.0,0.1,previewUrLineHeight)}</select>
               <button type="button" class="btn small" id="preview-ur-lh-grow" aria-label="Loosen Urdu line height">+</button>
             </div>
             <div style="display:flex; gap:16px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
@@ -2403,14 +2430,23 @@ function openForm(existing){
     document.getElementById("editor-progress-fill").style.width = (n/totalSteps*100)+"%";
     if(n===totalSteps) renderLivePreview();
   }
-  document.getElementById("preview-en-shrink").addEventListener("click", ()=>{ previewEnSize = Math.max(9, previewEnSize-1); renderLivePreview(); });
-  document.getElementById("preview-en-grow").addEventListener("click", ()=>{ previewEnSize = Math.min(36, previewEnSize+1); renderLivePreview(); });
-  document.getElementById("preview-ur-shrink").addEventListener("click", ()=>{ previewUrSize = Math.max(9, previewUrSize-1); renderLivePreview(); });
-  document.getElementById("preview-ur-grow").addEventListener("click", ()=>{ previewUrSize = Math.min(40, previewUrSize+1); renderLivePreview(); });
-  document.getElementById("preview-en-lh-shrink").addEventListener("click", ()=>{ previewEnLineHeight = Math.max(1.0, +(previewEnLineHeight-0.1).toFixed(1)); renderLivePreview(); });
-  document.getElementById("preview-en-lh-grow").addEventListener("click", ()=>{ previewEnLineHeight = Math.min(3.0, +(previewEnLineHeight+0.1).toFixed(1)); renderLivePreview(); });
-  document.getElementById("preview-ur-lh-shrink").addEventListener("click", ()=>{ previewUrLineHeight = Math.max(1.0, +(previewUrLineHeight-0.1).toFixed(1)); renderLivePreview(); });
-  document.getElementById("preview-ur-lh-grow").addEventListener("click", ()=>{ previewUrLineHeight = Math.min(3.0, +(previewUrLineHeight+0.1).toFixed(1)); renderLivePreview(); });
+  // Each +/- stepper also needs to push its new value into the matching
+  // dropdown (added Oct 2026 alongside these steppers so a size/line-
+  // height can be jumped to directly, not just nudged) -- renderLivePreview()
+  // only rebuilds the #live-preview pane, never this control bar, so the
+  // <select> elements are never recreated/re-synced on their own.
+  document.getElementById("preview-en-shrink").addEventListener("click", ()=>{ previewEnSize = Math.max(9, previewEnSize-1); document.getElementById("preview-en-size-select").value = previewEnSize; renderLivePreview(); });
+  document.getElementById("preview-en-grow").addEventListener("click", ()=>{ previewEnSize = Math.min(36, previewEnSize+1); document.getElementById("preview-en-size-select").value = previewEnSize; renderLivePreview(); });
+  document.getElementById("preview-ur-shrink").addEventListener("click", ()=>{ previewUrSize = Math.max(9, previewUrSize-1); document.getElementById("preview-ur-size-select").value = previewUrSize; renderLivePreview(); });
+  document.getElementById("preview-ur-grow").addEventListener("click", ()=>{ previewUrSize = Math.min(40, previewUrSize+1); document.getElementById("preview-ur-size-select").value = previewUrSize; renderLivePreview(); });
+  document.getElementById("preview-en-lh-shrink").addEventListener("click", ()=>{ previewEnLineHeight = Math.max(1.0, +(previewEnLineHeight-0.1).toFixed(1)); document.getElementById("preview-en-lh-select").value = previewEnLineHeight; renderLivePreview(); });
+  document.getElementById("preview-en-lh-grow").addEventListener("click", ()=>{ previewEnLineHeight = Math.min(3.0, +(previewEnLineHeight+0.1).toFixed(1)); document.getElementById("preview-en-lh-select").value = previewEnLineHeight; renderLivePreview(); });
+  document.getElementById("preview-ur-lh-shrink").addEventListener("click", ()=>{ previewUrLineHeight = Math.max(1.0, +(previewUrLineHeight-0.1).toFixed(1)); document.getElementById("preview-ur-lh-select").value = previewUrLineHeight; renderLivePreview(); });
+  document.getElementById("preview-ur-lh-grow").addEventListener("click", ()=>{ previewUrLineHeight = Math.min(3.0, +(previewUrLineHeight+0.1).toFixed(1)); document.getElementById("preview-ur-lh-select").value = previewUrLineHeight; renderLivePreview(); });
+  document.getElementById("preview-en-size-select").addEventListener("change", e=>{ previewEnSize = parseInt(e.target.value,10); renderLivePreview(); });
+  document.getElementById("preview-ur-size-select").addEventListener("change", e=>{ previewUrSize = parseInt(e.target.value,10); renderLivePreview(); });
+  document.getElementById("preview-en-lh-select").addEventListener("change", e=>{ previewEnLineHeight = parseFloat(e.target.value); renderLivePreview(); });
+  document.getElementById("preview-ur-lh-select").addEventListener("change", e=>{ previewUrLineHeight = parseFloat(e.target.value); renderLivePreview(); });
   document.getElementById("preview-en-font").addEventListener("change", e=>{ previewEnFont = e.target.value; renderLivePreview(); });
   document.getElementById("preview-ur-font").addEventListener("change", e=>{ previewUrFont = e.target.value; renderLivePreview(); });
   document.querySelectorAll("[data-en-align]").forEach(b=>b.addEventListener("click", ()=>{ previewEnAlign = b.dataset.enAlign; document.querySelectorAll("[data-en-align]").forEach(x=>x.classList.toggle("primary", x===b)); renderLivePreview(); }));

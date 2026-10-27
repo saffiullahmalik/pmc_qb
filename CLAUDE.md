@@ -72,7 +72,18 @@ questions/{questionId}
   -- lineHeightEn/lineHeightUr (default 1.5/1.5, sliders now 1.0-3.0,
   -- widened from 1.1-2.2) -- set via the editor's live-preview +/-
   -- controls (previewEnSize/previewUrSize/previewEnLineHeight/
-  -- previewUrLineHeight in openForm()).
+  -- previewUrLineHeight in openForm()) -- each +/- pair now sits next to
+  -- a numeric <select> dropdown (Oct 2026, real request) spanning the
+  -- same range in the same step (rangeOptions(min,max,step,current,labelFn),
+  -- a small shared helper) for jumping straight to an exact value instead
+  -- of clicking +/- repeatedly. Since renderLivePreview() only rebuilds
+  -- the #live-preview pane and never this control bar, each +/- handler
+  -- also pushes its new value into the matching <select>'s `.value`
+  -- directly so the dropdown never drifts out of sync with the stepper;
+  -- the dropdown's own "change" listener is the reverse path. Line-height
+  -- option labels are the step's own fixed-decimal string ("2.0", not the
+  -- bare number "2" number-to-string coercion would produce) so the list
+  -- reads as one consistent decimal column, not "2, 2.1, 2.2, ...".
   -- Fixed Oct 2026: these were only ever applied inside the editor's own
   -- live preview and never actually saved, so the chosen size/line-height
   -- never showed up in View, the downloaded image, or the print view --
