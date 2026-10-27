@@ -1801,7 +1801,12 @@ function openForm(existing){
   // "Final preview"/downloaded image, same exam-safety reasoning as
   // solutionEn's own text (see questionPreviewHtml()'s revealAnswer note).
   let solutionImageState = existing?.solutionImage || null;
-  let optionsLayoutState = existing?.optionsLayout || 2;
+  // Default to 3 columns for a brand-new question (Oct 2026, per request)
+  // -- still freely changeable via the layout buttons below. An existing
+  // question keeps its own saved layout, or falls back to the original
+  // 2-column default if it predates this field -- so this change only
+  // affects what a NEW question starts as, not how an old one re-opens.
+  let optionsLayoutState = existing ? (existing.optionsLayout || 2) : 3;
   let skillsState = existing?.skills ? [...existing.skills] : [];
   let previewEnSize = existing?.fontSizeEn || 15, previewUrSize = existing?.fontSizeUr || 14;
   let previewEnLineHeight = existing?.lineHeightEn || 1.5, previewUrLineHeight = existing?.lineHeightUr || 1.5;
