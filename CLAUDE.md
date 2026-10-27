@@ -863,6 +863,35 @@ via `writeBatch` since several questions move in one action; calls
 pre-existing behavior, left as-is; only this new bulk action re-renders,
 since seeing the redistribution land is the whole point of it).
 
+Self-assigned-review cleanup (Oct 2026, Admin & Analytics, a real
+follow-up question: "what about the question already shifted to
+authors"): fixing `shiftReviewsToOthers()` above stops NEW self-
+assignments from being created, but does nothing about ones already
+sitting in Firestore from before the fix -- a question can right now
+have `peerReview.reviewerEmail===authorEmail`, and nothing corrects that
+on its own. `selfAssignedReviews()` (`questions.filter(q=>q.peerReview &&
+q.peerReview.reviewerEmail===q.authorEmail)`) detects every one of them,
+checked regardless of outcome -- an author who already "agreed" with
+their own question is just as invalid as one still pending, not only the
+unsubmitted case. When any exist, a red `.callout.warn` banner appears at
+the TOP of Admin & Analytics, above "Pending reviews" (not buried in a
+collapsed `<details>` -- this is a data-integrity issue, not routine
+browsing), listing each affected question by title and author, with a
+"Fix now" button -> `fixSelfAssignedReviews()`. That reassigns every one
+to a different eligible, least-loaded candidate (excluding THAT
+question's own author, same per-question exclusion `shiftReviewsToOthers()`
+now uses) via a fresh `freshPeerReview()` -- correctly resetting an
+already-"agreed"/"disagreed" self-review back to "pending" for a genuine
+second opinion, not leaving it standing. Uses ONE shared, incrementally-
+updated load map across the whole run (`const load = reviewLoadFor(fullPool)`
+before the loop, `load[picked.email]++` after each pick) so fixing
+several self-assigned reviews in one click still spreads them out instead
+of every pick landing on whoever looked least-loaded before any of this
+run's own picks were accounted for -- same reasoning `shiftReviewsToOthers()`
+already uses for its own loop. A question whose only eligible reviewer
+turns out to be its own author is left untouched (same edge case as
+above), with the skipped count called out in the toast.
+
 "Sent back" visibility for the author (Oct 2026): previously a reviewer's
 "disagree" only ever surfaced once the author happened to open that
 specific question (its drawer's peer-review card, or the editor's warning

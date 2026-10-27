@@ -4706,6 +4706,56 @@ async function shiftReviewsToOthers(fromEmail, count){
     renderTab();
   }catch(err){ console.error(err); toast("Couldn't shift reviews ("+err.code+")"); }
 }
+// Data-integrity cleanup for the shiftReviewsToOthers() bug fixed above
+// (Oct 2026): a question can be sitting in Firestore RIGHT NOW with
+// peerReview.reviewerEmail===authorEmail from a shift that ran before the
+// fix -- the code that would have created more of these is already
+// fixed, but existing self-assigned records don't correct themselves.
+// Checked regardless of outcome (pending/agree/disagree) -- an author
+// "agreeing" with their own question is exactly as invalid as one still
+// sitting in their own pending queue, not just the unsubmitted case.
+function selfAssignedReviews(){
+  return questions.filter(q=>q.peerReview && q.peerReview.reviewerEmail===q.authorEmail);
+}
+// Reassigns every self-assigned review found above to a different
+// eligible, least-loaded candidate (excluding that question's own author,
+// same per-question exclusion shiftReviewsToOthers() now uses) -- a fresh
+// peerReview via freshPeerReview(), so a previously-submitted self-review
+// (agree/disagree) is correctly reset to "pending" for a genuine second
+// opinion, not left standing. Skips (leaves untouched) any question whose
+// ONLY eligible reviewer turns out to be its own author -- same edge case
+// shiftReviewsToOthers() guards against -- and reports that count.
+async function fixSelfAssignedReviews(){
+  const broken = selfAssignedReviews();
+  if(broken.length===0) return;
+  if(!(await confirmDialog(`Reassign ${broken.length} question${broken.length===1?"":"s"} currently assigned to review themselves? Each goes to a different eligible reviewer.`))) return;
+  try{
+    // One shared, incrementally-updated load map across every question
+    // fixed in this run (not recomputed from scratch per question) --
+    // same reasoning as shiftReviewsToOthers()'s loop -- so fixing
+    // several self-assigned reviews in one go still spreads them out
+    // instead of every pick landing on whoever looked least-loaded before
+    // any of this run's own picks were accounted for.
+    const fullPool = eligibleReviewerCandidates(null, null);
+    const load = reviewLoadFor(fullPool);
+    const batch = writeBatch(db);
+    let fixed = 0, skipped = 0;
+    broken.forEach(q=>{
+      const candidates = fullPool.filter(t=>t.email!==q.authorEmail);
+      if(candidates.length===0){ skipped++; return; }
+      const minLoad = Math.min(...candidates.map(t=>load[t.email]));
+      const least = candidates.filter(t=>load[t.email]===minLoad);
+      const picked = least[Math.floor(Math.random()*least.length)];
+      batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
+      load[picked.email]++;
+      fixed++;
+    });
+    await batch.commit();
+    logActivity("review_assigned", `Fixed ${fixed} self-assigned review(s)`, null);
+    toast(skipped>0 ? `Fixed ${fixed} — ${skipped} left in place (no other eligible reviewer exists for that author)` : `Fixed ${fixed} self-assigned review${fixed===1?"":"s"}`);
+    renderTab();
+  }catch(err){ console.error(err); toast("Couldn't fix self-assigned reviews ("+err.code+")"); }
+}
 
 function progressCard(label, actual, target, sublabel){
   const pct = target>0 ? Math.min(100, Math.round((actual/target)*100)) : 0;
@@ -6779,6 +6829,7 @@ function renderAdmin(){
   const teamRows = teacherComparisonData();
   const pendingReviews = questions.filter(q=>q.peerReview?.outcome==="pending")
     .sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
+  const brokenSelfAssigned = selfAssignedReviews();
   // Review workload: everyone pickReviewer() can auto-assign to (same pool
   // as eligibleReviewerCandidates() with no author to exclude), each with
   // their live lifetime load against the shared fairness cap, plus both
@@ -6838,6 +6889,14 @@ function renderAdmin(){
         </div>
       </div>
     `}
+    ${brokenSelfAssigned.length>0 ? `
+    <div class="callout warn" style="border-left-color:var(--red); margin-bottom:16px;">
+      <b>⚠ ${brokenSelfAssigned.length} question${brokenSelfAssigned.length===1?" is":"s are"} currently assigned to review ${brokenSelfAssigned.length===1?"itself":"themselves"}</b> — their own author as the peer reviewer. Left over from a fixed bug in the "Shift to others" bulk-reassign action; new assignments can't create this anymore, but these existing ones need a one-time cleanup.
+      <ul style="margin:6px 0 10px 18px; padding:0;">
+        ${brokenSelfAssigned.map(q=>`<li>${escapeHtml(q.titleEn||"Untitled")} — ${escapeHtml(q.authorName||q.authorEmail)}</li>`).join("")}
+      </ul>
+      <button type="button" class="btn small primary" id="fix-self-assigned">Fix ${brokenSelfAssigned.length===1?"it":"all"} now — reassign to someone else</button>
+    </div>` : ""}
     <details class="records-details">
       <summary class="section-label" style="cursor:pointer; display:inline-block;">Pending reviews (${pendingReviews.length})</summary>
       <p class="desc">Every question currently awaiting a peer review, with who it's assigned to and when. Reassign to a specific person, or take it back (unassign) if a reviewer's gone quiet — both work on any pending review, not just one at a time from inside the question itself.</p>
@@ -7011,6 +7070,7 @@ function renderAdmin(){
   loadAllStats();
   subscribeActivityLog();
   document.querySelectorAll("[data-goto-question]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.gotoQuestion)));
+  document.getElementById("fix-self-assigned")?.addEventListener("click", fixSelfAssignedReviews);
   document.querySelectorAll("[data-reassign-to]").forEach(sel=>sel.addEventListener("change", async ()=>{
     const q = questions.find(x=>x.id===sel.dataset.reassignTo);
     const newEmail = sel.value;
