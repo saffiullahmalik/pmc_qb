@@ -3926,8 +3926,17 @@ function renderContests(){
         const used = forLevel.filter(q=>(q.usedIn||[]).length>0).length;
         return { level:l, total:forLevel.length, used, left:forLevel.length-used };
       });
-      const totalEligible = rows.reduce((s,r)=>s+r.total,0);
-      const totalUsed = rows.reduce((s,r)=>s+r.used,0);
+      // Overall totals come from `eligible` directly (a deduplicated set),
+      // NOT by summing the per-category rows above -- a question's `level`
+      // field is an array and can legitimately include more than one PMC
+      // category (e.g. tagged for both PMC-6 and PMC-7), so it correctly
+      // appears in BOTH of those rows, but summing the rows would then
+      // double-count it in the overall stat tiles. Fixed Oct 2026 after a
+      // real report that this overall count (551) didn't match Admin &
+      // Analytics' own Locked+Reviewed count (545) -- the rows themselves
+      // were never wrong, only the sum across them was.
+      const totalEligible = eligible.length;
+      const totalUsed = eligible.filter(q=>(q.usedIn||[]).length>0).length;
       const totalLeft = totalEligible-totalUsed;
       return `
       <div class="section-label" style="margin-top:0;">Question usage</div>
@@ -3947,6 +3956,7 @@ function renderContests(){
           </tr>`).join("")}
         </tbody>
       </table></div>
+      ${eligible.some(q=>(q.level||[]).length>1) ? `<p class="hint" style="margin-top:4px;">A question tagged for more than one PMC category counts toward each one's row above, so the rows can add up to more than the overall totals — that's expected, not an error.</p>` : ""}
       `;
     })()}
     ${contestSessions.length>0 ? `
