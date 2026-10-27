@@ -4717,44 +4717,81 @@ async function shiftReviewsToOthers(fromEmail, count){
 function selfAssignedReviews(){
   return questions.filter(q=>q.peerReview && q.peerReview.reviewerEmail===q.authorEmail);
 }
-// Reassigns every self-assigned review found above to a different
-// eligible, least-loaded candidate (excluding that question's own author,
-// same per-question exclusion shiftReviewsToOthers() now uses) -- a fresh
-// peerReview via freshPeerReview(), so a previously-submitted self-review
-// (agree/disagree) is correctly reset to "pending" for a genuine second
-// opinion, not left standing. Skips (leaves untouched) any question whose
-// ONLY eligible reviewer turns out to be its own author -- same edge case
-// shiftReviewsToOthers() guards against -- and reports that count.
+// Shared reassignment core for both cleanup actions below (self-assigned,
+// and the role-change bug further down) -- reassigns every question in
+// `brokenList` to a different eligible, least-loaded candidate, excluding
+// that question's own author, via a fresh peerReview (freshPeerReview()),
+// so a previously-submitted self/ineligible review is correctly reset to
+// "pending" for a genuine opinion from someone who should be doing it.
+// One shared, incrementally-updated load map across the WHOLE run (not
+// recomputed from scratch per question) so fixing several at once still
+// spreads them out instead of every pick landing on whoever looked
+// least-loaded before any of this run's own picks were accounted for.
+// `alsoExclude` additionally excludes one specific email from the pool --
+// used when the caller just changed that person's role and can't yet
+// rely on the live `allTeachers` snapshot reflecting it (Firestore's
+// onSnapshot hasn't necessarily delivered the update back yet).
+async function reassignBrokenReviews(brokenList, alsoExclude){
+  const fullPool = eligibleReviewerCandidates(null, alsoExclude||null);
+  const load = reviewLoadFor(fullPool);
+  const batch = writeBatch(db);
+  let fixed = 0, skipped = 0;
+  brokenList.forEach(q=>{
+    const candidates = fullPool.filter(t=>t.email!==q.authorEmail);
+    if(candidates.length===0){ skipped++; return; }
+    const minLoad = Math.min(...candidates.map(t=>load[t.email]));
+    const least = candidates.filter(t=>load[t.email]===minLoad);
+    const picked = least[Math.floor(Math.random()*least.length)];
+    batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
+    load[picked.email]++;
+    fixed++;
+  });
+  if(fixed>0) await batch.commit();
+  return { fixed, skipped };
+}
+// Skips (leaves untouched) any question whose ONLY eligible reviewer
+// turns out to be its own author -- same edge case shiftReviewsToOthers()
+// guards against -- and reports that count via the returned `skipped`.
 async function fixSelfAssignedReviews(){
   const broken = selfAssignedReviews();
   if(broken.length===0) return;
   if(!(await confirmDialog(`Reassign ${broken.length} question${broken.length===1?"":"s"} currently assigned to review themselves? Each goes to a different eligible reviewer.`))) return;
   try{
-    // One shared, incrementally-updated load map across every question
-    // fixed in this run (not recomputed from scratch per question) --
-    // same reasoning as shiftReviewsToOthers()'s loop -- so fixing
-    // several self-assigned reviews in one go still spreads them out
-    // instead of every pick landing on whoever looked least-loaded before
-    // any of this run's own picks were accounted for.
-    const fullPool = eligibleReviewerCandidates(null, null);
-    const load = reviewLoadFor(fullPool);
-    const batch = writeBatch(db);
-    let fixed = 0, skipped = 0;
-    broken.forEach(q=>{
-      const candidates = fullPool.filter(t=>t.email!==q.authorEmail);
-      if(candidates.length===0){ skipped++; return; }
-      const minLoad = Math.min(...candidates.map(t=>load[t.email]));
-      const least = candidates.filter(t=>load[t.email]===minLoad);
-      const picked = least[Math.floor(Math.random()*least.length)];
-      batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
-      load[picked.email]++;
-      fixed++;
-    });
-    await batch.commit();
+    const {fixed, skipped} = await reassignBrokenReviews(broken);
     logActivity("review_assigned", `Fixed ${fixed} self-assigned review(s)`, null);
     toast(skipped>0 ? `Fixed ${fixed} — ${skipped} left in place (no other eligible reviewer exists for that author)` : `Fixed ${fixed} self-assigned review${fixed===1?"":"s"}`);
     renderTab();
   }catch(err){ console.error(err); toast("Couldn't fix self-assigned reviews ("+err.code+")"); }
+}
+// Real bug report (Oct 2026): a teacher's role gets changed away from
+// teacher/qb_lead (e.g. to "uploader") but anything currently PENDING in
+// their review queue just sits there -- setTeacherRole() only ever wrote
+// the new `role` field, nothing else, so an existing assignment doesn't
+// retroactively notice the person holding it is no longer eligible to
+// hold it. eligibleReviewerCandidates()'s role check already stops any
+// NEW auto-assignment from reaching them -- this is specifically about
+// assignments that were already made BEFORE their role changed. Checked
+// against outcome==="pending" only (not agree/disagree) -- a review they
+// already SUBMITTED while still genuinely eligible isn't invalid just
+// because their role changed afterward; only still-open work needs to
+// move to someone who's actually supposed to be doing it.
+function ineligibleAssignedReviews(){
+  return questions.filter(q=>{
+    if(q.peerReview?.outcome!=="pending") return false;
+    const r = allTeachers.find(t=>t.email===q.peerReview.reviewerEmail);
+    return !r || !(r.role==="teacher" || r.role==="qb_lead");
+  });
+}
+async function fixIneligibleAssignedReviews(){
+  const broken = ineligibleAssignedReviews();
+  if(broken.length===0) return;
+  if(!(await confirmDialog(`Reassign ${broken.length} pending review${broken.length===1?"":"s"} currently sitting with someone whose role no longer includes review duty?`))) return;
+  try{
+    const {fixed, skipped} = await reassignBrokenReviews(broken);
+    logActivity("review_assigned", `Reassigned ${fixed} pending review(s) off a now-ineligible reviewer`, null);
+    toast(skipped>0 ? `Fixed ${fixed} — ${skipped} left in place (no other eligible reviewer exists for that author)` : `Fixed ${fixed} review${fixed===1?"":"s"}`);
+    renderTab();
+  }catch(err){ console.error(err); toast("Couldn't fix ("+err.code+")"); }
 }
 
 function progressCard(label, actual, target, sublabel){
@@ -6830,6 +6867,7 @@ function renderAdmin(){
   const pendingReviews = questions.filter(q=>q.peerReview?.outcome==="pending")
     .sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
   const brokenSelfAssigned = selfAssignedReviews();
+  const brokenIneligible = ineligibleAssignedReviews();
   // Review workload: everyone pickReviewer() can auto-assign to (same pool
   // as eligibleReviewerCandidates() with no author to exclude), each with
   // their live lifetime load against the shared fairness cap, plus both
@@ -6896,6 +6934,14 @@ function renderAdmin(){
         ${brokenSelfAssigned.map(q=>`<li>${escapeHtml(q.titleEn||"Untitled")} — ${escapeHtml(q.authorName||q.authorEmail)}</li>`).join("")}
       </ul>
       <button type="button" class="btn small primary" id="fix-self-assigned">Fix ${brokenSelfAssigned.length===1?"it":"all"} now — reassign to someone else</button>
+    </div>` : ""}
+    ${brokenIneligible.length>0 ? `
+    <div class="callout warn" style="border-left-color:var(--red); margin-bottom:16px;">
+      <b>⚠ ${brokenIneligible.length} pending review${brokenIneligible.length===1?" is":"s are"} sitting with someone whose role no longer includes review duty</b> — e.g. switched to Uploader or External Reviewer after the review was assigned. Changing someone's role now moves any of their pending reviews automatically; these are left over from before that fix.
+      <ul style="margin:6px 0 10px 18px; padding:0;">
+        ${brokenIneligible.map(q=>`<li>${escapeHtml(q.titleEn||"Untitled")} — currently with ${escapeHtml(q.peerReview.reviewerName||q.peerReview.reviewerEmail)}</li>`).join("")}
+      </ul>
+      <button type="button" class="btn small primary" id="fix-ineligible-assigned">Fix ${brokenIneligible.length===1?"it":"all"} now — reassign to someone eligible</button>
     </div>` : ""}
     <details class="records-details">
       <summary class="section-label" style="cursor:pointer; display:inline-block;">Pending reviews (${pendingReviews.length})</summary>
@@ -7071,6 +7117,7 @@ function renderAdmin(){
   subscribeActivityLog();
   document.querySelectorAll("[data-goto-question]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.gotoQuestion)));
   document.getElementById("fix-self-assigned")?.addEventListener("click", fixSelfAssignedReviews);
+  document.getElementById("fix-ineligible-assigned")?.addEventListener("click", fixIneligibleAssignedReviews);
   document.querySelectorAll("[data-reassign-to]").forEach(sel=>sel.addEventListener("change", async ()=>{
     const q = questions.find(x=>x.id===sel.dataset.reassignTo);
     const newEmail = sel.value;
@@ -7365,7 +7412,27 @@ async function setTeacherRole(email, newRole, selectEl){
   try{
     await setDoc(doc(db,"teachers",email), {role:newRole}, {merge:true});
     logActivity("teacher_role_changed", `Set ${email}'s role to ${ROLE_LABEL[newRole]}`, email);
-    toast(`Role updated to ${ROLE_LABEL[newRole]}`);
+    let msg = `Role updated to ${ROLE_LABEL[newRole]}`;
+    // Real bug fixed Oct 2026: moving someone OFF teacher/qb_lead used to
+    // leave anything still pending in their review queue sitting there
+    // untouched -- eligibleReviewerCandidates()'s role check stops NEW
+    // assignments from reaching them, but an assignment made BEFORE this
+    // role change doesn't notice on its own that the person holding it is
+    // no longer supposed to. Proactively move it the moment the role
+    // changes, instead of waiting for a separate cleanup pass to notice
+    // (the "Admin & Analytics" banner below still exists for anything
+    // that slipped through before this fix existed). `alsoExclude=email`
+    // since the just-written role may not have reached the live
+    // `allTeachers` snapshot yet -- can't rely on the role filter alone.
+    if(newRole!=="teacher" && newRole!=="qb_lead"){
+      const theirPending = questions.filter(q=>q.peerReview?.outcome==="pending" && q.peerReview.reviewerEmail===email);
+      if(theirPending.length>0){
+        const {fixed, skipped} = await reassignBrokenReviews(theirPending, email);
+        if(fixed>0) msg += `. Also moved ${fixed} pending review${fixed===1?"":"s"} off their queue`;
+        if(skipped>0) msg += ` (${skipped} left — no other eligible reviewer yet for that author)`;
+      }
+    }
+    toast(msg);
     // Own role/session state is only set once at sign-in -- refresh it
     // immediately on self-change so admin-only UI doesn't keep showing
     // after you've just removed your own access to it.

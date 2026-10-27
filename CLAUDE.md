@@ -890,7 +890,48 @@ of every pick landing on whoever looked least-loaded before any of this
 run's own picks were accounted for -- same reasoning `shiftReviewsToOthers()`
 already uses for its own loop. A question whose only eligible reviewer
 turns out to be its own author is left untouched (same edge case as
-above), with the skipped count called out in the toast.
+above), with the skipped count called out in the toast. The shared
+reassignment core (`eligibleReviewerCandidates()` call, the load map,
+the per-question author exclusion, the skip-if-no-candidate guard) was
+factored out into `reassignBrokenReviews(brokenList, alsoExclude)` as
+part of the role-change bug fix immediately below, so both cleanup
+actions reassign the exact same way.
+
+Role-change review cleanup (Oct 2026, real bug report: "sajid and sajjad
+are uploader only why assigning them to review questions"): the SAME
+class of bug as the self-assigned one above, just triggered by a role
+change instead of a buggy bulk-shift. `setTeacherRole()` only ever wrote
+the new `role` field to `teachers/{email}` -- it never touched anything
+already sitting in that person's PENDING review queue. `eligibleReviewerCandidates()`'s
+role check (`t.role==="teacher"||t.role==="qb_lead"`) already stops any
+NEW auto-assignment from reaching an uploader/external_reviewer/admin/
+automation/student_reviewer account, but an assignment made BEFORE their
+role changed away from teacher/qb_lead doesn't notice on its own that the
+person holding it is no longer supposed to -- it just sits there,
+answering exactly "why is an uploader-only account assigned to review
+questions" (they were a real teacher when it was assigned; the role
+changed later, and nothing moved the review). Two fixes, same pattern as
+the self-assigned cleanup: (1) going forward, `setTeacherRole()` now
+checks, right after writing a role that ISN'T teacher/qb_lead, for any
+`questions` with `peerReview.outcome==="pending"` still pointing at that
+email, and immediately reassigns them via `reassignBrokenReviews(theirPending,
+email)` -- the `email` passed as `alsoExclude` since the role write just
+sent may not have reached the live `allTeachers` snapshot yet, so the
+exclusion can't rely on the role filter catching it in time. The combined
+result (role changed + N reviews moved, or N left in place if nobody else
+is eligible for that author) is one toast, not two. Deliberately scoped
+to `outcome==="pending"` only -- a review they already SUBMITTED while
+genuinely still eligible isn't retroactively invalid just because their
+role changed afterward, unlike the self-assigned case, which is invalid
+at every outcome. (2) `ineligibleAssignedReviews()` is the retroactive
+sweep for role changes that happened BEFORE this fix existed (exactly
+Sajid/Sajjad's situation) -- finds every still-pending `peerReview` whose
+`reviewerEmail` no longer belongs to a teacher/qb_lead (or belongs to no
+one at all, if the account was removed). Surfaced as a second red
+`.callout.warn` banner at the top of Admin & Analytics, right below the
+self-assigned one, listing each question and who it's currently stuck
+with, with its own "Fix now" button -> `fixIneligibleAssignedReviews()`
+(same `reassignBrokenReviews()` core).
 
 "Sent back" visibility for the author (Oct 2026): previously a reviewer's
 "disagree" only ever surfaced once the author happened to open that
