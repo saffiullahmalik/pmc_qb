@@ -3911,6 +3911,44 @@ function renderContests(){
       </div>
     </div>
     <p class="desc">Assemble a paper from contest-ready questions — locked, uploaded, or peer-reviewed and agreed ("Reviewed OK," even before a QB Lead has locked it) — then print a bilingual paper and answer key. Saving a contest tags every question used in it, visible everywhere in the bank.</p>
+    ${!dataReady.questions ? loadingState("Loading question usage…") : (()=>{
+      // Question-usage counter, per real request: how many contest-ready
+      // (locked/uploaded/reviewed-OK -- the same pool contests are actually
+      // built from, sessionEligibleQuestions()) questions have already been
+      // placed into a contest ("usedIn" non-empty) vs. how many are still
+      // waiting ("left") -- both overall and broken out per PMC category,
+      // so an admin can tell at a glance whether there's still a backlog
+      // worth running "Add more now"/a new session over, or everything
+      // eligible is already spoken for.
+      const eligible = sessionEligibleQuestions();
+      const rows = LEVELS.map(l=>{
+        const forLevel = eligible.filter(q=>(q.level||[]).includes(l));
+        const used = forLevel.filter(q=>(q.usedIn||[]).length>0).length;
+        return { level:l, total:forLevel.length, used, left:forLevel.length-used };
+      });
+      const totalEligible = rows.reduce((s,r)=>s+r.total,0);
+      const totalUsed = rows.reduce((s,r)=>s+r.used,0);
+      const totalLeft = totalEligible-totalUsed;
+      return `
+      <div class="section-label" style="margin-top:0;">Question usage</div>
+      <div class="admin-grid">
+        <div class="stat-tile"><div class="num">${totalEligible}</div><div class="lbl">Contest-ready questions</div></div>
+        <div class="stat-tile"><div class="num">${totalUsed}</div><div class="lbl">Already in a contest</div></div>
+        <div class="stat-tile"><div class="num">${totalLeft}</div><div class="lbl">Not used yet</div></div>
+      </div>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Category</th><th>Contest-ready</th><th>Used</th><th>Left</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr>
+            <td class="mono">${escapeHtml(r.level)}</td>
+            <td class="mono">${r.total}</td>
+            <td class="mono">${r.used}</td>
+            <td class="mono" style="${r.left>0?"color:var(--gold); font-weight:700;":""}">${r.left}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+      `;
+    })()}
     ${contestSessions.length>0 ? `
     <div class="section-label" style="margin-top:0;">Sessions</div>
     <div class="table-wrap"><table class="data">
