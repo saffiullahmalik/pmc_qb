@@ -1279,8 +1279,32 @@ function startDataSubscriptions(){
   subscribeTeachers();
 }
 
+// Real bug fixed Oct 2026: the only thing that ever kept a one-tab role
+// (uploader, a dedicated student_reviewer) confined to their one allowed
+// tab was that every OTHER nav button is `hidden` -- switchTab()/renderTab()
+// themselves never checked the role at all, so anything that sets
+// `currentTab` to something else (a stale pre-role-change session that
+// never refreshed, any future code path that calls switchTab() directly
+// instead of via a nav-button click) would render that tab's FULL
+// unrestricted content -- renderBank() in particular only ever checked
+// isExternalReviewerUser to hide "+ New Question", never isUploaderUser,
+// so an uploader who ended up on currentTab="bank" by any means got the
+// real, unguarded question editor. This self-corrects `currentTab` back
+// to the one tab each restricted role is actually allowed, every single
+// render, regardless of how it drifted -- the nav-button hiding is still
+// there for the normal case, this is the defense-in-depth backstop for
+// every other case. (The actual Firestore WRITE was never at risk here --
+// isContentTeacher() in firestore.rules already excludes "uploader" --
+// but reaching the editor UI at all, then hitting a permission error on
+// save, is exactly the confusing path a real report came in about.)
+function enforceTabForRole(){
+  if(isUploaderUser && currentTab!=="quilgo") currentTab = "quilgo";
+  else if(isStudentReviewerOnlyUser && currentTab!=="reviewstudents") currentTab = "reviewstudents";
+  else if(isExternalReviewerUser && currentTab!=="bank") currentTab = "bank";
+}
 function renderTab(){
   if(!isTeacherApproved) return;
+  enforceTabForRole();
   document.getElementById("main").dataset.section = currentTab;
   if(currentTab==="bank") renderBank();
   else if(currentTab==="activity") renderActivityFeed();
@@ -1542,7 +1566,7 @@ function renderBank(){
   const searchSelStart = wasSearchFocused ? document.activeElement.selectionStart : null;
   const searchSelEnd = wasSearchFocused ? document.activeElement.selectionEnd : null;
   main.innerHTML = `
-    <div class="pagehead"><h1>Question Bank</h1>${isExternalReviewerUser ? "" : `<button class="btn primary" id="new-q">+ New Question</button>`}</div>
+    <div class="pagehead"><h1>Question Bank</h1>${isExternalReviewerUser || isUploaderUser ? "" : `<button class="btn primary" id="new-q">+ New Question</button>`}</div>
     <p class="desc">${isExternalReviewerUser
       ? `Browse and filter every question — draft, in review, locked, or uploaded — exactly as a student would see it, then comment with feedback. You can open and comment on any question, including locked ones, but can't create, edit, or change status.`
       : `Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.`}</p>
