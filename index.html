@@ -5428,6 +5428,26 @@ function openAssignmentForm(existing){
 }
 
 /* ================= QUILGO TAB ================= */
+// Oct 2026, real request: a progress dashboard above the category/day/
+// slot picker on the Upload tab -- total uploaded vs. left, overall and
+// per PMC category, so anyone opening Upload sees where the round
+// actually stands before drilling into one paper. Reuses
+// contestPendingCount()'s own question-resolution logic (skips any
+// questionId that no longer resolves to a real question, same as the
+// paper-level "Pending upload (N)" count already does) so this never
+// over/under-counts relative to what a single paper's own screen shows.
+function uploadProgressStats(){
+  const byLevel = {};
+  LEVELS.forEach(l=>{ byLevel[l] = {total:0, uploaded:0}; });
+  let totalAll=0, uploadedAll=0;
+  contests.forEach(c=>{
+    const total = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean).length;
+    const uploaded = total - contestPendingCount(c);
+    totalAll += total; uploadedAll += uploaded;
+    if(byLevel[c.contestLevel]){ byLevel[c.contestLevel].total += total; byLevel[c.contestLevel].uploaded += uploaded; }
+  });
+  return { totalAll, uploadedAll, leftAll: totalAll-uploadedAll, byLevel };
+}
 function renderQuilgo(){
   const main = document.getElementById("main");
   // Contests need contestLevel/day/slot (added when this cascading picker
@@ -5442,9 +5462,35 @@ function renderQuilgo(){
   if(matches.length===1) quilgoContestId = matches[0].id;
   else if(matches.length!==1 && quilgoLevel!=="__unspecified__" && !matches.some(c=>c.id===quilgoContestId)) quilgoContestId = "";
 
+  const prog = uploadProgressStats();
   main.innerHTML = `
     <div class="pagehead"><h1>Upload</h1></div>
     <p class="desc">Pick the category, day, and slot to land on one paper, download each question, and mark it uploaded once it's live.</p>
+    ${!dataReady.contests ? loadingState("Loading upload progress…") : `
+    <div class="section-label" style="margin-top:0;">Upload progress</div>
+    <div class="admin-grid">
+      <div class="stat-tile"><div class="num">${prog.totalAll}</div><div class="lbl">Total questions</div></div>
+      <div class="stat-tile"><div class="num">${prog.uploadedAll}</div><div class="lbl">Uploaded</div></div>
+      <div class="stat-tile"><div class="num">${prog.leftAll}</div><div class="lbl">Left to upload</div></div>
+    </div>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Category</th><th>Uploaded</th><th>Left</th><th>Total</th><th>Progress</th></tr></thead>
+      <tbody>
+        ${LEVELS.map(l=>{
+          const s = prog.byLevel[l];
+          const left = s.total-s.uploaded;
+          const pct = s.total>0 ? Math.round(s.uploaded/s.total*100) : 0;
+          return `<tr>
+            <td class="mono">${escapeHtml(l)}</td>
+            <td class="mono">${s.uploaded}</td>
+            <td class="mono" style="${left>0?"color:var(--gold); font-weight:700;":""}">${left}</td>
+            <td class="mono">${s.total}</td>
+            <td style="min-width:140px;"><div class="progress-bar" style="margin:0;"><div class="progress-bar-fill" data-target="${pct}" style="width:0%;"></div></div><span class="hint mono">${pct}%</span></td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>
+    `}
     <div class="filters">
       <select id="quilgo-level">
         <option value="">Category…</option>
@@ -5464,6 +5510,7 @@ function renderQuilgo(){
   document.getElementById("quilgo-contest-unspecified")?.addEventListener("change", e=>{ quilgoContestId = e.target.value; renderQuilgoBody(); });
   document.querySelectorAll("[data-pick-match]").forEach(b=>b.addEventListener("click", ()=>{ quilgoContestId = b.dataset.pickMatch; renderQuilgoBody(); }));
   renderQuilgoBody();
+  animateProgressBars();
 }
 
 // Builds a safe, human filename for a downloaded question image --
