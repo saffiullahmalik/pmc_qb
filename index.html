@@ -1137,27 +1137,53 @@ async function checkTeacherStatus(){
       document.querySelectorAll('[data-tab="admin"]').forEach(b=>b.hidden = !isAdminUser);
       document.querySelectorAll('[data-tab="postproc"]').forEach(b=>b.hidden = !isAdminUser);
       document.querySelectorAll('[data-tab="reviewstudents"]').forEach(b=>b.hidden = !isStudentReviewerUser);
-      // An external reviewer gets the normal Bank tab (full filters/search,
-      // every question regardless of status) -- just not create/edit/
-      // status controls -- so the rest of the app is hidden for them.
-      ["activity","contests","quilgo","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
-        document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isExternalReviewerUser);
-      });
-      // An uploader can only ever see the Upload tab -- everything else,
-      // including Bank, is hidden; they land there directly since Bank
-      // (the app's normal default tab) isn't available to them at all.
-      ["bank","activity","contests","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
-        document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isUploaderUser);
-      });
-      // A dedicated student_reviewer (not also a teacher) only ever sees
-      // Review Students -- same "one tab, no exceptions" treatment as
-      // uploader above, just with "reviewstudents" kept visible instead
-      // of "quilgo". A teacher who separately ticked the isStudentReviewer
-      // checkbox is NOT affected by this block -- they keep every tab
-      // their actual role already gave them, plus this one.
-      ["bank","activity","contests","quilgo","workload","curriculum","sop","postproc"].forEach(t=>{
-        document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = isStudentReviewerOnlyUser);
-      });
+      // Real bug fixed Oct 2026: these three "restrict to exactly one tab"
+      // blocks used to run unconditionally, one after another, each doing
+      // `tab.hidden = isThisRole` for ITS OWN list of tabs -- including
+      // when isThisRole was false. Since "postproc"/"reviewstudents" (etc.)
+      // appear in more than one of these lists, whichever block ran LAST
+      // would set hidden=false for every tab in its own list whenever the
+      // CURRENT user didn't actually hold that role -- silently undoing an
+      // EARLIER block's correct hiding for an uploader or external
+      // reviewer. Confirmed by a real report: an uploader saw every tab
+      // except Admin and Review Students, because the student-reviewer-
+      // only block (which runs last, and whose own tab list doesn't
+      // include "reviewstudents") unhid everything else right after the
+      // uploader block had correctly hidden it. Gating each block behind
+      // its own `if` fixes this -- these three roles are mutually
+      // exclusive (one `role` value per teacher doc), so at most one of
+      // these blocks ever runs for a given sign-in, and it can never be
+      // undone by either of the other two.
+      if(isExternalReviewerUser){
+        // An external reviewer gets the normal Bank tab (full filters/
+        // search, every question regardless of status) -- just not
+        // create/edit/status controls -- so the rest of the app is
+        // hidden for them.
+        ["activity","contests","quilgo","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
+          document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = true);
+        });
+      }
+      if(isUploaderUser){
+        // An uploader can only ever see the Upload tab -- everything
+        // else, including Bank, is hidden; they land there directly
+        // since Bank (the app's normal default tab) isn't available to
+        // them at all.
+        ["bank","activity","contests","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
+          document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = true);
+        });
+      }
+      if(isStudentReviewerOnlyUser){
+        // A dedicated student_reviewer (not also a teacher) only ever
+        // sees Review Students -- same "one tab, no exceptions"
+        // treatment as uploader above, just with "reviewstudents" kept
+        // visible instead of "quilgo". A teacher who separately ticked
+        // the isStudentReviewer checkbox is NOT affected by this block
+        // (isStudentReviewerOnlyUser stays false for them) -- they keep
+        // every tab their actual role already gave them, plus this one.
+        ["bank","activity","contests","quilgo","workload","curriculum","sop","postproc"].forEach(t=>{
+          document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = true);
+        });
+      }
       if(isUploaderUser) currentTab = "quilgo";
       if(isStudentReviewerOnlyUser) currentTab = "reviewstudents";
       document.getElementById("modal-root").innerHTML = "";
