@@ -1158,6 +1158,47 @@ reviewAssignments/{assignmentId}   -- admin-created batches assigning
   "flagged", Clear sets it to "cleared", matching firestore.rules'
   isStudentReviewer() field allowlist exactly.
 
+Student integrity review upgrades (Nov 2026, ALL additive -- no field
+  renamed or removed, and NO firestore.rules change; every new write fits
+  the existing rules exactly):
+  - reviewAssignments gains `dueDate` (YYYY-MM-DD or null, set from
+    Student Performance's assign form or the Reviewer workload card) and,
+    on docs created by a move, `mode:"reassign"` + `reassignedFrom`.
+    Reassign/take back/shift = arrayRemove the id from every doc holding
+    it, then (for a move) one NEW doc per target reviewer. Emptied docs are
+    left in place (harmless, submissionIds:[]).
+  - examSubmissions.integrityFlags gains `reviewOutcome` {outcome, note,
+    by, byName, at} and `outcomeHistory` (arrayUnion of the same) --
+    nested under integrityFlags precisely so isStudentReviewer()'s
+    integrityFlags/meritStatus/reviewStatus allowlist already covers it.
+    STUDENT_REVIEW_OUTCOMES maps outcome -> existing values: cleared ->
+    reviewStatus "cleared"/meritStatus "eligible"; minor -> "flagged"/
+    "eligible"; cheating_confirmed -> "flagged"/"excluded". Non-cleared
+    outcomes are ALSO arrayUnion'd onto integrityFlags.manual so the
+    admin's Student Performance table shows them with no change there.
+    Note is required (promptOutcomeDialog()). submissionReviewed() treats
+    reviewOutcome OR legacy reviewStatus cleared/flagged as "reviewed".
+  - teachers/{email} gains `coiSchools[]`/`coiDistricts[]` (admin-only
+    writes, existing teachers rule). reviewerHasConflict() is a case/space-
+    insensitive exact match against the student's roster school/district;
+    assignSubmissionsToReviewers() never picks a conflicting reviewer
+    (group modes fall back to one-by-one if no one is clear for the whole
+    group; a student with NO clear reviewer is skipped and reported, never
+    forced). Its return value changed from a number to {assignedCount,
+    skipped} (one caller). It now also uses studentReviewerAccounts()
+    (BOTH on-ramps) -- previously it only picked isStudentReviewer===true,
+    so a dedicated role:"student_reviewer" account was never assigned.
+  - submissionRisk(sub, th) is a live 0-100 score (never stored) with a
+    per-signal cap and a `parts` breakdown shown as the pill's tooltip.
+    "Copy/leave/return" = questions whose Quilgo "Suspicious patterns"
+    cell is non-empty (submissionSignals()) -- verify against a real
+    export what text Quilgo actually writes there.
+  - renderReviewStudents()/renderReviewStudentsBody() rewritten: risk-
+    ranked "To review" queue + collapsed "Reviewed" list, "N of M
+    reviewed" + due-date header. Post Processing gains a 5th sub-tab,
+    "Reviewer workload" (renderStudentReviewWorkload()), modelled on the
+    Admin peer-review "Review workload" panel.
+
 questions/{id}/stats/post_test (existing collection, see above) -- the
   Import results screen's "Run post-processing" button now populates this
   AUTOMATICALLY from real examSubmissions data (classic top/bottom ~27%
