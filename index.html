@@ -5732,7 +5732,7 @@ function findColIndex(header, candidates){
 }
 function sittingKey(pmcType, day, slot){ return `${pmcType}_D${day}_S${slot}`; }
 
-let postProcTab = "roster"; // roster | results | item | student
+let postProcTab = "roster"; // roster | results | item | student | reviewers
 let integrityThresholds = { maxTabSwitches:10, minFaceMatchPct:50, minFacePresencePct:50, maxSuspiciousPhotos:3, flagOnTrustScoreLow:true, flagOnBlankShots:true, flagOnMultipleScreens:true };
 let integrityThresholdsLoaded = false;
 async function loadIntegrityThresholds(){
@@ -5786,6 +5786,7 @@ function renderPostProcessing(){
       <button type="button" data-pptab="results" class="${postProcTab==="results"?"active":""}">Import results</button>
       <button type="button" data-pptab="item" class="${postProcTab==="item"?"active":""}">Item Analysis</button>
       <button type="button" data-pptab="student" class="${postProcTab==="student"?"active":""}">Student Performance</button>
+      <button type="button" data-pptab="reviewers" class="${postProcTab==="reviewers"?"active":""}">Reviewer workload</button>
     </div>
     <div id="pp-body" style="margin-top:14px;"></div>
   `;
@@ -5798,6 +5799,7 @@ function renderPostProcessing(){
   else if(postProcTab==="results") renderResultsImport(body);
   else if(postProcTab==="item") renderItemAnalysis(body);
   else if(postProcTab==="student") renderStudentPerformance(body);
+  else if(postProcTab==="reviewers") renderStudentReviewWorkload(body);
 }
 
 // ---------------- 1. Roster import ----------------
@@ -6515,13 +6517,14 @@ function renderStudentPerformanceBody(box){
     </table>
     <div class="level-block" style="margin-top:10px;">
       <b style="font-size:12px;">Assign checked students to student reviewers</b>
-      <p class="hint" style="margin:4px 0 8px;">Splits the checked rows across everyone marked as a student reviewer in Manage teachers, balanced by how much each already has assigned. "Randomly" spreads students one at a time; "By district"/"By school" keeps each group together with one reviewer.</p>
+      <p class="hint" style="margin:4px 0 8px;">Splits the checked rows across everyone marked as a student reviewer in Manage teachers, balanced by how much each already has assigned. "Randomly" spreads students one at a time; "By district"/"By school" keeps each group together with one reviewer. A reviewer is never given a student from their own school or district (set on their card in Reviewer workload). The due date is optional.</p>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <select id="assign-mode">
           <option value="random">Randomly (balanced load)</option>
           <option value="district">Group by district</option>
           <option value="school">Group by school</option>
         </select>
+        <label style="font-size:12.5px; display:flex; gap:6px; align-items:center;">Due <input type="date" id="assign-due" style="padding:4px 6px; font-size:12px;" /></label>
         <button class="btn small primary" id="pp-stud-assign">Assign checked to reviewers</button>
       </div>
     </div>`}
@@ -6631,7 +6634,8 @@ function renderStudentPerformanceBody(box){
     const checked = Array.from(box.querySelectorAll("[data-assign-check]:checked")).map(cb=>cb.dataset.subId);
     if(checked.length===0){ toast("No students checked"); return; }
     const mode = document.getElementById("assign-mode").value;
-    const reviewers = allTeachers.filter(t=>t.isStudentReviewer===true);
+    const reviewers = studentReviewerAccounts();
+    const dueDate = document.getElementById("assign-due").value || null;
     if(reviewers.length===0){ toast("No student reviewers set up yet — add one from Manage teachers"); return; }
     const selectedSubs = checked.map(id=>ppStudSubs.find(x=>x.id===id)).filter(Boolean);
     const modeLabel = mode==="random" ? "randomly, balanced by load" : mode==="district" ? "grouped by district" : "grouped by school";
@@ -6639,8 +6643,8 @@ function renderStudentPerformanceBody(box){
     const btn = document.getElementById("pp-stud-assign");
     btn.disabled = true; btn.textContent = "Assigning…";
     try{
-      const assignedCount = await assignSubmissionsToReviewers(selectedSubs, reviewers, mode);
-      toast(`Assigned ${assignedCount} student(s) for review`);
+      const {assignedCount, skipped} = await assignSubmissionsToReviewers(selectedSubs, reviewers, mode, dueDate);
+      toast(`Assigned ${assignedCount} student(s) for review${skipped.length?` — ${skipped.length} skipped: every reviewer has a school/district conflict with them`:""}`);
       renderStudentPerformanceBody(box);
     }catch(err){ console.error(err); toast("Couldn't assign ("+err.code+")"); btn.disabled=false; btn.textContent="Assign checked to reviewers"; }
   });
@@ -6658,19 +6662,33 @@ function renderStudentPerformanceBody(box){
 // already contestId+formB-scoped) rather than a single contestId +
 // formBs list, since Student Performance can combine several sittings
 // at once and a batch may span more than one contest.
-async function assignSubmissionsToReviewers(selectedSubs, reviewers, mode){
+async function assignSubmissionsToReviewers(selectedSubs, reviewers, mode, dueDate=null){
   const existingSnap = await getDocs(collection(db,"reviewAssignments"));
   const load = {}; reviewers.forEach(r=>load[r.email]=0);
   existingSnap.forEach(d=>{
     const data = d.data();
     if(load[data.reviewerEmail]!=null) load[data.reviewerEmail] += (data.submissionIds||[]).length;
   });
-  const pickLeastLoaded = ()=>{
-    const minLoad = Math.min(...reviewers.map(r=>load[r.email]));
-    const least = reviewers.filter(r=>load[r.email]===minLoad);
+  // Conflict of interest (Nov 2026): a reviewer whose coiSchools/
+  // coiDistricts match the student's school/district is never a candidate
+  // for that student. A student with no conflict-free reviewer is skipped
+  // (left unassigned) and reported back, never forced onto someone.
+  const pickLeastLoaded = (pool=reviewers)=>{
+    if(!pool.length) return null;
+    const minLoad = Math.min(...pool.map(r=>load[r.email]));
+    const least = pool.filter(r=>load[r.email]===minLoad);
     return least[Math.floor(Math.random()*least.length)];
   };
+  const eligibleFor = sub=>reviewers.filter(r=>!reviewerHasConflict(r, sub));
   const buckets = {};
+  const skipped = [];
+  const placeOne = sub=>{
+    const r = pickLeastLoaded(eligibleFor(sub));
+    if(!r){ skipped.push(sub); return; }
+    if(!buckets[r.email]) buckets[r.email] = {reviewer:r, subs:[]};
+    buckets[r.email].subs.push(sub);
+    load[r.email] += 1;
+  };
   if(mode==="district" || mode==="school"){
     const groups = {};
     selectedSubs.forEach(sub=>{
@@ -6678,18 +6696,15 @@ async function assignSubmissionsToReviewers(selectedSubs, reviewers, mode){
       (groups[key]=groups[key]||[]).push(sub);
     });
     Object.values(groups).forEach(group=>{
-      const r = pickLeastLoaded();
+      const pool = reviewers.filter(r=>group.every(sub=>!reviewerHasConflict(r, sub)));
+      const r = pickLeastLoaded(pool);
+      if(!r){ group.forEach(placeOne); return; } // no one clear for the whole group: place one by one
       if(!buckets[r.email]) buckets[r.email] = {reviewer:r, subs:[]};
       buckets[r.email].subs.push(...group);
       load[r.email] += group.length;
     });
   } else {
-    selectedSubs.forEach(sub=>{
-      const r = pickLeastLoaded();
-      if(!buckets[r.email]) buckets[r.email] = {reviewer:r, subs:[]};
-      buckets[r.email].subs.push(sub);
-      load[r.email] += 1;
-    });
+    selectedSubs.forEach(placeOne);
   }
   const batch = writeBatch(db);
   let assignedCount = 0;
@@ -6698,7 +6713,7 @@ async function assignSubmissionsToReviewers(selectedSubs, reviewers, mode){
     const ref = doc(collection(db,"reviewAssignments"));
     batch.set(ref, {
       reviewerEmail: reviewer.email, reviewerName: reviewer.name||reviewer.email,
-      submissionIds: subs.map(s=>s.id), mode, createdAt: new Date().toISOString(), createdBy: currentUser.email,
+      submissionIds: subs.map(s=>s.id), mode, dueDate: dueDate||null, createdAt: new Date().toISOString(), createdBy: currentUser.email,
     });
     subs.forEach(s=>{
       batch.update(doc(db,"examSubmissions",s.id), {reviewStatus:"assigned"});
@@ -6706,94 +6721,529 @@ async function assignSubmissionsToReviewers(selectedSubs, reviewers, mode){
       assignedCount++;
     });
   }
-  await batch.commit();
-  logActivity("review_assigned", `Assigned ${assignedCount} student(s) for integrity review across ${Object.keys(buckets).length} reviewer(s)`, null);
-  return assignedCount;
+  if(assignedCount>0) await batch.commit();
+  logActivity("review_assigned", `Assigned ${assignedCount} student(s) for integrity review across ${Object.keys(buckets).length} reviewer(s)${skipped.length?`, ${skipped.length} skipped (conflict of interest)`:""}`, null);
+  return {assignedCount, skipped};
+}
+
+// ---- Student integrity review: shared helpers (Nov 2026) ----
+// Everyone who can hold a Review Students queue -- BOTH on-ramps (the
+// isStudentReviewer boolean and the dedicated role), same as
+// isStudentReviewerUser / isStudentReviewer() in firestore.rules.
+function studentReviewerAccounts(){
+  return allTeachers.filter(t=>t.isStudentReviewer===true || t.role==="student_reviewer");
+}
+// Structured review outcomes. Stored ADDITIVELY inside integrityFlags
+// (integrityFlags.reviewOutcome + integrityFlags.outcomeHistory) -- a
+// nested key under integrityFlags, so the existing isStudentReviewer()
+// rule (integrityFlags/meritStatus/reviewStatus only) already allows it.
+// reviewStatus/meritStatus keep their existing value sets.
+const STUDENT_REVIEW_OUTCOMES = [
+  {v:"cleared", label:"Cleared — no integrity issue", short:"Cleared", reviewStatus:"cleared", meritStatus:"eligible", color:"var(--accent)", soft:"var(--accent-soft)"},
+  {v:"minor", label:"Minor issue — noted, stays on the merit list", short:"Minor issue", reviewStatus:"flagged", meritStatus:"eligible", color:"var(--gold)", soft:"var(--gold-soft)"},
+  {v:"cheating_confirmed", label:"Cheating confirmed — exclude from the merit list", short:"Cheating confirmed", reviewStatus:"flagged", meritStatus:"excluded", color:"var(--red)", soft:"var(--red-soft)"},
+];
+function studentOutcomePill(sub){
+  const ro = sub.integrityFlags?.reviewOutcome;
+  if(ro){
+    const o = STUDENT_REVIEW_OUTCOMES.find(x=>x.v===ro.outcome);
+    if(o) return `<span class="pill" style="background:${o.soft}; color:${o.color};">${o.short}</span>`;
+  }
+  if(sub.reviewStatus==="cleared") return `<span class="pill">Cleared</span>`;
+  if(sub.reviewStatus==="flagged") return `<span class="pill" style="background:var(--red-soft); color:var(--red);">Flagged</span>`;
+  return `<span class="pill">Not reviewed</span>`;
+}
+// "Reviewed" = has a structured outcome, OR was finished with the older
+// Flag/Clear buttons (reviewStatus cleared/flagged) before outcomes existed.
+function submissionReviewed(sub){
+  return !!sub.integrityFlags?.reviewOutcome || sub.reviewStatus==="cleared" || sub.reviewStatus==="flagged";
+}
+// Raw signals pulled from what the Quilgo import already stores -- no new
+// import fields. "Copy/leave/return" counts questions where Quilgo wrote
+// anything in its per-question "Suspicious patterns" column (that column
+// is where Quilgo reports copy/paste and leave-then-return behaviour);
+// the distinct texts are kept so the row can show exactly what it said.
+function submissionSignals(sub){
+  const answers = sub.answers||[];
+  const patternAnswers = answers.filter(a=>String(a.suspiciousPatterns||"").trim()!=="");
+  return {
+    tabSwitches: sub.switchedTabsTotal ?? null,
+    tabSwitchQuestions: answers.filter(a=>a.switchedTabs===true).length,
+    faceMatch: sub.faceMatchPct ?? null,
+    facePresence: sub.facePresencePct ?? null,
+    copyLeaveReturn: patternAnswers.length,
+    patternTexts: [...new Set(patternAnswers.map(a=>String(a.suspiciousPatterns).trim()))],
+    screenshots: answers.reduce((s,a)=>s+(a.suspiciousScreenshots||0),0),
+    photos: answers.reduce((s,a)=>s+(a.suspiciousPhotos||0),0),
+    trustLow: sub.trustScore==="Low",
+    blankShots: !!sub.blankShots,
+    multipleScreens: !!sub.multipleScreens,
+  };
+}
+// 0-100 risk score, computed live (never stored) so a threshold change
+// re-ranks everything immediately. Each signal has a cap so no single
+// one dominates; `parts` is shown as the score's hover breakdown.
+function submissionRisk(sub, th){
+  const s = submissionSignals(sub);
+  const parts = [];
+  const add = (pts,label)=>{ pts = Math.round(pts); if(pts>0) parts.push({pts,label}); };
+  if(s.tabSwitches!=null) add(Math.min(25, 25*s.tabSwitches/(2*Math.max(1,th.maxTabSwitches))), `${s.tabSwitches} tab switch(es)`);
+  if(s.faceMatch!=null) add(Math.min(25, (100-s.faceMatch)/4 + (s.faceMatch<th.minFaceMatchPct?5:0)), `face match ${s.faceMatch}%`);
+  if(s.facePresence!=null && s.facePresence<th.minFacePresencePct) add(5, `face presence ${s.facePresence}%`);
+  add(Math.min(20, 5*s.copyLeaveReturn), `${s.copyLeaveReturn} copy/leave/return`);
+  add(Math.min(15, 5*s.screenshots), `${s.screenshots} suspicious screenshot(s)`);
+  add(Math.min(5, s.photos), `${s.photos} suspicious photo(s)`);
+  if(s.trustLow) add(5, "low trust score");
+  if(s.multipleScreens) add(5, "multiple screens");
+  if(s.blankShots) add(3, "blank shots");
+  const manual = (sub.integrityFlags?.manual||[]).length;
+  add(Math.min(20, 10*manual), `${manual} manual flag(s)`);
+  const score = Math.min(100, parts.reduce((t,p)=>t+p.pts,0));
+  const band = score>=50 ? "high" : score>=20 ? "medium" : "low";
+  return {score, band, parts, signals:s};
+}
+function riskPill(risk){
+  const st = risk.band==="high" ? "background:var(--red-soft); color:var(--red);" : risk.band==="medium" ? "background:var(--gold-soft); color:var(--gold);" : "";
+  const title = risk.parts.length ? risk.parts.map(p=>`+${p.pts} ${p.label}`).join("\n") : "No risk signals";
+  return `<span class="pill mono" style="${st}" title="${escapeHtml(title)}">${risk.score} · ${risk.band==="high"?"High":risk.band==="medium"?"Medium":"Low"}</span>`;
+}
+function signalCellsHtml(s, th){
+  const red = "color:var(--red); font-weight:600;";
+  return `
+    <td class="mono" style="padding:6px; text-align:right; ${s.tabSwitches!=null && s.tabSwitches>th.maxTabSwitches?red:""}" title="Questions with a tab switch: ${s.tabSwitchQuestions}">${s.tabSwitches??"—"}</td>
+    <td class="mono" style="padding:6px; text-align:right; ${s.faceMatch!=null && s.faceMatch<th.minFaceMatchPct?red:""}">${s.faceMatch!=null?s.faceMatch+"%":"—"}</td>
+    <td class="mono" style="padding:6px; text-align:right; ${s.copyLeaveReturn>0?red:""}" title="${escapeHtml(s.patternTexts.join("\n")||"None reported")}">${s.copyLeaveReturn}</td>
+    <td class="mono" style="padding:6px; text-align:right; ${s.screenshots>0?red:""}">${s.screenshots}</td>`;
+}
+const SIGNAL_HEADERS = `
+  <th style="text-align:right; padding:6px;" title="Quilgo's total tab/window switches">Tab sw.</th>
+  <th style="text-align:right; padding:6px;">Face match</th>
+  <th style="text-align:right; padding:6px;" title="Questions where Quilgo reported a suspicious pattern (copy/paste, leave and return)">Copy/leave/return</th>
+  <th style="text-align:right; padding:6px;">Susp. screenshots</th>`;
+// Conflict of interest: a reviewer's own school(s)/district(s), stored
+// additively on teachers/{email} as coiSchools[]/coiDistricts[] (admin
+// sets them in Post Processing -> Reviewer workload). Matching is
+// case/space-insensitive exact match on the roster's school/district.
+function normCoi(v){ return String(v||"").trim().toLowerCase().replace(/\s+/g," "); }
+function reviewerHasConflict(reviewer, sub){
+  if(!reviewer || !sub) return false;
+  const sc = normCoi(sub.school), di = normCoi(sub.district);
+  const schools = (reviewer.coiSchools||[]).map(normCoi).filter(Boolean);
+  const districts = (reviewer.coiDistricts||[]).map(normCoi).filter(Boolean);
+  return (!!sc && schools.includes(sc)) || (!!di && districts.includes(di));
+}
+function parseCoiList(v){ return String(v||"").split(",").map(x=>x.trim()).filter(Boolean); }
+function localTodayKey(){ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function earliestDue(dates){ const v = dates.filter(Boolean).sort(); return v[0]||null; }
+// Loads every reviewAssignments doc (optionally only one reviewer's) and
+// every examSubmissions doc they reference. A submission can appear in
+// more than one doc (assigned twice); `entriesBySub` keeps all of them.
+async function loadStudentReviewData(reviewerEmail){
+  const snap = reviewerEmail
+    ? await getDocs(query(collection(db,"reviewAssignments"), where("reviewerEmail","==",reviewerEmail)))
+    : await getDocs(collection(db,"reviewAssignments"));
+  const assignDocs = [];
+  snap.forEach(d=>assignDocs.push({id:d.id, ...d.data()}));
+  const entriesBySub = {};
+  assignDocs.forEach(a=>(a.submissionIds||[]).forEach(sid=>{
+    (entriesBySub[sid]=entriesBySub[sid]||[]).push({docId:a.id, reviewerEmail:a.reviewerEmail, reviewerName:a.reviewerName, dueDate:a.dueDate||null, createdAt:a.createdAt||""});
+  }));
+  const ids = Object.keys(entriesBySub);
+  const docs = await Promise.all(ids.map(id=>getDoc(doc(db,"examSubmissions",id))));
+  const subsById = {};
+  docs.forEach(d=>{ if(d.exists()) subsById[d.id] = {id:d.id, ...d.data()}; });
+  return {assignDocs, entriesBySub, subsById};
+}
+
+// Same #confirm-root/.overlay/.gate-card pattern as promptFlagDialog(),
+// but a structured pick (three outcomes) plus a REQUIRED note.
+function promptOutcomeDialog(label, existing){
+  return new Promise(resolve=>{
+    const root = document.getElementById("confirm-root");
+    root.innerHTML = `
+      <div class="overlay" id="outcome-ov" style="z-index:210;">
+        <div class="gate-card" style="width:min(500px,92vw); text-align:left;">
+          <p style="margin:0 0 10px; font-size:14px;">Review outcome for <b>${escapeHtml(label)}</b></p>
+          ${STUDENT_REVIEW_OUTCOMES.map(o=>`
+            <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-bottom:6px; cursor:pointer;">
+              <input type="radio" name="sr-outcome" value="${o.v}" ${existing?.outcome===o.v?"checked":""} />
+              <span><b style="color:${o.color};">${o.short}</b> — ${escapeHtml(o.label.split(" — ")[1]||"")}</span>
+            </label>`).join("")}
+          <label style="font-size:12.5px; font-weight:600; display:block; margin-top:8px;">Note (required)</label>
+          <textarea id="outcome-note" rows="3" style="width:100%; margin:4px 0 6px; font-family:inherit;" placeholder="What did you check in Quilgo's proctoring report, and what did you see?">${escapeHtml(existing?.note||"")}</textarea>
+          <div class="hint" id="outcome-err" style="color:var(--red); min-height:16px;"></div>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button class="btn ghost" id="outcome-cancel" style="flex:1; justify-content:center;">Cancel</button>
+            <button class="btn primary" id="outcome-ok" style="flex:1; justify-content:center;">Save outcome</button>
+          </div>
+        </div>
+      </div>`;
+    const finish = r=>{ root.innerHTML = ""; resolve(r); };
+    document.getElementById("outcome-cancel").addEventListener("click", ()=>finish(null));
+    document.getElementById("outcome-ov").addEventListener("click", e=>{ if(e.target.id==="outcome-ov") finish(null); });
+    document.getElementById("outcome-ok").addEventListener("click", ()=>{
+      const picked = root.querySelector('input[name="sr-outcome"]:checked');
+      const note = document.getElementById("outcome-note").value.trim();
+      const err = document.getElementById("outcome-err");
+      if(!picked){ err.textContent = "Pick an outcome."; return; }
+      if(!note){ err.textContent = "A note is required for every outcome."; return; }
+      finish({outcome:picked.value, note});
+    });
+  });
+}
+async function saveStudentOutcome(sub, outcome, note){
+  const o = STUDENT_REVIEW_OUTCOMES.find(x=>x.v===outcome);
+  const at = new Date().toISOString();
+  const by = currentUser.email, byName = currentUser.displayName||currentUser.email;
+  const entry = {outcome, note, by, byName, at};
+  const update = {
+    "integrityFlags.reviewOutcome": entry,
+    "integrityFlags.outcomeHistory": arrayUnion(entry),
+    reviewStatus: o.reviewStatus,
+    meritStatus: o.meritStatus,
+  };
+  // Non-clear outcomes also land in the existing manual-flag history, so
+  // the admin's Student Performance integrity table shows them unchanged.
+  if(outcome!=="cleared") update["integrityFlags.manual"] = arrayUnion({reason:`${o.short}: ${note}`, by, byName, at});
+  await updateDoc(doc(db,"examSubmissions",sub.id), update);
+  logActivity("student_review_outcome", `Review outcome "${o.short}" for submission ${sub.id}: ${note}`, sub.id);
 }
 
 // Mirrors the External Reviewer UX already built for questions (read +
-// flag, not edit) but for exam submissions: a student reviewer sees only
-// what's in reviewAssignments docs addressed to them, with the same
-// integrity signals and the same Flag/Clear action the Student
-// Performance dashboard's admin view uses -- firestore.rules'
-// isStudentReviewer() already restricts them to exactly these fields
-// (integrityFlags/meritStatus/reviewStatus) on examSubmissions, so this
-// view can share promptFlagDialog()/computeAutoFlags() verbatim.
+// judge, not edit) but for exam submissions: a student reviewer sees only
+// what's in reviewAssignments docs addressed to them. Nov 2026: a
+// risk-ranked queue (highest first) with the four key signals as their
+// own columns, a due date + "N of M reviewed" progress header, and a
+// structured outcome (cleared / minor / cheating confirmed) with a
+// required note instead of the old free-form Flag/Clear.
 async function renderReviewStudents(){
   const main = document.getElementById("main");
   main.innerHTML = `
     <div class="pagehead"><h1>Review Students</h1></div>
-    <p class="desc">Students assigned to you for integrity review.</p>
-    <div id="review-students-body"><div class="hint">Loading your assignments…</div></div>
+    <p class="desc">Students assigned to you for integrity review, highest risk first. Open each student's Quilgo proctoring report, then record an outcome with a note.</p>
+    <div id="review-students-body">${loadingState("Loading your assignments…")}</div>
   `;
   const body = document.getElementById("review-students-body");
   try{
-    const snap = await getDocs(query(collection(db,"reviewAssignments"), where("reviewerEmail","==",currentUser.email)));
-    const submissionIds = new Set();
-    snap.forEach(d=>(d.data().submissionIds||[]).forEach(id=>submissionIds.add(id)));
-    if(submissionIds.size===0){ body.innerHTML = `<div class="empty">No review assignments yet.</div>`; return; }
-    const docs = await Promise.all(Array.from(submissionIds).map(id=>getDoc(doc(db,"examSubmissions",id))));
-    const subs = docs.filter(d=>d.exists()).map(d=>({id:d.id, ...d.data()}));
-    renderReviewStudentsBody(body, subs);
+    await loadIntegrityThresholds();
+    const data = await loadStudentReviewData(currentUser.email);
+    renderReviewStudentsBody(body, data);
   }catch(err){ console.error(err); body.innerHTML = `<div class="callout warn">Couldn't load your assignments.</div>`; }
 }
 
-function renderReviewStudentsBody(body, subs){
+function renderReviewStudentsBody(body, data){
   const th = integrityThresholds;
-  subs.sort((a,b)=>{
-    const aw = a.reviewStatus==="assigned" ? 0 : 1, bw = b.reviewStatus==="assigned" ? 0 : 1;
-    return aw-bw;
-  });
-  body.innerHTML = `
+  const subs = Object.values(data.subsById);
+  if(subs.length===0){ body.innerHTML = emptyState("No review assignments yet."); return; }
+  const rows = subs.map(sub=>{
+    const entries = data.entriesBySub[sub.id]||[];
+    return {sub, risk: submissionRisk(sub, th), due: earliestDue(entries.map(e=>e.dueDate)), reviewed: submissionReviewed(sub)};
+  }).sort((a,b)=> b.risk.score-a.risk.score || (a.due||"9999").localeCompare(b.due||"9999"));
+  const open = rows.filter(r=>!r.reviewed), done = rows.filter(r=>r.reviewed);
+  const total = rows.length, pct = Math.round(done.length/total*100);
+  const nextDue = earliestDue(open.map(r=>r.due));
+  const today = localTodayKey();
+  const overdueCount = open.filter(r=>r.due && r.due<today).length;
+  const rowHtml = ({sub, risk, due, reviewed})=>{
+    const ro = sub.integrityFlags?.reviewOutcome;
+    const reasons = [...computeAutoFlags(sub, th), ...(sub.integrityFlags?.manual||[]).map(m=>m.reason)];
+    return `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:6px;">${riskPill(risk)}</td>
+      <td style="padding:6px;">${escapeHtml(sub.name||"—")}<div class="hint mono">${escapeHtml(sub.formB||"")}</div></td>
+      <td style="padding:6px;">${escapeHtml(sub.district||"—")} / ${escapeHtml(sub.school||"—")}</td>
+      <td style="padding:6px; white-space:nowrap;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
+      ${signalCellsHtml(risk.signals, th)}
+      <td style="padding:6px; max-width:240px;">${reasons.map(r=>`<div class="hint">• ${escapeHtml(r)}</div>`).join("")||`<span class="hint">—</span>`}</td>
+      <td style="padding:6px; white-space:nowrap;">${due?dueDateLabel(due):`<span class="hint">—</span>`}</td>
+      <td style="padding:6px;">${studentOutcomePill(sub)}${ro?`<div class="hint" style="max-width:200px;">${escapeHtml(ro.note)}</div>`:""}</td>
+      <td style="padding:6px;"><button class="btn small ${reviewed?"":"primary"}" data-rs-outcome="${sub.id}">${reviewed?"Change":"Record outcome"}</button></td>
+    </tr>`;
+  };
+  const tableHtml = list=>`
+    <div style="overflow-x:auto;">
     <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
       <thead><tr>
-        <th style="text-align:left; padding:6px;">Student</th><th style="text-align:left; padding:6px;">Form B</th>
+        <th style="text-align:left; padding:6px;">Risk</th><th style="text-align:left; padding:6px;">Student</th>
         <th style="text-align:left; padding:6px;">District / School</th><th style="text-align:left; padding:6px;">Paper</th>
-        <th style="text-align:left; padding:6px;">Signals</th><th style="text-align:left; padding:6px;">Status</th><th style="padding:6px;"></th>
+        ${SIGNAL_HEADERS}
+        <th style="text-align:left; padding:6px;">Other signals</th><th style="text-align:left; padding:6px;">Due</th>
+        <th style="text-align:left; padding:6px;">Outcome</th><th style="padding:6px;"></th>
       </tr></thead>
-      <tbody>
-        ${subs.map(sub=>{
-          const autoFlags = computeAutoFlags(sub, th);
-          const manual = (sub.integrityFlags?.manual||[]).map(m=>m.reason);
-          const allReasons = [...autoFlags, ...manual];
-          const excluded = sub.meritStatus==="excluded";
-          return `<tr style="border-top:1px solid var(--border); ${excluded?"opacity:0.7;":""}">
-            <td style="padding:6px;">${escapeHtml(sub.name||"—")}</td>
-            <td class="mono" style="padding:6px;">${escapeHtml(sub.formB||"—")}</td>
-            <td style="padding:6px;">${escapeHtml(sub.district||"—")} / ${escapeHtml(sub.school||"—")}</td>
-            <td style="padding:6px;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
-            <td style="padding:6px; max-width:280px;">${allReasons.map(r=>`<div class="hint">• ${escapeHtml(r)}</div>`).join("")||"<span class=\"hint\">No automatic signals — check Quilgo's proctoring report directly</span>"}</td>
-            <td style="padding:6px;">${excluded?`<span class="pill" style="background:var(--red-soft); color:var(--red);">Excluded</span>`:`<span class="pill">Eligible</span>`}</td>
-            <td style="padding:6px;">${excluded
-              ? `<button class="btn small" data-rs-clear="${sub.id}">Clear</button>`
-              : `<button class="btn small" data-rs-flag="${sub.id}" data-label="${escapeHtml(sub.name||sub.formB||"this student")}">Flag &amp; exclude</button>`}
-            </td>
-          </tr>`;
-        }).join("")}
-      </tbody>
-    </table>
+      <tbody>${list.map(rowHtml).join("")}</tbody>
+    </table></div>`;
+  body.innerHTML = `
+    <div class="progress-card" style="margin-bottom:14px; ${overdueCount?"border-color:var(--red);":done.length===total?"border-color:var(--accent);":""}">
+      <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; align-items:baseline;">
+        <b class="mono" style="font-size:15px;">${done.length} of ${total} reviewed</b>
+        <span>${open.length===0 ? `<span class="pill" style="background:var(--accent-soft); color:var(--accent);">All done</span>` : nextDue ? dueDateLabel(nextDue) : `<span class="hint">No due date set</span>`}</span>
+      </div>
+      <div class="progress-bar" style="margin-top:8px;"><div class="progress-bar-fill" style="width:${pct}%;"></div></div>
+      ${overdueCount ? `<div class="hint" style="color:var(--red); margin-top:6px;">${overdueCount} student(s) past their due date.</div>` : ""}
+    </div>
+    <div class="section-label" style="margin-top:0;">To review (${open.length})</div>
+    ${open.length ? tableHtml(open) : emptyState("Nothing left to review — thank you.")}
+    ${done.length ? `
+    <details class="records-details" style="margin-top:18px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Reviewed (${done.length})</summary>
+      ${tableHtml(done)}
+    </details>` : ""}
+    <p class="hint" style="margin-top:12px;">Hover a risk score to see how it was worked out. Hover the copy/leave/return count to see exactly what Quilgo reported.</p>
   `;
-  body.querySelectorAll("[data-rs-flag]").forEach(b=>b.addEventListener("click", async ()=>{
-    const reason = await promptFlagDialog(b.dataset.label);
-    if(!reason) return;
+  body.querySelectorAll("[data-rs-outcome]").forEach(b=>b.addEventListener("click", async ()=>{
+    const sub = data.subsById[b.dataset.rsOutcome];
+    if(!sub) return;
+    const res = await promptOutcomeDialog(sub.name||sub.formB||"this student", sub.integrityFlags?.reviewOutcome);
+    if(!res) return;
     try{
-      await updateDoc(doc(db,"examSubmissions",b.dataset.rsFlag), {
-        "integrityFlags.manual": arrayUnion({reason, by:currentUser.email, byName:currentUser.displayName||currentUser.email, at:new Date().toISOString()}),
-        meritStatus: "excluded", reviewStatus: "flagged",
-      });
-      logActivity("student_flagged", `Flagged submission ${b.dataset.rsFlag} for integrity review: ${reason}`, b.dataset.rsFlag);
-      toast("Flagged and excluded from merit list");
+      await saveStudentOutcome(sub, res.outcome, res.note);
+      toast("Outcome saved");
       renderReviewStudents();
-    }catch(err){ console.error(err); toast("Couldn't flag ("+err.code+")"); }
+    }catch(err){ console.error(err); toast("Couldn't save outcome ("+err.code+")"); }
   }));
-  body.querySelectorAll("[data-rs-clear]").forEach(b=>b.addEventListener("click", async ()=>{
-    if(!(await confirmDialog("Clear this student's exclusion and return them to the merit list?"))) return;
+}
+
+// ---- Admin: student-review workload (Post Processing -> Reviewer workload) ----
+// Modelled on the Admin tab's peer-review "Review workload" panel: one
+// card per student reviewer (progress donut, due date, conflict-of-
+// interest schools/districts, "Shift to others"), a conflict callout
+// with a one-click fix, and a table of every open assignment with a
+// per-row reassign dropdown and "Take back".
+// Moves submissions between reviewers: removes each id from every
+// reviewAssignments doc it currently sits in, then adds one new doc per
+// target reviewer (mode "reassign"). `moves`: [{subId, to, dueDate}].
+async function moveStudentReviews(data, moves, fromEmailForLog){
+  if(moves.length===0) return 0;
+  const batch = writeBatch(db);
+  const byTarget = {};
+  moves.forEach(m=>{
+    (data.entriesBySub[m.subId]||[]).forEach(e=>batch.update(doc(db,"reviewAssignments",e.docId), {submissionIds: arrayRemove(m.subId)}));
+    const k = m.to.email;
+    if(!byTarget[k]) byTarget[k] = {reviewer:m.to, ids:[], dues:[]};
+    byTarget[k].ids.push(m.subId); byTarget[k].dues.push(m.dueDate||null);
+  });
+  Object.values(byTarget).forEach(({reviewer, ids, dues})=>{
+    batch.set(doc(collection(db,"reviewAssignments")), {
+      reviewerEmail: reviewer.email, reviewerName: reviewer.name||reviewer.email,
+      submissionIds: ids, mode: "reassign", dueDate: earliestDue(dues),
+      createdAt: new Date().toISOString(), createdBy: currentUser.email,
+      ...(fromEmailForLog ? {reassignedFrom: fromEmailForLog} : {}),
+    });
+  });
+  await batch.commit();
+  logActivity("student_review_reassigned", `Reassigned ${moves.length} student review(s)${fromEmailForLog?` from ${fromEmailForLog}`:""}`, null);
+  return moves.length;
+}
+// Picks a target for each sub among non-conflicting reviewers other than
+// its current one, least open load first (load updated as it goes).
+function planStudentReviewMoves(data, subIds, reviewers, openLoad){
+  const moves = [], skipped = [];
+  const load = {...openLoad};
+  subIds.forEach(sid=>{
+    const sub = data.subsById[sid];
+    const current = new Set((data.entriesBySub[sid]||[]).map(e=>e.reviewerEmail));
+    const pool = reviewers.filter(r=>!current.has(r.email) && !reviewerHasConflict(r, sub));
+    if(!pool.length){ skipped.push(sid); return; }
+    const min = Math.min(...pool.map(r=>load[r.email]||0));
+    const least = pool.filter(r=>(load[r.email]||0)===min);
+    const to = least[Math.floor(Math.random()*least.length)];
+    load[to.email] = (load[to.email]||0)+1;
+    moves.push({subId:sid, to, dueDate: earliestDue((data.entriesBySub[sid]||[]).map(e=>e.dueDate))});
+  });
+  return {moves, skipped};
+}
+
+async function renderStudentReviewWorkload(body){
+  body.innerHTML = loadingState("Loading review assignments…");
+  let data;
+  try{
+    await loadIntegrityThresholds();
+    data = await loadStudentReviewData(null);
+  }catch(err){ console.error(err); body.innerHTML = `<div class="callout warn">Couldn't load review assignments.</div>`; return; }
+  const th = integrityThresholds;
+  const today = localTodayKey();
+  const reviewers = studentReviewerAccounts();
+  const reviewerByEmail = {}; reviewers.forEach(r=>reviewerByEmail[r.email]=r);
+  // Per-reviewer buckets, including anyone who still holds assignments
+  // but is no longer a student reviewer (so their stuck work is visible).
+  const perReviewer = {};
+  reviewers.forEach(r=>perReviewer[r.email] = {email:r.email, name:r.name||r.email, account:r, open:[], done:[], dues:[]});
+  Object.entries(data.entriesBySub).forEach(([sid, entries])=>{
+    const sub = data.subsById[sid]; if(!sub) return;
+    const reviewed = submissionReviewed(sub);
+    entries.forEach(e=>{
+      if(!perReviewer[e.reviewerEmail]) perReviewer[e.reviewerEmail] = {email:e.reviewerEmail, name:e.reviewerName||e.reviewerEmail, account:null, open:[], done:[], dues:[]};
+      const p = perReviewer[e.reviewerEmail];
+      if(p.open.includes(sid) || p.done.includes(sid)) return;
+      (reviewed ? p.done : p.open).push(sid);
+      if(!reviewed && e.dueDate) p.dues.push(e.dueDate);
+    });
+  });
+  const openLoad = {}; Object.values(perReviewer).forEach(p=>openLoad[p.email]=p.open.length);
+  const cards = Object.values(perReviewer).sort((a,b)=>b.open.length-a.open.length || a.name.localeCompare(b.name));
+  const openRows = [];
+  Object.entries(data.entriesBySub).forEach(([sid, entries])=>{
+    const sub = data.subsById[sid]; if(!sub || submissionReviewed(sub)) return;
+    openRows.push({sub, entries, risk: submissionRisk(sub, th), due: earliestDue(entries.map(e=>e.dueDate))});
+  });
+  openRows.sort((a,b)=>b.risk.score-a.risk.score);
+  const conflicts = openRows.filter(r=>r.entries.some(e=>reviewerHasConflict(reviewerByEmail[e.reviewerEmail], r.sub)));
+  const ineligible = openRows.filter(r=>r.entries.some(e=>!reviewerByEmail[e.reviewerEmail]));
+  const noCoi = reviewers.filter(r=>!(r.coiSchools||[]).length && !(r.coiDistricts||[]).length);
+
+  body.innerHTML = `
+    <p class="desc" style="margin-top:0;">Every student reviewer's queue: how much is done, when it's due, and which schools/districts they must never review. Reassign or take back individual students in the table below.</p>
+    ${conflicts.length ? `
+    <div class="callout warn" style="margin-bottom:12px;">
+      <b>${conflicts.length} open review(s) are with a reviewer from the student's own school or district.</b>
+      <div class="hint" style="margin:4px 0 8px;">${conflicts.slice(0,8).map(r=>`${escapeHtml(r.sub.name||r.sub.formB)} (${escapeHtml(r.sub.school||"—")}, ${escapeHtml(r.sub.district||"—")}) — with ${escapeHtml(r.entries.map(e=>e.reviewerName||e.reviewerEmail).join(", "))}`).join("<br>")}${conflicts.length>8?"<br>…":""}</div>
+      <button class="btn small" id="srw-fix-conflicts">Fix now — move to reviewers with no conflict</button>
+    </div>` : ""}
+    ${ineligible.length ? `
+    <div class="callout warn" style="margin-bottom:12px;">
+      <b>${ineligible.length} open review(s) are with someone who is no longer a student reviewer.</b>
+      <div style="margin-top:8px;"><button class="btn small" id="srw-fix-ineligible">Fix now — move to current reviewers</button></div>
+    </div>` : ""}
+    ${noCoi.length ? `<div class="callout" style="margin-bottom:12px;">No school/district set yet for: ${noCoi.map(r=>escapeHtml(r.name||r.email)).join(", ")}. The conflict-of-interest check can only block a reviewer once their school/district is filled in on their card below.</div>` : ""}
+    ${cards.length===0 ? emptyState("No student reviewers yet — tick \"Student reviewer\" for someone in Admin → Manage teachers, or give them the Student Reviewer role.") : `
+    <div class="review-workload-grid">
+      ${cards.map(p=>{
+        const total = p.open.length+p.done.length;
+        const nextDue = earliestDue(p.dues);
+        const overdue = p.open.length>0 && nextDue && nextDue<today;
+        const e = escapeHtml(p.email);
+        return `
+        <div class="dash-chart-card" style="${overdue?"border-color:var(--red);":""}">
+          <b style="display:block; text-align:center;">${escapeHtml(p.name)}</b>
+          ${p.account ? "" : `<div class="hint" style="text-align:center; color:var(--red);">No longer a student reviewer</div>`}
+          <div style="width:110px; margin:6px auto 0; text-align:center;">
+            ${donutChartSvg([{value:p.done.length,cls:"bar-done"},{value:p.open.length,cls:"bar-inreview"}], total, "reviewed")}
+          </div>
+          <div class="mono" style="text-align:center; margin-top:4px;">${p.done.length} of ${total} reviewed</div>
+          <div style="text-align:center; margin-top:4px;">${p.open.length===0 ? `<span class="hint">Nothing open</span>` : nextDue ? dueDateLabel(nextDue) : `<span class="hint">No due date</span>`}</div>
+          ${p.open.length ? `
+          <div style="display:flex; gap:6px; align-items:center; margin-top:8px; justify-content:center; flex-wrap:wrap;">
+            <input type="date" data-srw-due="${e}" value="${escapeHtml(nextDue||"")}" style="padding:4px 6px; font-size:12px;" />
+            <button class="btn small" data-srw-due-btn="${e}">Set due date</button>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; margin-top:8px; justify-content:center; flex-wrap:wrap;">
+            <input type="number" min="1" max="${p.open.length}" value="1" data-srw-shift="${e}" style="width:55px; padding:4px 6px; font-size:12px;" />
+            <button class="btn small" data-srw-shift-btn="${e}">Shift to others</button>
+          </div>` : ""}
+          ${p.account ? `
+          <details style="margin-top:8px;">
+            <summary class="hint" style="cursor:pointer;">Conflict of interest${(p.account.coiSchools||[]).length||(p.account.coiDistricts||[]).length?"":" — not set"}</summary>
+            <div class="field" style="margin:6px 0 4px;"><label>Their school(s), comma-separated</label><input type="text" data-srw-coi-school="${e}" value="${escapeHtml((p.account.coiSchools||[]).join(", "))}" /></div>
+            <div class="field" style="margin:0 0 6px;"><label>Their district(s), comma-separated</label><input type="text" data-srw-coi-district="${e}" value="${escapeHtml((p.account.coiDistricts||[]).join(", "))}" /></div>
+            <button class="btn small" data-srw-coi-btn="${e}">Save</button>
+          </details>` : ""}
+        </div>`;
+      }).join("")}
+    </div>`}
+    <details class="records-details" open style="margin-top:18px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Open assignments (${openRows.length})</summary>
+      ${openRows.length===0 ? emptyState("No open student reviews.") : `
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+        <thead><tr>
+          <th style="text-align:left; padding:6px;">Risk</th><th style="text-align:left; padding:6px;">Student</th>
+          <th style="text-align:left; padding:6px;">District / School</th><th style="text-align:left; padding:6px;">Paper</th>
+          ${SIGNAL_HEADERS}
+          <th style="text-align:left; padding:6px;">Reviewer</th><th style="text-align:left; padding:6px;">Due</th>
+          <th style="text-align:left; padding:6px;">Reassign</th><th style="padding:6px;"></th>
+        </tr></thead>
+        <tbody>
+          ${openRows.map(({sub, entries, risk, due})=>{
+            const current = new Set(entries.map(x=>x.reviewerEmail));
+            const options = reviewers.filter(r=>!current.has(r.email) && !reviewerHasConflict(r, sub));
+            return `<tr style="border-top:1px solid var(--border);">
+              <td style="padding:6px;">${riskPill(risk)}</td>
+              <td style="padding:6px;">${escapeHtml(sub.name||"—")}<div class="hint mono">${escapeHtml(sub.formB||"")}</div></td>
+              <td style="padding:6px;">${escapeHtml(sub.district||"—")} / ${escapeHtml(sub.school||"—")}</td>
+              <td style="padding:6px; white-space:nowrap;">${escapeHtml(sub.contestLevel||"")} D${sub.day}S${sub.slot}</td>
+              ${signalCellsHtml(risk.signals, th)}
+              <td style="padding:6px;">${entries.map(x=>{
+                const conflict = reviewerHasConflict(reviewerByEmail[x.reviewerEmail], sub);
+                return `<div style="${conflict?"color:var(--red); font-weight:600;":""}">${escapeHtml(x.reviewerName||x.reviewerEmail)}${conflict?" ⚠ conflict":""}</div>`;
+              }).join("")}</td>
+              <td style="padding:6px; white-space:nowrap;">${due?dueDateLabel(due):`<span class="hint">—</span>`}</td>
+              <td style="padding:6px;">${options.length ? `<select data-srw-reassign="${sub.id}" style="font-size:12px;"><option value="">Move to…</option>${options.map(r=>`<option value="${escapeHtml(r.email)}">${escapeHtml(r.name||r.email)}</option>`).join("")}</select>` : `<span class="hint">No one else eligible</span>`}</td>
+              <td style="padding:6px;"><button class="btn small" data-srw-takeback="${sub.id}">Take back</button></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table></div>`}
+    </details>
+  `;
+  const rerender = ()=>renderStudentReviewWorkload(body);
+  const runMoves = async (subIds, fromEmail, label)=>{
+    const {moves, skipped} = planStudentReviewMoves(data, subIds, reviewers, openLoad);
+    if(moves.length===0){ toast(`Nothing moved — no other reviewer without a conflict${skipped.length?` for ${skipped.length} student(s)`:""}`); return; }
     try{
-      await updateDoc(doc(db,"examSubmissions",b.dataset.rsClear), { meritStatus: "eligible", reviewStatus: "cleared" });
-      logActivity("student_cleared", `Cleared integrity exclusion for submission ${b.dataset.rsClear}`, b.dataset.rsClear);
-      toast("Cleared");
-      renderReviewStudents();
-    }catch(err){ console.error(err); toast("Couldn't clear ("+err.code+")"); }
+      await moveStudentReviews(data, moves, fromEmail);
+      toast(`${label}: moved ${moves.length}${skipped.length?`, ${skipped.length} left in place (no reviewer without a conflict)`:""}`);
+      rerender();
+    }catch(err){ console.error(err); toast("Couldn't move reviews ("+err.code+")"); }
+  };
+  document.getElementById("srw-fix-conflicts")?.addEventListener("click", ()=>runMoves(conflicts.map(r=>r.sub.id), null, "Conflicts fixed"));
+  document.getElementById("srw-fix-ineligible")?.addEventListener("click", ()=>runMoves(ineligible.map(r=>r.sub.id), null, "Reassigned"));
+  body.querySelectorAll("[data-srw-shift-btn]").forEach(b=>b.addEventListener("click", async ()=>{
+    const email = b.dataset.srwShiftBtn;
+    const p = perReviewer[email];
+    const n = parseInt(body.querySelector(`[data-srw-shift="${CSS.escape(email)}"]`).value,10)||0;
+    if(n<1) return;
+    // Shift the LOWEST-risk open items, so a reviewer keeps their most
+    // serious cases (they may already be partway through them).
+    const ids = openRows.filter(r=>p.open.includes(r.sub.id)).map(r=>r.sub.id).reverse().slice(0,n);
+    if(!(await confirmDialog(`Shift ${ids.length} open review(s) from ${p.name} to other reviewers?`))) return;
+    runMoves(ids, email, "Shifted");
+  }));
+  body.querySelectorAll("[data-srw-reassign]").forEach(sel=>sel.addEventListener("change", async ()=>{
+    const to = reviewerByEmail[sel.value]; if(!to) return;
+    const sid = sel.dataset.srwReassign;
+    try{
+      await moveStudentReviews(data, [{subId:sid, to, dueDate: earliestDue((data.entriesBySub[sid]||[]).map(e=>e.dueDate))}], null);
+      toast(`Moved to ${to.name||to.email}`);
+      rerender();
+    }catch(err){ console.error(err); toast("Couldn't reassign ("+err.code+")"); }
+  }));
+  body.querySelectorAll("[data-srw-takeback]").forEach(b=>b.addEventListener("click", async ()=>{
+    const sid = b.dataset.srwTakeback;
+    if(!(await confirmDialog("Take this student back? They leave the reviewer's queue and go back to \"unreviewed\", ready to assign again from Student Performance."))) return;
+    try{
+      const batch = writeBatch(db);
+      (data.entriesBySub[sid]||[]).forEach(e=>batch.update(doc(db,"reviewAssignments",e.docId), {submissionIds: arrayRemove(sid)}));
+      batch.update(doc(db,"examSubmissions",sid), {reviewStatus:"unreviewed"});
+      await batch.commit();
+      logActivity("student_review_taken_back", `Took back student review ${sid}`, sid);
+      toast("Taken back");
+      rerender();
+    }catch(err){ console.error(err); toast("Couldn't take back ("+err.code+")"); }
+  }));
+  body.querySelectorAll("[data-srw-due-btn]").forEach(b=>b.addEventListener("click", async ()=>{
+    const email = b.dataset.srwDueBtn;
+    const v = body.querySelector(`[data-srw-due="${CSS.escape(email)}"]`).value || null;
+    const p = perReviewer[email];
+    const docIds = new Set();
+    p.open.forEach(sid=>(data.entriesBySub[sid]||[]).forEach(e=>{ if(e.reviewerEmail===email) docIds.add(e.docId); }));
+    try{
+      const batch = writeBatch(db);
+      docIds.forEach(id=>batch.update(doc(db,"reviewAssignments",id), {dueDate: v}));
+      await batch.commit();
+      toast(v ? `Due date set to ${fmtDateOnly(v)}` : "Due date cleared");
+      rerender();
+    }catch(err){ console.error(err); toast("Couldn't set due date ("+err.code+")"); }
+  }));
+  body.querySelectorAll("[data-srw-coi-btn]").forEach(b=>b.addEventListener("click", async ()=>{
+    const email = b.dataset.srwCoiBtn;
+    const coiSchools = parseCoiList(body.querySelector(`[data-srw-coi-school="${CSS.escape(email)}"]`).value);
+    const coiDistricts = parseCoiList(body.querySelector(`[data-srw-coi-district="${CSS.escape(email)}"]`).value);
+    try{
+      await updateDoc(doc(db,"teachers",email), {coiSchools, coiDistricts});
+      const t = allTeachers.find(x=>x.email===email);
+      if(t){ t.coiSchools = coiSchools; t.coiDistricts = coiDistricts; }
+      toast("Conflict-of-interest list saved");
+      rerender();
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
   }));
 }
 
