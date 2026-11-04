@@ -1711,13 +1711,21 @@ function myAssignedChapters(){
   assignments.forEach(a=>{
     const q = a.quotas?.[currentUser.email];
     if(!q) return;
-    Object.entries(q).forEach(([unit,target])=>mine.push({unit, target, contestLevel:a.contestLevel, assignmentName:a.name}));
+    Object.entries(q).forEach(([unit,target])=>mine.push({unit, target, contestLevel:a.contestLevel, assignmentName:a.name, assignment:a}));
   });
   return mine;
 }
 // SOP §2.4's ~33/33/33 medium/hard/very-hard split, applied to one
 // chapter's assigned target -- any remainder (target not divisible by 3)
 // goes to medium then hard first, so the three always sum back to target.
+// Oct 2026, real request: an admin can now override this even split with
+// EXACT counts per tier for one (teacher, chapter) quota entry -- see
+// assignmentQuotaSplit() below, which is what actually reads a custom
+// split back out of an assignment doc. This function stays the pure
+// "even split" FALLBACK calculator -- it never looks at a stored custom
+// split itself, so it's still safe to call directly anywhere a plain
+// even split is genuinely what's wanted (e.g. previewing what the
+// default WOULD be before an admin customizes it).
 function difficultyQuotas(target){
   const base = Math.floor(target/3);
   let rem = target - base*3;
@@ -1725,10 +1733,64 @@ function difficultyQuotas(target){
   ["medium","hard","very_hard"].forEach(d=>{ if(rem>0){ q[d]++; rem--; } });
   return q;
 }
+// A quota entry in assignments.quotas[email][unit] is either a bare
+// NUMBER (the original shape -- auto-split evenly via difficultyQuotas()
+// above, fully backward compatible) or, as of Oct 2026, an OBJECT
+// {target, medium, hard, very_hard} an admin set explicitly (e.g. 10/3/2
+// instead of a forced even ~5/5/5) via "Customize difficulty split" in
+// the per-teacher drill-down. This is the one place that resolves either
+// shape down to {target, quotas:{medium,hard,very_hard}} -- every other
+// caller that needs a chapter's target or its difficulty split goes
+// through this instead of reading assignments.quotas directly.
+function resolveQuotaEntry(raw){
+  if(raw && typeof raw==="object"){
+    const quotas = {medium:raw.medium||0, hard:raw.hard||0, very_hard:raw.very_hard||0};
+    return { target: raw.target ?? (quotas.medium+quotas.hard+quotas.very_hard), quotas, custom:true };
+  }
+  const target = raw||0;
+  return { target, quotas: difficultyQuotas(target), custom:false };
+}
 // `excludeId` lets an edit of an existing question check its own chapter's
-// balance without counting itself twice.
-function myDifficultyCountForChapter(email, level, unit, difficulty, excludeId){
-  return questions.filter(q=>q.id!==excludeId && q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit && q.difficulty===difficulty).length;
+// balance without counting itself twice. `assignment`, when passed, scopes
+// the count to that SPECIFIC assignment's own time window (see
+// assignmentWindowFor() below) instead of the teacher's whole lifetime
+// output for this chapter -- same Round-2 reasoning as countByStatus().
+function myDifficultyCountForChapter(email, level, unit, difficulty, excludeId, assignment){
+  let mine = questions.filter(q=>q.id!==excludeId && q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit && q.difficulty===difficulty);
+  if(assignment){
+    const {start, end} = assignmentWindowFor(email, level, unit, assignment);
+    mine = mine.filter(q=> (!start || (q.createdAt||"")>=start) && (!end || (q.createdAt||"")<end) );
+  }
+  return mine.length;
+}
+// Real bug fixed Oct 2026 ("assignment already done" on re-assigning the
+// same chapter for a new round): the same chapter can legitimately be
+// assigned to the same teacher more than once over time -- every PMC
+// round reuses the same curriculum, so "Round 2" naturally re-assigns
+// chapters already covered in Round 1. countByStatus()/
+// myDifficultyCountForChapter() used to count a teacher's ENTIRE lifetime
+// output for a (level, unit) pair, so a brand-new Round 2 assignment for
+// an already-completed chapter looked "already done" on the very first
+// render, before the teacher had made a single new question for it.
+// This derives, purely from existing `createdAt` timestamps on both
+// `assignments` and `questions` -- no new field, nothing retroactive --
+// which window of questions belongs to THIS specific assignment: from
+// its own createdAt up to (but not including) the createdAt of the NEXT
+// assignment that re-assigns this exact (teacher, level, chapter)
+// combination, if one exists yet; open-ended if this is the latest/only
+// round for that chapter so far. An older, already-completed
+// assignment's own window naturally stops the moment a newer round's
+// assignment doc is created, so its historical progress is never
+// affected by work made for the new round -- and a brand-new assignment
+// starts counting from zero, since nothing made before it existed falls
+// inside its window.
+function assignmentWindowFor(email, level, unit, assignment){
+  const chain = assignments
+    .filter(a=>a.contestLevel===level && a.quotas?.[email]?.[unit]!=null)
+    .sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
+  const idx = chain.findIndex(a=>a.id===assignment.id);
+  const next = idx>=0 ? chain[idx+1] : null;
+  return { start: assignment.createdAt||null, end: next ? (next.createdAt||null) : null };
 }
 // Same data as myAssignedChapters(), grouped and summed per contest level --
 // feeds the insights-rail's compact "Your assignments" widget (one thin bar
@@ -1738,7 +1800,7 @@ function myAssignedByLevel(){
   const byLevel = {};
   myAssignedChapters().forEach(m=>{
     if(!byLevel[m.contestLevel]) byLevel[m.contestLevel] = { target:0, done:0, chapters:[] };
-    const c = countByStatus(currentUser.email, m.contestLevel, m.unit);
+    const c = countByStatus(currentUser.email, m.contestLevel, m.unit, m.assignment);
     byLevel[m.contestLevel].target += m.target;
     byLevel[m.contestLevel].done += c.finalized;
     byLevel[m.contestLevel].chapters.push({ unit:m.unit, title:chapterByCode(m.unit)?.title||"", target:m.target, c });
@@ -1748,7 +1810,7 @@ function myAssignedByLevel(){
 // The first assigned chapter this teacher hasn't finished yet, in
 // assignment order -- powers "continue where you left off" on New Question.
 function firstIncompleteAssignedUnit(){
-  const pending = myAssignedChapters().find(m=>countByStatus(currentUser.email, m.contestLevel, m.unit).finalized < m.target);
+  const pending = myAssignedChapters().find(m=>countByStatus(currentUser.email, m.contestLevel, m.unit, m.assignment).finalized < m.target);
   return pending?.unit || null;
 }
 async function loadCardEngagement(visible){
@@ -2315,9 +2377,9 @@ function openForm(existing){
     const relevant = myAssignedChapters().filter(m=>m.unit===chapterCode && chosenLevels.includes(m.contestLevel));
     if(relevant.length===0){ hintEl.innerHTML = ""; return; }
     hintEl.innerHTML = relevant.map(m=>{
-      const quotas = difficultyQuotas(m.target);
+      const { quotas } = resolveQuotaEntry(m.assignment?.quotas?.[currentUser.email]?.[m.unit] ?? m.target);
       const parts = ["medium","hard","very_hard"].map(d=>{
-        const have = myDifficultyCountForChapter(currentUser.email, m.contestLevel, m.unit, d, existing?.id);
+        const have = myDifficultyCountForChapter(currentUser.email, m.contestLevel, m.unit, d, existing?.id, m.assignment);
         const full = have>=quotas[d];
         const label = DIFFS.find(x=>x.v===d)?.l||d;
         return `<span style="${d===diff?"font-weight:700; text-decoration:underline;":""} ${full?"color:var(--red);":""}">${label} ${have}/${quotas[d]}${full?" (full)":""}</span>`;
@@ -2391,11 +2453,11 @@ function openForm(existing){
     const isAssignedToMe = mine.some(m=>m.unit===chapterCode);
     const pending = mine.find(m=>{
       if(m.unit===chapterCode) return false;
-      const c = countByStatus(currentUser.email, m.contestLevel, m.unit);
+      const c = countByStatus(currentUser.email, m.contestLevel, m.unit, m.assignment);
       return c.finalized < m.target;
     });
     warn.innerHTML = (!isAssignedToMe && pending)
-      ? `<div class="callout warn">This topic isn't assigned to you — you still have pending work on <b>${escapeHtml(pending.unit)} — ${escapeHtml(chapterByCode(pending.unit)?.title||"")}</b> (${pending.target - countByStatus(currentUser.email, pending.contestLevel, pending.unit).finalized} more needed).</div>`
+      ? `<div class="callout warn">This topic isn't assigned to you — you still have pending work on <b>${escapeHtml(pending.unit)} — ${escapeHtml(chapterByCode(pending.unit)?.title||"")}</b> (${pending.target - countByStatus(currentUser.email, pending.contestLevel, pending.unit, pending.assignment).finalized} more needed).</div>`
       : "";
   }
   populateChapters(true);
@@ -2592,11 +2654,11 @@ function openForm(existing){
       const chosenUnit = fd.get("unit"), chosenDiff = fd.get("difficulty"), chosenLevels = fd.getAll("level");
       const overQuota = myAssignedChapters().find(m=>{
         if(m.unit!==chosenUnit || !chosenLevels.includes(m.contestLevel)) return false;
-        const quotas = difficultyQuotas(m.target);
-        return myDifficultyCountForChapter(currentUser.email, m.contestLevel, m.unit, chosenDiff, existing?.id) >= quotas[chosenDiff];
+        const { quotas } = resolveQuotaEntry(m.assignment?.quotas?.[currentUser.email]?.[m.unit] ?? m.target);
+        return myDifficultyCountForChapter(currentUser.email, m.contestLevel, m.unit, chosenDiff, existing?.id, m.assignment) >= quotas[chosenDiff];
       });
       if(overQuota){
-        const quotas = difficultyQuotas(overQuota.target);
+        const { quotas } = resolveQuotaEntry(overQuota.assignment?.quotas?.[currentUser.email]?.[overQuota.unit] ?? overQuota.target);
         const diffLabel = DIFFS.find(d=>d.v===chosenDiff)?.l || chosenDiff;
         toast(`${overQuota.contestLevel} ${overQuota.unit}'s ${diffLabel} share (${quotas[chosenDiff]} of its ${overQuota.target}-question target) is already full — pick a different difficulty to keep the ~33/33/33 split.`);
         showStep(2); return;
@@ -4447,8 +4509,12 @@ function unitsForLevel(level){
 // there waiting for a QB Lead to click Lock. `reviewed` splits that second
 // state out so progress displays can show it distinctly instead of
 // burying it inside "in review".
-function countByStatus(email, level, unit){
-  const mine = questions.filter(q=> q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit);
+function countByStatus(email, level, unit, assignment){
+  let mine = questions.filter(q=> q.authorEmail===email && (q.level||[]).includes(level) && q.unit===unit);
+  if(assignment){
+    const {start, end} = assignmentWindowFor(email, level, unit, assignment);
+    mine = mine.filter(q=> (!start || (q.createdAt||"")>=start) && (!end || (q.createdAt||"")<end) );
+  }
   const finalized = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
   const reviewed = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
   const inReview = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome!=="agree").length;
@@ -4466,11 +4532,11 @@ function countByStatus(email, level, unit){
 // regardless of status (draft included) -- the point is to catch the
 // imbalance as early as possible, before anything is even submitted for
 // review, not just among locked ones.
-function difficultyBreakdownForChapter(email, level, unit){
+function difficultyBreakdownForChapter(email, level, unit, assignment){
   return {
-    medium: myDifficultyCountForChapter(email, level, unit, "medium"),
-    hard: myDifficultyCountForChapter(email, level, unit, "hard"),
-    very_hard: myDifficultyCountForChapter(email, level, unit, "very_hard"),
+    medium: myDifficultyCountForChapter(email, level, unit, "medium", null, assignment),
+    hard: myDifficultyCountForChapter(email, level, unit, "hard", null, assignment),
+    very_hard: myDifficultyCountForChapter(email, level, unit, "very_hard", null, assignment),
   };
 }
 // Renders a one-line Medium/Hard/Very Hard "made/expected" readout,
@@ -4491,9 +4557,9 @@ function difficultySplitHtml(made, quota){
 function teacherDifficultySummary(email, level){
   const totalMade = {medium:0,hard:0,very_hard:0}, totalQuota = {medium:0,hard:0,very_hard:0};
   assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
-    Object.entries(a.quotas[email]).forEach(([unit,target])=>{
-      const made = difficultyBreakdownForChapter(email, level, unit);
-      const quota = difficultyQuotas(target);
+    Object.entries(a.quotas[email]).forEach(([unit,raw])=>{
+      const made = difficultyBreakdownForChapter(email, level, unit, a);
+      const { quotas: quota } = resolveQuotaEntry(raw);
       ["medium","hard","very_hard"].forEach(d=>{ totalMade[d]+=made[d]; totalQuota[d]+=quota[d]; });
     });
   });
@@ -4628,7 +4694,7 @@ function teacherQuotaTargets(){
   const targets = {};
   assignments.forEach(a=>{
     Object.entries(a.quotas||{}).forEach(([email,units])=>{
-      targets[email] = (targets[email]||0) + Object.values(units).reduce((s,n)=>s+n,0);
+      targets[email] = (targets[email]||0) + Object.values(units).reduce((s,n)=>s+resolveQuotaEntry(n).target,0);
     });
   });
   return targets;
@@ -5073,7 +5139,7 @@ function simpleBarSvg(labels, values, cls="bar-done"){
 function renderWorkload(){
   const main = document.getElementById("main");
   const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
-  let html = `<div class="pagehead"><h1>Assignment</h1>${isAdminUser?`<button class="btn primary" id="new-assignment">+ New Assignment</button>`:""}</div>`;
+  let html = `<div class="pagehead"><h1>Assignment</h1>${isAdminUser?`<div style="display:flex; gap:8px;"><button class="btn" id="new-assignment">✎ Edit current assignments</button><button class="btn primary" id="start-new-round">+ Start new round</button></div>`:""}</div>`;
   html += `<div class="section-label">My workload</div>`;
   if(!dataReady.assignments){
     html += loadingState("Loading assignments…");
@@ -5082,8 +5148,9 @@ function renderWorkload(){
   } else {
     mine.forEach(a=>{
       html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)} ${a.dueDate?" · "+dueDateLabel(a.dueDate):""}</p>`;
-      Object.entries(a.quotas[currentUser.email]).forEach(([unit,target])=>{
-        const c = countByStatus(currentUser.email, a.contestLevel, unit);
+      Object.entries(a.quotas[currentUser.email]).forEach(([unit,raw])=>{
+        const { target } = resolveQuotaEntry(raw);
+        const c = countByStatus(currentUser.email, a.contestLevel, unit, a);
         html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.reviewed} reviewed (awaiting lock) · ${c.finalized} locked`);
       });
     });
@@ -5094,11 +5161,12 @@ function renderWorkload(){
     assignments.forEach(a=>{
       const lvl = byLevel[a.contestLevel]; if(!lvl) return;
       Object.entries(a.quotas||{}).forEach(([email,units])=>{
-        Object.entries(units).forEach(([unit,target])=>{
+        Object.entries(units).forEach(([unit,raw])=>{
+          const { target } = resolveQuotaEntry(raw);
           lvl.teacherSet.add(email);
           lvl.chapterSet.add(unit);
           lvl.target += target;
-          const c = countByStatus(email, a.contestLevel, unit);
+          const c = countByStatus(email, a.contestLevel, unit, a);
           lvl.draft += c.draft; lvl.inReview += c.inReview; lvl.reviewed += c.reviewed; lvl.done += c.finalized;
         });
       });
@@ -5187,6 +5255,7 @@ function renderWorkload(){
   if(isAdminUser){
     subscribeTeachers();
     document.getElementById("new-assignment").addEventListener("click", ()=>openAssignmentForm());
+    document.getElementById("start-new-round").addEventListener("click", ()=>openAssignmentForm(null, {freshRound:true}));
     document.querySelectorAll("[data-edit-assignment]").forEach(b=>b.addEventListener("click", ()=>{
       const a = assignments.find(x=>x.id===b.dataset.editAssignment);
       if(a) openAssignmentForm(a);
@@ -5219,9 +5288,10 @@ function renderLevelRoster(){
   assignments.filter(a=>a.contestLevel===level).forEach(a=>{
     Object.entries(a.quotas||{}).forEach(([email,units])=>{
       merged[email] = merged[email] || {email, target:0, draft:0, inReview:0, reviewed:0, done:0};
-      Object.entries(units).forEach(([unit,target])=>{
+      Object.entries(units).forEach(([unit,raw])=>{
+        const { target } = resolveQuotaEntry(raw);
         merged[email].target += target;
-        const c = countByStatus(email, level, unit);
+        const c = countByStatus(email, level, unit, a);
         merged[email].draft += c.draft; merged[email].inReview += c.inReview;
         merged[email].reviewed += c.reviewed; merged[email].done += c.finalized;
       });
@@ -5250,31 +5320,79 @@ function renderLevelRoster(){
   wrap.querySelectorAll("[data-teacher-detail]").forEach(b=>b.addEventListener("click", ()=>openTeacherWorkloadDetail(b.dataset.teacherDetail, b.dataset.teacherLevel)));
 }
 
+// Writes a per-(teacher, chapter) quota entry back to its OWN assignment
+// doc -- as a full nested replacement of the `quotas` field (same shape
+// openAssignmentForm()'s own save already writes), never a dotted-path
+// string update. A dotted path like `quotas.${email}.${unit}` would be
+// WRONG here: Firestore treats dots in a field-path STRING as nested-path
+// separators, and every real email address contains literal dots -- this
+// is exactly the kind of bug the project's "lowercase email, but never
+// put it in a dotted path" lesson already covers elsewhere. `newValue`
+// is either a plain number (reset to the auto ~even split) or a
+// {target,medium,hard,very_hard} object (an admin-set custom split) --
+// resolveQuotaEntry() reads either shape back out later.
+async function saveQuotaEntry(assignmentId, email, unit, newValue){
+  const a = assignments.find(x=>x.id===assignmentId);
+  if(!a) return;
+  const quotas = JSON.parse(JSON.stringify(a.quotas||{}));
+  quotas[email] = quotas[email]||{};
+  quotas[email][unit] = newValue;
+  await updateDoc(doc(db,"assignments",assignmentId), {quotas});
+}
 function openTeacherWorkloadDetail(email, level){
   const root = document.getElementById("modal-root");
   const t = allTeachers.find(x=>x.email===email);
   const rows = [];
   assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
-    Object.entries(a.quotas[email]).forEach(([unit,target])=>{
-      rows.push({unit, target, c: countByStatus(email, level, unit), made: difficultyBreakdownForChapter(email, level, unit), quota: difficultyQuotas(target)});
+    Object.entries(a.quotas[email]).forEach(([unit,raw])=>{
+      const { target, quotas, custom } = resolveQuotaEntry(raw);
+      rows.push({unit, target, quota:quotas, custom, assignmentId:a.id, rowKey:`${a.id}|${unit}`, c: countByStatus(email, level, unit, a), made: difficultyBreakdownForChapter(email, level, unit, a)});
     });
   });
   const summary = teacherDifficultySummary(email, level);
   root.innerHTML = `<div class="overlay" id="ov"><div class="drawer">
     <div class="drawer-head"><h2>${escapeHtml(t?.name||email)} — ${escapeHtml(level)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
     <p class="hint" style="margin:0 0 10px;">${escapeHtml(email)}</p>
-    ${rows.length>0 ? `<div class="callout" style="margin-bottom:14px;"><b>Difficulty split (all assigned chapters, ${escapeHtml(level)}):</b> ${difficultySplitHtml(summary.made, summary.quota)}<div class="hint" style="margin-top:4px;">Made vs. the ~even Medium/Hard/Very-Hard split the SOP expects for their total quota (red = short, gold = over, green = on target). Counts every question they've authored for this level regardless of status, including drafts.</div></div>` : ""}
+    ${rows.length>0 ? `<div class="callout" style="margin-bottom:14px;"><b>Difficulty split (all assigned chapters, ${escapeHtml(level)}):</b> ${difficultySplitHtml(summary.made, summary.quota)}<div class="hint" style="margin-top:4px;">Made vs. each chapter's expected Medium/Hard/Very-Hard split -- the ~even SOP default unless an admin set a custom split below (red = short, gold = over, green = on target). Counts every question they've authored for this level regardless of status, including drafts.</div></div>` : ""}
     ${rows.length===0 ? emptyState("No chapters assigned for this level.") : rows.map(r=>
       progressCard(`${r.unit} — ${chapterByCode(r.unit)?.title||""}`, r.c.finalized, r.target, `${r.c.draft} draft &middot; ${r.c.inReview} in review &middot; ${r.c.reviewed} reviewed (awaiting lock) &middot; ${r.c.finalized} locked`)
-      + `<div class="hint" style="margin:2px 0 10px 2px;">${difficultySplitHtml(r.made, r.quota)}</div>`
+      + `<div class="hint" style="margin:2px 0 4px 2px;">${difficultySplitHtml(r.made, r.quota)}${r.custom?` <span style="color:var(--accent); font-weight:600;">(custom split)</span>`:""}</div>`
+      + `<div style="display:flex; gap:6px; align-items:center; margin:0 0 14px 2px; flex-wrap:wrap;">
+          <span class="hint">Set exact targets:</span>
+          <input type="number" min="0" data-split-medium="${escapeHtml(r.rowKey)}" value="${r.quota.medium}" style="width:52px; padding:3px 5px; font-size:12px;" title="Medium target" />
+          <input type="number" min="0" data-split-hard="${escapeHtml(r.rowKey)}" value="${r.quota.hard}" style="width:52px; padding:3px 5px; font-size:12px;" title="Hard target" />
+          <input type="number" min="0" data-split-veryhard="${escapeHtml(r.rowKey)}" value="${r.quota.very_hard}" style="width:52px; padding:3px 5px; font-size:12px;" title="Very Hard target" />
+          <button type="button" class="btn small" data-save-split="${escapeHtml(r.rowKey)}" data-unit="${escapeHtml(r.unit)}" data-assignment-id="${escapeHtml(r.assignmentId)}">Save split</button>
+          ${r.custom ? `<button type="button" class="btn small" data-reset-split="${escapeHtml(r.unit)}" data-assignment-id="${escapeHtml(r.assignmentId)}" data-reset-target="${r.target}">Reset to even</button>` : ""}
+        </div>`
     ).join("")}
   </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  root.querySelectorAll("[data-save-split]").forEach(b=>b.addEventListener("click", async ()=>{
+    const key = b.dataset.saveSplit;
+    const medium = Math.max(0, parseInt(root.querySelector(`[data-split-medium="${CSS.escape(key)}"]`).value,10)||0);
+    const hard = Math.max(0, parseInt(root.querySelector(`[data-split-hard="${CSS.escape(key)}"]`).value,10)||0);
+    const veryHard = Math.max(0, parseInt(root.querySelector(`[data-split-veryhard="${CSS.escape(key)}"]`).value,10)||0);
+    try{
+      await saveQuotaEntry(b.dataset.assignmentId, email, b.dataset.unit, {target: medium+hard+veryHard, medium, hard, very_hard: veryHard});
+      logActivity("assignment_split_customized", `Set a custom difficulty split for ${email} on ${b.dataset.unit} (${medium}/${hard}/${veryHard})`, b.dataset.assignmentId);
+      toast("Difficulty split saved");
+      openTeacherWorkloadDetail(email, level);
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
+  }));
+  root.querySelectorAll("[data-reset-split]").forEach(b=>b.addEventListener("click", async ()=>{
+    try{
+      await saveQuotaEntry(b.dataset.assignmentId, email, b.dataset.resetSplit, parseInt(b.dataset.resetTarget,10)||0);
+      toast("Reset to the even split");
+      openTeacherWorkloadDetail(email, level);
+    }catch(err){ console.error(err); toast("Couldn't save ("+err.code+")"); }
+  }));
   animateProgressBars();
 }
 
-function openAssignmentForm(existing){
+function openAssignmentForm(existing, opts){
+  const freshRound = !!opts?.freshRound;
   const root = document.getElementById("modal-root");
   if(allTeachers.length===0){
     root.innerHTML = `<div class="overlay" id="ov"><div class="drawer wide">
@@ -5293,9 +5411,28 @@ function openAssignmentForm(existing){
   // this same board; every level touched during this session is written
   // in one Save, so a teacher's whole PMC-4 load and a different
   // teacher's PMC-5 load can be built and saved together.
+  // `freshRound` (Oct 2026, real request: "assigned new assignment but to
+  // build questions from same chapter for round 2 but it says assignment
+  // already done") -- the ORIGINAL "+ New Assignment" button never
+  // actually started a blank board: it always pre-loaded whatever
+  // assignment doc already existed per level and EDITED it in place
+  // (same doc id, same original createdAt), which is exactly why
+  // re-assigning the same chapter for a later round looked "already
+  // done" -- countByStatus()'s progress window (see assignmentWindowFor()
+  // above) is anchored to an assignment's createdAt, and editing the SAME
+  // doc never moves that anchor. "Start new round" skips pre-loading
+  // existingByLevel entirely, so every level's board starts genuinely
+  // blank and Save always creates BRAND NEW assignment docs (fresh id,
+  // fresh createdAt) even for a chapter that's already assigned
+  // elsewhere -- which is what actually gives a new round its own,
+  // separate progress window. Old assignment docs are never touched by
+  // this path -- they keep their own ids, dates, and historical progress
+  // exactly as they were.
   const existingByLevel = {};
-  assignments.forEach(a=>{ if(!existingByLevel[a.contestLevel]) existingByLevel[a.contestLevel] = a; });
-  if(existing) existingByLevel[existing.contestLevel] = existing;
+  if(!freshRound){
+    assignments.forEach(a=>{ if(!existingByLevel[a.contestLevel]) existingByLevel[a.contestLevel] = a; });
+    if(existing) existingByLevel[existing.contestLevel] = existing;
+  }
   // allQuotas: { level: { teacherEmail: { chapterCode: targetCount } } }
   const allQuotas = {};
   LEVELS.forEach(l=>{ allQuotas[l] = existingByLevel[l]?.quotas ? JSON.parse(JSON.stringify(existingByLevel[l].quotas)) : {}; });
@@ -5305,8 +5442,9 @@ function openAssignmentForm(existing){
 
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
-      <div class="drawer-head"><h2>Workload assignment board</h2><button class="btn ghost small" id="close-form">Close</button></div>
+      <div class="drawer-head"><h2>${freshRound?"Start a new round":"Workload assignment board"}</h2><button class="btn ghost small" id="close-form">Close</button></div>
       <p class="hint" style="margin:-4px 0 12px;">Drag a chapter card into a teacher's column to assign it, between columns to reassign it, or back to Unassigned to clear it. Switch levels freely — everything you set across all four is saved together.</p>
+      ${freshRound ? `<div class="callout" style="margin:-4px 0 12px;">This board starts blank, even for chapters already assigned before — assigning the same chapter again here creates a brand-new, separate assignment. A teacher's progress on it starts fresh at 0, even if they already finished that chapter for an earlier round; their earlier work and progress stay exactly as they were, untouched.</div>` : ""}
       <div class="row2">
         <div class="field"><label>Assignment name</label><input type="text" id="as-name" placeholder="e.g. PMC Fall 2026 Prep" value="${escapeHtml(sharedName)}" /></div>
         <div class="field"><label>Due date <span class="hint">(optional)</span></label><input type="date" id="as-due" value="${escapeHtml(sharedDue)}" /></div>
@@ -5321,10 +5459,20 @@ function openAssignmentForm(existing){
   document.getElementById("as-goto-curriculum")?.addEventListener("click", ()=>{ closeModal(); switchTab("curriculum"); });
 
   function chapterCard(c, count){
+    // `count` can now be either a plain number or, if an admin set a
+    // custom Medium/Hard/Very-Hard split for this chapter (Admin ->
+    // Assignment -> per-teacher drill-down -> "Set exact targets"), a
+    // {target,medium,hard,very_hard} object -- resolveQuotaEntry()
+    // reads either shape back out to a plain total for THIS simple count
+    // field. If the admin edits this field directly, the "input" handler
+    // below stores a plain number back, intentionally reverting that one
+    // chapter to the even split -- editing the simple total here is a
+    // deliberate "go back to simple mode" action, not an accidental loss.
+    const resolved = count!=null ? resolveQuotaEntry(count) : null;
     return `<div class="kanban-card" draggable="true" data-chapter="${c.code}">
-      <span class="kanban-card-title">${c.custom?`<span class="pill" style="background:var(--violet-soft); color:var(--violet); font-size:9.5px; padding:1px 6px; margin-right:4px;">Custom</span>`:""}${c.code} — ${escapeHtml(c.title)}</span>
+      <span class="kanban-card-title">${c.custom?`<span class="pill" style="background:var(--violet-soft); color:var(--violet); font-size:9.5px; padding:1px 6px; margin-right:4px;">Custom</span>`:""}${c.code} — ${escapeHtml(c.title)}${resolved?.custom?` <span class="hint" style="color:var(--accent);" title="This chapter has a custom difficulty split set for this teacher">(split set)</span>`:""}</span>
       ${count!=null ? `<div style="display:flex; align-items:center; gap:6px;">
-        <input type="number" min="1" class="kanban-card-count" data-chapter-count="${c.code}" value="${count}" />
+        <input type="number" min="1" class="kanban-card-count" data-chapter-count="${c.code}" value="${resolved.target}" />
         <button type="button" class="btn small" data-remove-chapter="${c.code}" title="Unassign" aria-label="Unassign ${escapeHtml(c.title)}" style="margin-left:auto; padding:2px 7px;">✕</button>
       </div>` : ""}
     </div>`;
@@ -5419,20 +5567,27 @@ function openAssignmentForm(existing){
   document.getElementById("as-save").addEventListener("click", async ()=>{
     const name = document.getElementById("as-name").value.trim();
     const dueDate = document.getElementById("as-due").value || null;
+    // A quota entry can be a plain number OR a custom {target,medium,hard,
+    // very_hard} object (see resolveQuotaEntry()) -- every filter/sum here
+    // MUST go through resolveQuotaEntry().target, never compare/add the
+    // raw value directly. A raw object compared with `>0` or added with
+    // `+` silently evaluates to false/NaN, which used to mean opening this
+    // board and clicking Save (even just to touch an unrelated chapter)
+    // would quietly DELETE every custom-split chapter's entry entirely.
     const levelsWithWork = LEVELS.filter(l=>{
-      return Object.values(allQuotas[l]).some(m=>Object.values(m).some(n=>n>0));
+      return Object.values(allQuotas[l]).some(m=>Object.values(m).some(n=>resolveQuotaEntry(n).target>0));
     });
     if(levelsWithWork.length===0){ toast("Assign at least one chapter to a teacher"); return; }
     try{
       for(const level of levelsWithWork){
         const cleanQuotas = {};
         Object.entries(allQuotas[level]).forEach(([email,m])=>{
-          const filtered = Object.fromEntries(Object.entries(m).filter(([,n])=>n>0));
+          const filtered = Object.fromEntries(Object.entries(m).filter(([,n])=>resolveQuotaEntry(n).target>0));
           if(Object.keys(filtered).length) cleanQuotas[email] = filtered;
         });
         const teacherEmails = Object.keys(cleanQuotas);
         const unitTotals = {};
-        Object.values(cleanQuotas).forEach(m=>Object.entries(m).forEach(([c,n])=>{ unitTotals[c]=(unitTotals[c]||0)+n; }));
+        Object.values(cleanQuotas).forEach(m=>Object.entries(m).forEach(([c,n])=>{ unitTotals[c]=(unitTotals[c]||0)+resolveQuotaEntry(n).target; }));
         const units = Object.entries(unitTotals).map(([unit,target])=>({unit,target}));
         const body = { name: name || `${level} assignment`, contestLevel: level, units, teacherEmails, quotas: cleanQuotas, dueDate };
         const existingDoc = existingByLevel[level];

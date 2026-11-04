@@ -721,6 +721,91 @@ Difficulty balance (Oct 2026, no new doc -- derived from assignments.quotas):
   shows this live (updateDifficultyBalanceHint(), triggered on chapter/
   level/difficulty change) before the teacher ever tries to save.
 
+A quota entry in `assignments/{id}.quotas[email][unit]` is, as of Oct
+  2026 (real request: "let the admin set difficulty level desired...any
+  number what admin wants"), either a bare NUMBER (the original shape --
+  auto-split ~evenly via `difficultyQuotas()`) or an OBJECT
+  `{target, medium, hard, very_hard}` an admin sets explicitly (e.g.
+  10/3/2 instead of a forced even ~5/5/5), per (teacher, chapter), from
+  "Set exact targets" in the Assignment tab's per-teacher drill-down
+  (`openTeacherWorkloadDetail()`). `resolveQuotaEntry(raw)` in index.html
+  is the ONE place that reads either shape back out to
+  `{target, quotas:{medium,hard,very_hard}, custom}` -- every caller that
+  needs a chapter's target or split (progress cards, the Kanban board's
+  save filters, `teacherQuotaTargets()`, `teacherDifficultySummary()`,
+  `updateDifficultyBalanceHint()`'s live editor hint, the step-submit
+  save guard) goes through this instead of reading `assignments.quotas`
+  directly -- a real bug confirmed and fixed at the same time this
+  shipped: the Kanban board's own save handler used to filter/sum quota
+  values with raw `n>0`/`n+n` comparisons, which silently evaluate to
+  false/NaN for an object -- meaning opening that board and clicking Save
+  (even just to touch an unrelated chapter) would have quietly DELETED
+  every custom-split chapter's entry entirely. `saveQuotaEntry(assignmentId,
+  email, unit, newValue)` writes a single entry back as a full nested
+  replacement of the `quotas` FIELD (same shape `openAssignmentForm()`'s
+  own save already writes), never a dotted-path STRING update -- a
+  dotted path like `"quotas.${email}.${unit}"` would be wrong here, since
+  Firestore treats dots in a field-path string as nested-path separators,
+  and every real email address contains literal dots.
+
+**Real bug fixed Oct 2026, and the round-scoping redesign that came with
+  it ("assigned new assignment...for round 2 but it says assignment
+  already done")**: `countByStatus()`/`myDifficultyCountForChapter()`
+  used to count a teacher's ENTIRE LIFETIME output for a given
+  (level, unit) pair. The same chapter legitimately gets assigned to the
+  same teacher more than once over time -- every PMC round reuses the
+  same curriculum -- so a brand-new "Round 2" assignment for an
+  already-completed chapter looked "already done" on its very first
+  render, before the teacher had made a single new question for it.
+  Fixed with `assignmentWindowFor(email, level, unit, assignment)`:
+  purely from existing `createdAt` timestamps on both `assignments` and
+  `questions` -- no new field, nothing retroactive -- it derives which
+  window of questions belongs to THIS specific assignment: from its own
+  `createdAt` up to (but not including) the `createdAt` of the NEXT
+  assignment that re-assigns this exact (teacher, level, chapter)
+  combination, if one exists yet; open-ended if this is the latest/only
+  round for that chapter so far. An older, already-completed
+  assignment's own window naturally stops the instant a newer round's
+  assignment doc is created, so its historical progress is never
+  retroactively affected by work made for the new round -- and a
+  brand-new assignment starts counting from zero, since nothing made
+  before it existed falls inside its window. `countByStatus()` and
+  `myDifficultyCountForChapter()` both now take an optional trailing
+  `assignment` argument and apply this window when it's passed; every
+  call site that reads assignment progress now passes the specific
+  assignment doc the chapter entry came from (`myAssignedChapters()` was
+  extended to carry `{..., assignment: a}` on each entry precisely so
+  every downstream reader has it on hand) -- the rail's "Your
+  assignments" widget, the editor's live balance hint and off-task
+  warning, the step-submit save guard, `renderWorkload()`'s own-and-admin
+  views, `renderLevelRoster()`, and `openTeacherWorkloadDetail()`.
+  Verified with a plain Node simulation: Round 1's progress stays exactly
+  what it was after Round 2's assignment doc is created, Round 2 starts
+  at 0, and a question made AFTER Round 2 exists counts only toward
+  Round 2, never retroactively toward Round 1.
+
+  This redesign needed a real, user-facing way to actually CREATE a
+  separate "Round 2" assignment doc in the first place -- a genuine gap
+  found while building the fix: `openAssignmentForm()`'s existing
+  "+ New Assignment" entry point never started a blank board at all; it
+  always pre-loaded whichever assignment doc already existed per level
+  (`existingByLevel`) and EDITED it in place on save (same doc id, same
+  original `createdAt`) -- so re-assigning the same chapter through that
+  button could never have created the separate doc the window-based fix
+  needs to anchor to. The Assignment tab now has two buttons: **"✎ Edit
+  current assignments"** (the original behavior, unchanged, still the
+  right choice for correcting an in-progress round's targets) and
+  **"+ Start new round"** (`openAssignmentForm(null, {freshRound:true})`)
+  -- when `freshRound` is true, `existingByLevel` is deliberately left
+  empty for every level, so the board starts genuinely blank and Save
+  always creates BRAND NEW assignment docs (fresh id, fresh `createdAt`)
+  even for a chapter that's already assigned elsewhere. Old assignment
+  docs are never touched by this path. The modal shows an explicit
+  callout explaining this when opened in fresh-round mode, since
+  starting from a blank board (instead of seeing what's already
+  assigned) is a deliberate, real behavior change from the familiar
+  "+ New Assignment" flow, not an oversight.
+
 Admin-side difficulty-split visibility (Oct 2026, Assignment tab, a real
   request: "so we can see how many out of assigned questions are made in
   different difficulty level [in case teachers] mistakenly made uneven
