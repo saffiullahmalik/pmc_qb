@@ -1648,6 +1648,7 @@ function renderBank(){
     document.getElementById("load-more")?.addEventListener("click", ()=>{ bankVisibleCount += 30; renderBank(); });
     grid.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); openQuestion(b.dataset.view); }));
     grid.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); const q = questions.find(x=>x.id===b.dataset.edit); if(q) openForm(q); }));
+    grid.querySelectorAll("[data-duplicate]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); const q = questions.find(x=>x.id===b.dataset.duplicate); if(q) duplicateQuestion(q); }));
     grid.querySelectorAll("[data-delete]").forEach(b=>b.addEventListener("click", async e=>{
       e.stopPropagation();
       const q = questions.find(x=>x.id===b.dataset.delete); if(!q) return;
@@ -1860,6 +1861,34 @@ function renderCardEngagement(id){
   });
 }
 
+// Opens the editor pre-filled with a copy of `q`'s content, as a brand
+// new draft -- not an edit of `q` itself. Deliberately has NO `.id`, which
+// is what makes openForm()'s `isEdit = !!existing?.id` take the create
+// path on save. Every field that's specific to q's OWN lifecycle (status,
+// peerReview, usage/engagement history, edit history) is reset so the
+// copy starts clean; authorEmail/authorName/createdAt/updatedAt are left
+// unset entirely so openForm()'s own `existing?.authorEmail || currentUser.email`
+// -style fallbacks stamp the duplicate as the current user's brand-new work.
+function duplicateQuestion(q){
+  const copy = {
+    ...q,
+    titleEn: (q.titleEn || "Untitled question") + " (Copy)",
+    status: "draft",
+    peerReview: null,
+    usedIn: [],
+    usageHistory: [],
+    likes: [],
+    editHistory: [],
+    authorEmail: undefined,
+    authorName: undefined,
+    createdAt: undefined,
+    updatedAt: undefined,
+  };
+  delete copy.id;
+  openForm(copy);
+  toast("Duplicated — editing the new copy. Save to add it to the bank.");
+}
+
 function cardHtml(q){
   const diffLbl = DIFFS.find(d=>d.v===q.difficulty)?.l || q.difficulty;
   const typeLbl = QTYPES.find(t=>t.v===q.qType)?.l || q.qType;
@@ -1885,6 +1914,7 @@ function cardHtml(q){
       </div>
       <div class="q-row-actions">
         <button class="btn small" data-view="${q.id}" title="View" aria-label="View question">👁 View</button>
+        ${(isExternalReviewerUser || isUploaderUser) ? "" : `<button class="btn small" data-duplicate="${q.id}" title="Duplicate — copy this question's content into a new draft" aria-label="Duplicate question">⧉ Duplicate</button>`}
         ${isExternalReviewerUser ? "" : isLocked
           ? `<span class="btn small" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it from the detail view">🔒 Locked</span>`
           : `<button class="btn small" data-edit="${q.id}" title="Edit" aria-label="Edit question">✏️ Edit</button>`}
@@ -1918,7 +1948,16 @@ function rangeOptions(min, max, step, current, labelFn){
   }).join("");
 }
 function openForm(existing){
-  const isEdit = !!existing;
+  // `!!existing?.id`, not `!!existing` -- duplicateQuestion() below opens
+  // this with a full copy of another question's data but deliberately no
+  // `.id`, specifically so it takes the CREATE path (a new doc) instead
+  // of updating the original. `isEdit` driving every other "am I editing
+  // a real saved question" check in this function (locking, comments,
+  // edit history, the update-vs-create branch at save time) still works
+  // correctly either way, since a duplicate is meant to look and behave
+  // exactly like starting a brand-new question pre-filled with a copy of
+  // another one's content -- not an edit of that original question.
+  const isEdit = !!existing?.id;
   const locked = isEdit && existing.status==="finalized" && !isAdminUser;
   const root = document.getElementById("modal-root");
   const levelSet = new Set(existing?.level||[]);
@@ -3253,6 +3292,7 @@ function renderDrawerBody(){
       }).join("")}
       <button class="btn small ghost" id="download-img" style="margin-left:auto;">Download as image…</button>
       ${q.peerReview?.reviewerEmail===currentUser.email && q.peerReview.outcome==="pending" ? `<button class="btn small primary" id="review-q">🔍 Review this</button>` : ""}
+      ${isUploaderUser ? "" : `<button class="btn small ghost" id="duplicate-q">⧉ Duplicate</button>`}
       ${isLocked
         ? `<span class="btn small ghost" style="color:var(--red); cursor:default;" title="Locked — only an Admin can edit; a QB Lead can unlock it by setting status back to In Review">🔒 Locked</span>`
         : `<button class="btn small ghost" id="edit-q">Edit question</button>`}
@@ -3279,6 +3319,7 @@ function renderDrawerBody(){
   if(window.MathJax?.typesetPromise) window.MathJax.typesetPromise([document.getElementById("drawer-preview"), document.getElementById("drawer-solution")].filter(Boolean)).catch(console.error);
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("edit-q")?.addEventListener("click", ()=>openForm(q));
+  document.getElementById("duplicate-q")?.addEventListener("click", ()=>{ closeModal(); duplicateQuestion(q); });
   document.getElementById("review-q")?.addEventListener("click", ()=>openReviewForm(q));
   document.getElementById("reassign-review")?.addEventListener("click", async ()=>{
     const reviewer = pickReviewer(q.authorEmail, q.peerReview.reviewerEmail);
