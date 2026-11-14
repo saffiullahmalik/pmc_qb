@@ -203,6 +203,11 @@ function commonEquationHtml(raw){
   return `<div class="common-equation">${lines.map(l=>`$$${esc(l)}$$`).join("<br>")}</div>`;
 }
 function optionsLayoutClass(n){ return n===1?"cols-1":n===3?"cols-3":n===4?"cols-4":""; }
+const DEFAULT_OPTION_IMAGE_WIDTH = 90;
+function optionImgTag(o, label){
+  if(!o.image) return "";
+  return `<img src="${o.image}" alt="${label}" style="width:${o.imageWidth||DEFAULT_OPTION_IMAGE_WIDTH}px; max-width:100%; height:auto; border-radius:3px; vertical-align:middle; margin-right:6px;" />`;
+}
 function getQuestionOptions(q){
   if(Array.isArray(q.options) && q.options.length) return q.options;
   return (q.optionsEn||[]).map((t,i)=>({id:"legacy-"+i, text:t, image:null}));
@@ -227,7 +232,7 @@ function questionPreviewHtml(q, config={}){
     ${includeOptions ? `
     <div class="question-container">
       <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
-        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(esc(o.text))}</div>`).join("")}
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}</span> ${optionImgTag(o, "Option image")}${renderRichText(esc(o.text))}</div>`).join("")}
       </div>
     </div>` : ""}`;
 }

@@ -273,7 +273,6 @@
   @media (max-width:760px){
     .dash-charts{ grid-template-columns:1fr; }
   }
-  .opt-thumb{ height:34px; border-radius:5px; }
   .editor-page{ position:fixed; top:0; left:216px; right:0; bottom:0; background:var(--bg); z-index:150; overflow-y:auto; }
   .editor-topbar{ position:sticky; top:0; background:var(--surface); border-bottom:1px solid var(--border); padding:12px 20px; display:flex; align-items:center; gap:14px; z-index:5; }
   .editor-progress{ height:3px; background:var(--surface-2); position:sticky; top:53px; z-index:5; }
@@ -955,6 +954,22 @@ function renderSOPBody(text){
   }).join("");
 }
 function optionsLayoutClass(n){ return n===1?"cols-1":n===3?"cols-3":n===4?"cols-4":""; }
+// Previously every option-image render site used a tiny hardcoded pixel
+// HEIGHT (20-34px) with no way for a teacher to resize it -- fine for a
+// plain checkmark/icon option, unusable for anything with real detail
+// (a diagram, a shape, a fraction bar). imageWidth (px, teacher-adjustable
+// via +/- in the editor, same pattern as the question's own graphicImageWidth)
+// is now stored per-option alongside `image`; DEFAULT_OPTION_IMAGE_WIDTH is
+// the fallback for options saved before this field existed. optionImgTag()
+// is the one shared place every render site (editor live preview, the
+// drawer/download/review's shared questionPreviewHtml(), the review form,
+// the Contests print view) builds an option's <img> tag from, so they can
+// never drift out of sync on sizing again.
+const DEFAULT_OPTION_IMAGE_WIDTH = 90;
+function optionImgTag(o, label){
+  if(!o.image) return "";
+  return `<img src="${o.image}" alt="${label}" style="width:${o.imageWidth||DEFAULT_OPTION_IMAGE_WIDTH}px; max-width:100%; height:auto; border-radius:3px; vertical-align:middle; margin-right:6px;" />`;
+}
 const ICON_EMPTY = `<svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h13l6 6v26a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M24 4v6h6"/><path d="M14 22h12M14 27h8"/></svg>`;
 const ICON_LOADING = `<svg width="30" height="30" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="16" cy="16" r="12" opacity="0.25"/><path d="M28 16a12 12 0 0 0-12-12"/></svg>`;
 function emptyState(msg){ return `<div class="empty state-block"><div class="state-icon">${ICON_EMPTY}</div><div>${msg}</div></div>`; }
@@ -2231,7 +2246,13 @@ function openForm(existing){
         <span class="k">${String.fromCharCode(65+i)}</span>
         <input type="text" data-opt-text="${o.id}" value="${escapeHtml(o.text)}" placeholder="Option ${String.fromCharCode(65+i)}" style="flex:1; min-width:120px;" />
         <label class="btn small" title="Add image" aria-label="Add an image to this option" style="cursor:pointer;">📷<input type="file" accept="image/*" data-opt-img="${o.id}" hidden /></label>
-        ${o.image ? `<img src="${o.image}" class="opt-thumb" alt="Option ${String.fromCharCode(65+i)} image" /><button type="button" class="btn small" data-opt-rmimg="${o.id}" aria-label="Remove option ${String.fromCharCode(65+i)} image">✕ img</button>` : ""}
+        ${o.image ? `<span style="display:inline-flex; align-items:center; gap:4px;">
+          <img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="width:${o.imageWidth||DEFAULT_OPTION_IMAGE_WIDTH}px; max-width:160px; height:auto; border-radius:5px;" />
+          <button type="button" class="btn small" data-opt-imgsize="${o.id}" data-dir="-1" title="Smaller">−</button>
+          <span class="mono" style="font-size:11px; min-width:34px; text-align:center;">${o.imageWidth||DEFAULT_OPTION_IMAGE_WIDTH}px</span>
+          <button type="button" class="btn small" data-opt-imgsize="${o.id}" data-dir="1" title="Larger">+</button>
+          <button type="button" class="btn small" data-opt-rmimg="${o.id}" aria-label="Remove option ${String.fromCharCode(65+i)} image">✕ img</button>
+        </span>` : ""}
         <button type="button" class="btn small" style="color:var(--red);" data-opt-remove="${o.id}" ${optionsState.length<=2?"disabled":""}>Remove</button>
       </div>`).join("");
     wrap.querySelectorAll("[name=correctOpt]").forEach(el=>el.addEventListener("change", ()=>{ correctOptionId = el.value; }));
@@ -2242,10 +2263,18 @@ function openForm(existing){
       const file = el.files[0]; if(!file) return;
       const opt = optionsState.find(o=>o.id===el.dataset.optImg);
       opt.image = await fileToCompressedDataUrl(file);
+      if(!opt.imageWidth) opt.imageWidth = DEFAULT_OPTION_IMAGE_WIDTH;
+      renderOptionRows();
+    }));
+    wrap.querySelectorAll("[data-opt-imgsize]").forEach(el=>el.addEventListener("click", ()=>{
+      const opt = optionsState.find(o=>o.id===el.dataset.optImgsize);
+      const step = parseInt(el.dataset.dir,10)*10;
+      opt.imageWidth = Math.max(30, Math.min(400, (opt.imageWidth||DEFAULT_OPTION_IMAGE_WIDTH)+step));
       renderOptionRows();
     }));
     wrap.querySelectorAll("[data-opt-rmimg]").forEach(el=>el.addEventListener("click", ()=>{
-      optionsState.find(o=>o.id===el.dataset.optRmimg).image = null;
+      const opt = optionsState.find(o=>o.id===el.dataset.optRmimg);
+      opt.image = null; opt.imageWidth = null;
       renderOptionRows();
     }));
     wrap.querySelectorAll("[data-opt-remove]").forEach(el=>el.addEventListener("click", ()=>{
@@ -2558,7 +2587,7 @@ function openForm(existing){
       <div class="question-container">
         <div class="section-label" style="margin-top:0;">Options</div>
         <div class="print-options-grid ${optionsLayoutClass(optionsLayoutState)}">
-          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${o.image?`<img src="${o.image}" alt="Option ${String.fromCharCode(65+i)} image" style="height:24px; border-radius:3px; vertical-align:middle; margin-right:5px;" />`:""}${renderRichText(escapeHtml(o.text))||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
+          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${optionImgTag(o, `Option ${String.fromCharCode(65+i)} image`)}${renderRichText(escapeHtml(o.text))||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
         </div>
       </div>
       <div class="question-container answer-box">
@@ -2620,7 +2649,7 @@ function openForm(existing){
       titleEn: autoTitle || "Untitled question", level, qType: fd.get("qType"), difficulty: fd.get("difficulty"),
       unit: fd.get("unit"), subtopic: fd.get("subtopic").trim(),
       promptEn: fd.get("promptEn").trim(), promptUr: fd.get("promptUr").trim(),
-      options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null})),
+      options: optionsState.map(o=>({id:o.id, text:o.text.trim(), image:o.image||null, imageWidth: o.image?(o.imageWidth||DEFAULT_OPTION_IMAGE_WIDTH):null})),
       correctOptionId, graphicImage: graphicImageState||null, graphicImageWidth: graphicImageState?graphicImageWidthState:null,
       graphicPosition: graphicImageState?graphicPositionState:null, optionsLayout: optionsLayoutState,
       graphicCaption: fd.get("graphicCaption").trim(), solutionEn: fd.get("solutionEn").trim(), solutionImage: solutionImageState||null, skills: skillsState,
@@ -2878,7 +2907,7 @@ function openConfirmPopup({promptEn, correctOpt, difficultyLabel, levels, hasGra
       <div class="gate-card" style="width:min(480px,92vw); text-align:left;">
         <h2 style="margin-top:0;">Before you save…</h2>
         <div class="prompt-box">${renderRichText(escapeHtml(promptEn))}</div>
-        <p style="font-size:13px;"><b>Marked correct:</b> ${correctOpt.image?`<img src="${correctOpt.image}" alt="Correct option image" style="height:20px; vertical-align:middle; margin-right:5px;"/>`:""}${escapeHtml(correctOpt.text)||"(image option)"}</p>
+        <p style="font-size:13px;"><b>Marked correct:</b> ${optionImgTag(correctOpt, "Correct option image")}${escapeHtml(correctOpt.text)||"(image option)"}</p>
         <p class="mono" style="font-size:11.5px; color:var(--ink-dim);">${escapeHtml(difficultyLabel)} · ${levels.join(", ")}</p>
         <div class="checklist" style="margin-top:8px;">
           ${items.map(t=>`<label><input type="checkbox" data-confirm-box /> ${escapeHtml(t)}</label>`).join("")}
@@ -2946,7 +2975,7 @@ function questionPreviewHtml(q, config={}){
     ${includeOptions ? `
     <div class="question-container">
       <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
-        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${(revealAnswer && o.id===correctId)?" ✓":""}</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
+        ${opts.map((o,i)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+i)}${(revealAnswer && o.id===correctId)?" ✓":""}</span> ${optionImgTag(o, "Option image")}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
       </div>
     </div>` : ""}
     ${includeAnswer ? `
@@ -3082,7 +3111,7 @@ function openReviewForm(q){
         <div id="review-opts">
           ${opts.map((o,i)=>`<label style="display:flex; align-items:flex-start; gap:8px; padding:7px 4px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
             <input type="radio" name="review-answer" value="${o.id}" style="margin-top:3px;" />
-            <span>${String.fromCharCode(65+i)}. ${o.image?`<img src="${o.image}" alt="Option image" style="height:22px; vertical-align:middle; margin-right:4px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</span>
+            <span>${String.fromCharCode(65+i)}. ${optionImgTag(o, "Option image")}${renderRichText(escapeHtml(o.text))}</span>
           </label>`).join("")}
         </div>
         <div class="field"><label>Your working / solution <span class="hint">(optional)</span></label><textarea id="review-note" rows="3" placeholder="Briefly show how you solved it, if you'd like"></textarea></div>
@@ -4512,7 +4541,7 @@ function renderPrintView(contestId, opts){
           ${commonEquationHtml(q.commonEquation)}
           ${q.graphicImage ? `<div class="print-graphic" style="text-align:${q.graphicPosition||"center"};"><img src="${q.graphicImage}" alt="Question figure" style="width:${q.graphicImageWidth||400}px; max-width:100%; border-radius:6px;" />${(q.graphicCaption||q.graphicNote)?`<div class="hint" style="margin-top:4px;">${escapeHtml(q.graphicCaption||q.graphicNote)}</div>`:""}</div>` : ""}
           <div class="print-options-grid ${optionsLayoutClass(q.optionsLayout)}">
-            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${o.image?`<img src="${o.image}" alt="Option image" style="height:26px; vertical-align:middle; margin-right:5px; border-radius:3px;"/>`:""}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
+            ${printOptions[i].map((o,oi)=>`<div class="print-opt-item"><span class="k">${String.fromCharCode(65+oi)}.</span> ${optionImgTag(o, "Option image")}${renderRichText(escapeHtml(o.text))}</div>`).join("")}
           </div>
         </div>`).join("")}
         <div class="answer-key">
