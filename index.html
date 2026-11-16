@@ -1723,13 +1723,19 @@ function updateActivityBadge(){
 }
 
 function myAssignedChapters(){
-  const mine = [];
-  assignments.forEach(a=>{
-    const q = a.quotas?.[currentUser.email];
-    if(!q) return;
-    Object.entries(q).forEach(([unit,target])=>mine.push({unit, target, contestLevel:a.contestLevel, assignmentName:a.name, assignment:a}));
-  });
-  return mine;
+  // One entry per (level, unit) -- the single CURRENT assignment, via
+  // currentAssignmentEntries() -- not one entry per assignment doc. Also
+  // fixes a second real bug this uncovered: `target` used to be the RAW
+  // quota value (sometimes a {target,medium,hard,very_hard} object, for
+  // a custom split), and several callers used it directly in arithmetic/
+  // display without resolving it first (e.g. summing `+= m.target` or
+  // printing `target ${m.target}`) -- broken (NaN / "[object Object]")
+  // for any chapter with a custom split. currentAssignmentEntries()
+  // always resolves to a plain number, so every existing `m.target`
+  // reader downstream is correct again without needing its own changes.
+  return currentAssignmentEntries()
+    .filter(e=>e.email===currentUser.email)
+    .map(e=>({ unit:e.unit, target:e.target, contestLevel:e.level, assignmentName:e.assignment.name, assignment:e.assignment }));
 }
 // SOP §2.4's ~33/33/33 medium/hard/very-hard split, applied to one
 // chapter's assigned target -- any remainder (target not divisible by 3)
@@ -1807,6 +1813,46 @@ function assignmentWindowFor(email, level, unit, assignment){
   const idx = chain.findIndex(a=>a.id===assignment.id);
   const next = idx>=0 ? chain[idx+1] : null;
   return { start: assignment.createdAt||null, end: next ? (next.createdAt||null) : null };
+}
+// The single CURRENT assignment entry for every (teacher, level, chapter)
+// combination that has ever carried a quota -- the latest-created doc
+// that still quotas it to that teacher, deduplicated across every
+// assignment doc ever saved. This is THE one place any AGGREGATE (admin
+// dashboards, roster totals, the per-teacher comparison chart, the
+// review-fairness cap) should source its target/count from.
+// Real bug fixed Nov 2026 ("it shows 184 of 54 assigned -- actually 54
+// are assigned, it's counting from previous assignment"): several
+// aggregates iterated `assignments.forEach(a=>...)` directly and SUMMED
+// a teacher's target/progress across every doc that quotas them for a
+// chapter -- but "Start new round" deliberately creates a brand-new doc
+// without touching the old one (by design, so the old round's own
+// history/window stays intact -- see assignmentWindowFor() above), so an
+// old, already-superseded round's quota entry is still sitting in
+// Firestore to be summed by anyone who doesn't explicitly dedupe. The
+// result: a chapter reassigned across 2 rounds (round 1 target 130,
+// round 2 target 54) showed as "184 of X" everywhere that summed raw
+// instead of picking only the latest entry per (teacher, level, unit).
+// Every aggregate below (myAssignedChapters(), renderWorkload()'s admin
+// dashboard, teacherQuotaTargets(), teacherComparisonData(),
+// renderLevelRoster(), teacherDifficultySummary()) was rewritten to go
+// through this function instead of reading `assignments`/`.quotas`
+// directly, so the "current round only" rule can't be forgotten again at
+// a new call site -- a per-chapter DETAIL view can still show every past
+// round's own row individually (that's "keeping rounds separate", not a
+// bug), it just must never SUM across them into one blended number.
+function currentAssignmentEntries(){
+  const latest = {};
+  assignments.forEach(a=>{
+    Object.entries(a.quotas||{}).forEach(([email,units])=>{
+      Object.entries(units||{}).forEach(([unit,raw])=>{
+        const key = email+"|"+a.contestLevel+"|"+unit;
+        if(!latest[key] || (a.createdAt||"") > (latest[key].assignment.createdAt||"")){
+          latest[key] = { email, level:a.contestLevel, unit, assignment:a, raw, target: resolveQuotaEntry(raw).target };
+        }
+      });
+    });
+  });
+  return Object.values(latest);
 }
 // Same data as myAssignedChapters(), grouped and summed per contest level --
 // feeds the insights-rail's compact "Your assignments" widget (one thin bar
@@ -2587,12 +2633,12 @@ function openForm(existing){
       <div class="question-container">
         <div class="section-label" style="margin-top:0;">Options</div>
         <div class="print-options-grid ${optionsLayoutClass(optionsLayoutState)}">
-          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${optionImgTag(o, `Option ${String.fromCharCode(65+i)} image`)}${renderRichText(escapeHtml(o.text))||`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`}</div>`).join("")}
+          ${optionsState.map((o,i)=>`<div class="print-opt-item">${o.id===correctOptionId?'<span class="k" style="background:var(--accent); color:var(--accent-ink);">':'<span class="k">'}${String.fromCharCode(65+i)}</span> ${optionImgTag(o, `Option ${String.fromCharCode(65+i)} image`)}${renderRichText(escapeHtml(o.text))||(o.image?"":`<span class="hint">Option ${String.fromCharCode(65+i)}</span>`)}</div>`).join("")}
         </div>
       </div>
       <div class="question-container answer-box">
         <div class="section-label" style="margin-top:0;">Answer</div>
-        <p><span class="k" style="background:var(--accent); color:var(--accent-ink); display:inline-flex;">${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span> ${correctOpt?(renderRichText(escapeHtml(correctOpt.text))||`<span class="hint">Option ${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span>`):`<span class="hint">Pick a correct option in step 2</span>`}</p>
+        <p><span class="k" style="background:var(--accent); color:var(--accent-ink); display:inline-flex;">${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span> ${correctOpt?(renderRichText(escapeHtml(correctOpt.text))||(correctOpt.image?"":`<span class="hint">Option ${correctIdx>=0?String.fromCharCode(65+correctIdx):"?"}</span>`)):`<span class="hint">Pick a correct option in step 2</span>`}</p>
         ${solutionEn.trim() ? `<div style="margin-top:6px;">${renderRichText(escapeHtml(solutionEn))}</div>` : `<span class="hint">No solution written yet.</span>`}
         ${solutionImageState ? `<img src="${solutionImageState}" alt="Solution image" style="max-width:100%; width:300px; border-radius:6px; display:block; margin-top:6px;" />` : ""}
       </div>`;
@@ -4625,13 +4671,14 @@ function difficultySplitHtml(made, quota){
 // chapter a teacher is assigned at this level -- the aggregate used by
 // both the roster-row imbalance flag and the drill-down modal's summary.
 function teacherDifficultySummary(email, level){
+  // Via currentAssignmentEntries() -- same "184 of 54" dedup as every
+  // other aggregate above; without it a chapter re-assigned across
+  // rounds had its quota AND made-count both summed twice.
   const totalMade = {medium:0,hard:0,very_hard:0}, totalQuota = {medium:0,hard:0,very_hard:0};
-  assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
-    Object.entries(a.quotas[email]).forEach(([unit,raw])=>{
-      const made = difficultyBreakdownForChapter(email, level, unit, a);
-      const { quotas: quota } = resolveQuotaEntry(raw);
-      ["medium","hard","very_hard"].forEach(d=>{ totalMade[d]+=made[d]; totalQuota[d]+=quota[d]; });
-    });
+  currentAssignmentEntries().filter(e=>e.email===email && e.level===level).forEach(e=>{
+    const made = difficultyBreakdownForChapter(email, level, e.unit, e.assignment);
+    const { quotas: quota } = resolveQuotaEntry(e.raw);
+    ["medium","hard","very_hard"].forEach(d=>{ totalMade[d]+=made[d]; totalQuota[d]+=quota[d]; });
   });
   return {made:totalMade, quota:totalQuota};
 }
@@ -4761,12 +4808,11 @@ function initials(name){
 // fairness cap, see pickReviewer()) read from, so "quota" means the same
 // thing in both places.
 function teacherQuotaTargets(){
+  // Via currentAssignmentEntries() -- see its own comment for the "184 of
+  // 54" bug this replaces -- summing raw across every assignment doc
+  // double-counted a chapter re-assigned across rounds.
   const targets = {};
-  assignments.forEach(a=>{
-    Object.entries(a.quotas||{}).forEach(([email,units])=>{
-      targets[email] = (targets[email]||0) + Object.values(units).reduce((s,n)=>s+resolveQuotaEntry(n).target,0);
-    });
-  });
+  currentAssignmentEntries().forEach(e=>{ targets[e.email] = (targets[e.email]||0) + e.target; });
   return targets;
 }
 // Review completion is part of "how much is this teacher actually doing"
@@ -4774,6 +4820,17 @@ function teacherQuotaTargets(){
 // the teacher-facing leaderboard's trailing value text.
 function teacherComparisonData(){
   const targets = teacherQuotaTargets();
+  // Grouped by email so each teacher's draft/inReview/reviewed/done below
+  // sums ONLY their currently-assigned chapters' windowed counts -- same
+  // round-scoped countByStatus() every per-chapter progress card already
+  // uses -- not raw lifetime `questions.filter(authorEmail===...)`, which
+  // kept climbing forever across rounds while `target` (fixed above) reset
+  // each round, producing the same "184 of 54"-shaped mismatch this whole
+  // pass is fixing. A teacher with nothing currently assigned correctly
+  // shows 0 here, same as a brand-new round starts its per-chapter
+  // progress at 0 -- there's no active target to report progress against.
+  const myEntries = {};
+  currentAssignmentEntries().forEach(e=>{ (myEntries[e.email] = myEntries[e.email]||[]).push(e); });
   return allTeachers
     // Allowlist, not a denylist -- same reasoning as isProducingTeacher_()
     // above and pickReviewer()'s candidate filter: teacher/qb_lead always
@@ -4783,11 +4840,11 @@ function teacherComparisonData(){
     // instead of needing a new denylist entry remembered here.
     .filter(t=>t.role==="teacher" || t.role==="qb_lead" || (t.role==="admin" && (questions.some(q=>q.authorEmail===t.email) || targets[t.email])))
     .map(t=>{
-      const mine = questions.filter(q=>q.authorEmail===t.email);
-      const done = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
-      const reviewed = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
-      const inReview = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome!=="agree").length;
-      const draft = mine.filter(q=>q.status==="draft").length;
+      let draft=0, inReview=0, reviewed=0, done=0;
+      (myEntries[t.email]||[]).forEach(e=>{
+        const c = countByStatus(t.email, e.level, e.unit, e.assignment);
+        draft+=c.draft; inReview+=c.inReview; reviewed+=c.reviewed; done+=c.finalized;
+      });
       const reviewsDone = questions.filter(q=>q.peerReview?.reviewerEmail===t.email && q.peerReview.submittedAt).length;
       return { label: t.name||t.email, email: t.email, target: targets[t.email]||0, draft, inReview, reviewed, done, reviewsDone };
     })
@@ -5209,6 +5266,10 @@ function simpleBarSvg(labels, values, cls="bar-done"){
 function renderWorkload(){
   const main = document.getElementById("main");
   const mine = assignments.filter(a=> a.quotas && a.quotas[currentUser.email]);
+  // The docs that still have at least one CURRENTLY-active chapter entry
+  // for me -- everything else in `mine` is a fully superseded past round
+  // (its own doc/quota untouched, just no longer "live" for any chapter).
+  const myActiveDocIds = new Set(currentAssignmentEntries().filter(e=>e.email===currentUser.email).map(e=>e.assignment.id));
   let html = `<div class="pagehead"><h1>Assignment</h1>${isAdminUser?`<div style="display:flex; gap:8px;"><button class="btn" id="new-assignment">✎ Edit current assignments</button><button class="btn primary" id="start-new-round">+ Start new round</button></div>`:""}</div>`;
   html += `<div class="section-label">My workload</div>`;
   if(!dataReady.assignments){
@@ -5216,30 +5277,57 @@ function renderWorkload(){
   } else if(mine.length===0){
     html += emptyState("No topics assigned to you yet.");
   } else {
-    mine.forEach(a=>{
-      html += `<p class="desc" style="margin-bottom:6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)} ${a.dueDate?" · "+dueDateLabel(a.dueDate):""}</p>`;
+    // Renders one assignment doc's cards -- shared by the active list
+    // below and the collapsed "Previous rounds" history, so a round's own
+    // numbers look identical in both places, just differently grouped.
+    const renderAssignmentDoc = a => {
+      let out = `<p class="desc" style="margin:10px 0 6px;"><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.contestLevel)}${a.dueDate?" · "+dueDateLabel(a.dueDate):""}</p>`;
       Object.entries(a.quotas[currentUser.email]).forEach(([unit,raw])=>{
         const { target } = resolveQuotaEntry(raw);
         const c = countByStatus(currentUser.email, a.contestLevel, unit, a);
-        html += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.reviewed} reviewed (awaiting lock) · ${c.finalized} locked`);
+        out += progressCard(`${unit} — ${chapterByCode(unit)?.title||""}`, c.finalized, target, `${c.draft} draft · ${c.inReview} in review · ${c.reviewed} reviewed (awaiting lock) · ${c.finalized} locked`);
       });
-    });
+      return out;
+    };
+    const activeDocs = mine.filter(a=>myActiveDocIds.has(a.id));
+    const pastDocs = mine.filter(a=>!myActiveDocIds.has(a.id)).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+    // Rounds are kept visually SEPARATE, not blended into one list --
+    // real bug this whole pass fixes: a chapter reassigned across rounds
+    // used to show its OLD round's target/progress summed on top of the
+    // current round's everywhere (the "184 of 54 assigned" report). The
+    // current round renders normally; anything fully superseded by a
+    // newer round is tucked into a collapsed history section instead, so
+    // it stays visible (nothing is deleted or hidden from the record) but
+    // can never be mistaken for what's currently assigned.
+    if(activeDocs.length===0 && pastDocs.length>0){
+      html += `<div class="hint" style="margin-bottom:10px;">Nothing currently assigned to you — everything below is from a previous round.</div>`;
+    } else if(activeDocs.length===0){
+      html += emptyState("No topics assigned to you yet.");
+    }
+    activeDocs.forEach(a=>{ html += renderAssignmentDoc(a); });
+    if(pastDocs.length>0){
+      html += `<details class="records-details" style="margin-top:14px;">
+        <summary class="section-label" style="cursor:pointer; display:inline-block;">Previous rounds (${pastDocs.length}) — superseded, kept for your own record</summary>
+        ${pastDocs.map(renderAssignmentDoc).join("")}
+      </details>`;
+    }
   }
   if(isAdminUser){
     const byLevel = {};
     LEVELS.forEach(l=>{ byLevel[l] = { teacherSet:new Set(), chapterSet:new Set(), target:0, draft:0, inReview:0, reviewed:0, done:0 }; });
-    assignments.forEach(a=>{
-      const lvl = byLevel[a.contestLevel]; if(!lvl) return;
-      Object.entries(a.quotas||{}).forEach(([email,units])=>{
-        Object.entries(units).forEach(([unit,raw])=>{
-          const { target } = resolveQuotaEntry(raw);
-          lvl.teacherSet.add(email);
-          lvl.chapterSet.add(unit);
-          lvl.target += target;
-          const c = countByStatus(email, a.contestLevel, unit, a);
-          lvl.draft += c.draft; lvl.inReview += c.inReview; lvl.reviewed += c.reviewed; lvl.done += c.finalized;
-        });
-      });
+    // Via currentAssignmentEntries() -- the "184 of 54" bug this whole
+    // pass fixes: summing raw across every assignment doc (including
+    // fully superseded past rounds, which "Start new round" deliberately
+    // never touches/deletes) double-counted a chapter re-assigned across
+    // rounds into this dashboard's totals and the "Progress by level"
+    // chart below.
+    currentAssignmentEntries().forEach(e=>{
+      const lvl = byLevel[e.level]; if(!lvl) return;
+      lvl.teacherSet.add(e.email);
+      lvl.chapterSet.add(e.unit);
+      lvl.target += e.target;
+      const c = countByStatus(e.email, e.level, e.unit, e.assignment);
+      lvl.draft += c.draft; lvl.inReview += c.inReview; lvl.reviewed += c.reviewed; lvl.done += c.finalized;
     });
     const totalTeachers = new Set();
     let totalTarget=0, totalDraft=0, totalInReview=0, totalReviewed=0, totalDone=0, totalChapters=0;
@@ -5354,18 +5442,17 @@ function renderLevelRoster(){
   if(!wrap) return;
   if(!workloadExpandedLevel){ wrap.innerHTML = ""; return; }
   const level = workloadExpandedLevel;
+  // Via currentAssignmentEntries() -- the roster's per-teacher "X/Y" is
+  // exactly the display that showed the "184 of 54" bug (summing every
+  // round's target/progress ever assigned for a chapter, instead of only
+  // the current round's).
   const merged = {};
-  assignments.filter(a=>a.contestLevel===level).forEach(a=>{
-    Object.entries(a.quotas||{}).forEach(([email,units])=>{
-      merged[email] = merged[email] || {email, target:0, draft:0, inReview:0, reviewed:0, done:0};
-      Object.entries(units).forEach(([unit,raw])=>{
-        const { target } = resolveQuotaEntry(raw);
-        merged[email].target += target;
-        const c = countByStatus(email, level, unit, a);
-        merged[email].draft += c.draft; merged[email].inReview += c.inReview;
-        merged[email].reviewed += c.reviewed; merged[email].done += c.finalized;
-      });
-    });
+  currentAssignmentEntries().filter(e=>e.level===level).forEach(e=>{
+    merged[e.email] = merged[e.email] || {email:e.email, target:0, draft:0, inReview:0, reviewed:0, done:0};
+    merged[e.email].target += e.target;
+    const c = countByStatus(e.email, level, e.unit, e.assignment);
+    merged[e.email].draft += c.draft; merged[e.email].inReview += c.inReview;
+    merged[e.email].reviewed += c.reviewed; merged[e.email].done += c.finalized;
   });
   const rows = Object.values(merged);
   wrap.innerHTML = rows.length===0 ? emptyState(`No teachers assigned to ${level} yet.`) : `
@@ -5412,21 +5499,28 @@ async function saveQuotaEntry(assignmentId, email, unit, newValue){
 function openTeacherWorkloadDetail(email, level){
   const root = document.getElementById("modal-root");
   const t = allTeachers.find(x=>x.email===email);
+  // The set of assignment docs that are still CURRENT for at least one
+  // chapter of this teacher at this level -- used below to label a row
+  // "Previous round" instead of letting it sit indistinguishable from an
+  // active one (the per-row numbers themselves were always correct --
+  // it's the SUMMARY up top, via teacherDifficultySummary(), that used to
+  // double-count a superseded round's quota on top of the current one;
+  // this label is what makes that "current round only" rule visible here
+  // too, not just correct in the number).
+  const currentDocIds = new Set(currentAssignmentEntries().filter(e=>e.email===email && e.level===level).map(e=>e.assignment.id));
   const rows = [];
   assignments.filter(a=>a.contestLevel===level && a.quotas?.[email]).forEach(a=>{
     Object.entries(a.quotas[email]).forEach(([unit,raw])=>{
       const { target, quotas, custom } = resolveQuotaEntry(raw);
-      rows.push({unit, target, quota:quotas, custom, assignmentId:a.id, rowKey:`${a.id}|${unit}`, c: countByStatus(email, level, unit, a), made: difficultyBreakdownForChapter(email, level, unit, a)});
+      rows.push({unit, target, quota:quotas, custom, assignmentId:a.id, assignmentName:a.name, isCurrent:currentDocIds.has(a.id), createdAt:a.createdAt, rowKey:`${a.id}|${unit}`, c: countByStatus(email, level, unit, a), made: difficultyBreakdownForChapter(email, level, unit, a)});
     });
   });
+  const activeRows = rows.filter(r=>r.isCurrent);
+  const pastRows = rows.filter(r=>!r.isCurrent).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
   const summary = teacherDifficultySummary(email, level);
-  root.innerHTML = `<div class="overlay" id="ov"><div class="drawer">
-    <div class="drawer-head"><h2>${escapeHtml(t?.name||email)} — ${escapeHtml(level)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
-    <p class="hint" style="margin:0 0 10px;">${escapeHtml(email)}</p>
-    ${rows.length>0 ? `<div class="callout" style="margin-bottom:14px;"><b>Difficulty split (all assigned chapters, ${escapeHtml(level)}):</b> ${difficultySplitHtml(summary.made, summary.quota)}<div class="hint" style="margin-top:4px;">Made vs. each chapter's expected Medium/Hard/Very-Hard split -- the ~even SOP default unless an admin set a custom split below (red = short, gold = over, green = on target). Counts every question they've authored for this level regardless of status, including drafts.</div></div>` : ""}
-    ${rows.length===0 ? emptyState("No chapters assigned for this level.") : rows.map(r=>
+  const rowHtml = r =>
       progressCard(`${r.unit} — ${chapterByCode(r.unit)?.title||""}`, r.c.finalized, r.target, `${r.c.draft} draft &middot; ${r.c.inReview} in review &middot; ${r.c.reviewed} reviewed (awaiting lock) &middot; ${r.c.finalized} locked`)
-      + `<div class="hint" style="margin:2px 0 4px 2px;">${difficultySplitHtml(r.made, r.quota)}${r.custom?` <span style="color:var(--accent); font-weight:600;">(custom split)</span>`:""}</div>`
+      + `<div class="hint" style="margin:2px 0 4px 2px;">${difficultySplitHtml(r.made, r.quota)}${r.custom?` <span style="color:var(--accent); font-weight:600;">(custom split)</span>`:""}${!r.isCurrent?` <span style="color:var(--ink-dim);">(${escapeHtml(r.assignmentName)} — previous round, superseded)</span>`:""}</div>`
       + `<div style="display:flex; gap:6px; align-items:center; margin:0 0 14px 2px; flex-wrap:wrap;">
           <span class="hint">Set exact targets:</span>
           <input type="number" min="0" data-split-medium="${escapeHtml(r.rowKey)}" value="${r.quota.medium}" style="width:52px; padding:3px 5px; font-size:12px;" title="Medium target" />
@@ -5434,8 +5528,16 @@ function openTeacherWorkloadDetail(email, level){
           <input type="number" min="0" data-split-veryhard="${escapeHtml(r.rowKey)}" value="${r.quota.very_hard}" style="width:52px; padding:3px 5px; font-size:12px;" title="Very Hard target" />
           <button type="button" class="btn small" data-save-split="${escapeHtml(r.rowKey)}" data-unit="${escapeHtml(r.unit)}" data-assignment-id="${escapeHtml(r.assignmentId)}">Save split</button>
           ${r.custom ? `<button type="button" class="btn small" data-reset-split="${escapeHtml(r.unit)}" data-assignment-id="${escapeHtml(r.assignmentId)}" data-reset-target="${r.target}">Reset to even</button>` : ""}
-        </div>`
-    ).join("")}
+        </div>`;
+  root.innerHTML = `<div class="overlay" id="ov"><div class="drawer">
+    <div class="drawer-head"><h2>${escapeHtml(t?.name||email)} — ${escapeHtml(level)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
+    <p class="hint" style="margin:0 0 10px;">${escapeHtml(email)}</p>
+    ${rows.length>0 ? `<div class="callout" style="margin-bottom:14px;"><b>Difficulty split (current chapters only, ${escapeHtml(level)}):</b> ${difficultySplitHtml(summary.made, summary.quota)}<div class="hint" style="margin-top:4px;">Made vs. each chapter's expected Medium/Hard/Very-Hard split -- the ~even SOP default unless an admin set a custom split below (red = short, gold = over, green = on target). Counts every question they've authored for this level regardless of status, including drafts. Scoped to this teacher's CURRENT round per chapter -- a superseded round shown below is excluded here too.</div></div>` : ""}
+    ${rows.length===0 ? emptyState("No chapters assigned for this level.") : activeRows.map(rowHtml).join("")}
+    ${pastRows.length>0 ? `<details class="records-details" style="margin-top:4px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Previous rounds (${pastRows.length}) — superseded, kept for the record</summary>
+      ${pastRows.map(rowHtml).join("")}
+    </details>` : ""}
   </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
