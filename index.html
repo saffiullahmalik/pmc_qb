@@ -3251,7 +3251,24 @@ function openReviewForm(q){
       logActivity("review_submitted", `Reviewed "${q.titleEn||"Untitled"}" — ${flag.short}`, q.id);
       toast(outcome==="agree" ? "Review submitted — marked OK, ready to lock" : "Review submitted — sent back to the author");
       closeModal();
-    }catch(err){ console.error(err); toast("Couldn't submit review"); }
+    }catch(err){
+      console.error(err);
+      // A real bug (fixed Nov 2026) could leave a question LOCKED while
+      // still showing up as "pending" in someone's review queue -- an
+      // admin bulk-reassign tool reopening a review never used to also
+      // reopen the question's own status, and firestore.rules only lets
+      // an admin/QB-lead touch an already-finalized question, so a plain
+      // teacher's submit here would fail with exactly this error code,
+      // with nothing in the toast explaining why. New reassignments can't
+      // create this anymore (see reassignBrokenReviews()), but surface it
+      // plainly if it's ever hit anyway, instead of just "Couldn't submit
+      // review" with no clue.
+      if(err.code==="permission-denied" && q.status==="finalized"){
+        toast("Couldn't submit — this question is locked. Ask an admin to unlock it (Admin & Analytics will also offer a one-click fix).");
+      } else {
+        toast("Couldn't submit review ("+err.code+")");
+      }
+    }
   });
 }
 
@@ -3401,10 +3418,16 @@ function renderDrawerBody(){
     if(!reviewer){ toast("No other teacher available to reassign to"); return; }
     if(!(await confirmDialog(`Reassign from ${q.peerReview.reviewerName} to ${reviewer.name||reviewer.email}? Their in-progress review (if any) will be discarded.`))) return;
     try{
-      await updateDoc(doc(db,"questions",q.id), {peerReview: freshPeerReview(reviewer)});
+      // A pending review can't legitimately sit on an already-LOCKED
+      // question -- reopen it too if so, same guard as
+      // reassignBrokenReviews()/shiftReviewsToOthers() (see their
+      // comments for the real "Couldn't submit review" bug this avoids).
+      const update = {peerReview: freshPeerReview(reviewer)};
+      if(q.status==="finalized") update.status = "in_review";
+      await updateDoc(doc(db,"questions",q.id), update);
       logActivity("review_assigned", `Reassigned "${q.titleEn||"Untitled"}" from ${q.peerReview.reviewerName} to ${reviewer.name||reviewer.email} for review`, q.id);
       toast("Reassigned");
-    }catch(err){ console.error(err); toast("Couldn't reassign"); }
+    }catch(err){ console.error(err); toast("Couldn't reassign ("+err.code+")"); }
   });
   document.getElementById("download-img").addEventListener("click", ()=>openDownloadOptionsPopup(q));
   document.getElementById("delete-q")?.addEventListener("click", async ()=>{
@@ -4990,7 +5013,12 @@ async function shiftReviewsToOthers(fromEmail, count){
       const minLoad = Math.min(...candidates.map(t=>load[t.email]));
       const least = candidates.filter(t=>load[t.email]===minLoad);
       const picked = least[Math.floor(Math.random()*least.length)];
-      batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
+      // Same "can't be both locked AND pending" guard as
+      // reassignBrokenReviews() below -- see its comment for the real bug
+      // this prevents reintroducing.
+      const update = {peerReview: freshPeerReview(picked)};
+      if(q.status==="finalized") update.status = "in_review";
+      batch.update(doc(db,"questions",q.id), update);
       load[picked.email]++;
     });
     await batch.commit();
@@ -5036,7 +5064,17 @@ async function reassignBrokenReviews(brokenList, alsoExclude){
     const minLoad = Math.min(...candidates.map(t=>load[t.email]));
     const least = candidates.filter(t=>load[t.email]===minLoad);
     const picked = least[Math.floor(Math.random()*least.length)];
-    batch.update(doc(db,"questions",q.id), {peerReview: freshPeerReview(picked)});
+    // If the question being reopened for review happens to already be
+    // LOCKED (e.g. a self-assigned review that got "agreed" and locked
+    // before this cleanup ran), reopen it to "in_review" too -- a
+    // question can never legitimately be both finalized AND awaiting a
+    // pending review at once, and leaving status untouched here is
+    // exactly the real bug that left reviewers unable to submit
+    // ("Couldn't submit review", no code shown) against a question
+    // firestore.rules only lets an admin/QB-lead touch once it's locked.
+    const update = {peerReview: freshPeerReview(picked)};
+    if(q.status==="finalized") update.status = "in_review";
+    batch.update(doc(db,"questions",q.id), update);
     load[picked.email]++;
     fixed++;
   });
@@ -5086,6 +5124,39 @@ async function fixIneligibleAssignedReviews(){
     toast(skipped>0 ? `Fixed ${fixed} — ${skipped} left in place (no other eligible reviewer exists for that author)` : `Fixed ${fixed} review${fixed===1?"":"s"}`);
     renderTab();
   }catch(err){ console.error(err); toast("Couldn't fix ("+err.code+")"); }
+}
+// Real bug report (Nov 2026): "Couldn't submit review" for a teacher
+// whose review looked completely normal -- the common thread turned out
+// to be that `status` was ALREADY "finalized" by the time they clicked
+// Submit. A question can only end up BOTH locked AND
+// peerReview.outcome==="pending" through an admin bulk-reassign tool
+// (reassignBrokenReviews()/shiftReviewsToOthers(), or the single-question
+// "Reassign" actions) reopening a review on a question that happened to
+// already be locked (e.g. a self-assigned review that got "agreed" and
+// was locked before the self-assigned cleanup ran against it) -- all of
+// those write paths only ever touched `peerReview`, never `status`, so
+// the question was left stuck in a state the normal UI can never
+// produce on its own: firestore.rules only lets an admin/QB-lead touch
+// an already-finalized question, so the reviewer it was reassigned to
+// could never actually submit. Every one of those write sites now also
+// reopens `status` to "in_review" when needed (see their own comments),
+// so this can't be newly created anymore -- this is the one-time cleanup
+// for any question already stuck in that state before the fix shipped.
+function lockedWithPendingReview(){
+  return questions.filter(q=>q.status==="finalized" && q.peerReview?.outcome==="pending");
+}
+async function fixLockedWithPendingReview(){
+  const broken = lockedWithPendingReview();
+  if(broken.length===0) return;
+  if(!(await confirmDialog(`Unlock ${broken.length} question${broken.length===1?"":"s"} so its already-assigned reviewer can actually submit? The peer review assignment itself is left exactly as it is -- only the lock is removed.`))) return;
+  try{
+    const batch = writeBatch(db);
+    broken.forEach(q=>batch.update(doc(db,"questions",q.id), {status:"in_review"}));
+    await batch.commit();
+    logActivity("question_status_changed", `Unlocked ${broken.length} question(s) that were stuck locked with a pending review`, null);
+    toast(`Unlocked ${broken.length} question${broken.length===1?"":"s"}`);
+    renderTab();
+  }catch(err){ console.error(err); toast("Couldn't unlock ("+err.code+")"); }
 }
 
 function progressCard(label, actual, target, sublabel){
@@ -7374,6 +7445,7 @@ function renderAdmin(){
     .sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
   const brokenSelfAssigned = selfAssignedReviews();
   const brokenIneligible = ineligibleAssignedReviews();
+  const brokenLockedPending = lockedWithPendingReview();
   // Review workload: everyone pickReviewer() can auto-assign to (same pool
   // as eligibleReviewerCandidates() with no author to exclude), each with
   // their live lifetime load against the shared fairness cap, plus both
@@ -7448,6 +7520,14 @@ function renderAdmin(){
         ${brokenIneligible.map(q=>`<li>${escapeHtml(q.titleEn||"Untitled")} — currently with ${escapeHtml(q.peerReview.reviewerName||q.peerReview.reviewerEmail)}</li>`).join("")}
       </ul>
       <button type="button" class="btn small primary" id="fix-ineligible-assigned">Fix ${brokenIneligible.length===1?"it":"all"} now — reassign to someone eligible</button>
+    </div>` : ""}
+    ${brokenLockedPending.length>0 ? `
+    <div class="callout warn" style="border-left-color:var(--red); margin-bottom:16px;">
+      <b>⚠ ${brokenLockedPending.length} question${brokenLockedPending.length===1?" is":"s are"} locked but still has a pending review assigned</b> — its reviewer can never actually submit (locking and reopening a review can't both be true at once; firestore.rules only lets an admin/QB-lead touch an already-locked question). Left over from a fixed bug in the reassignment tools; new reassignments can't create this anymore.
+      <ul style="margin:6px 0 10px 18px; padding:0;">
+        ${brokenLockedPending.map(q=>`<li>${escapeHtml(q.titleEn||"Untitled")} — assigned to ${escapeHtml(q.peerReview.reviewerName||q.peerReview.reviewerEmail)}</li>`).join("")}
+      </ul>
+      <button type="button" class="btn small primary" id="fix-locked-pending">Unlock ${brokenLockedPending.length===1?"it":"all"} now</button>
     </div>` : ""}
     <details class="records-details">
       <summary class="section-label" style="cursor:pointer; display:inline-block;">Pending reviews (${pendingReviews.length})</summary>
@@ -7624,6 +7704,7 @@ function renderAdmin(){
   document.querySelectorAll("[data-goto-question]").forEach(b=>b.addEventListener("click", ()=>openQuestion(b.dataset.gotoQuestion)));
   document.getElementById("fix-self-assigned")?.addEventListener("click", fixSelfAssignedReviews);
   document.getElementById("fix-ineligible-assigned")?.addEventListener("click", fixIneligibleAssignedReviews);
+  document.getElementById("fix-locked-pending")?.addEventListener("click", fixLockedWithPendingReview);
   document.querySelectorAll("[data-reassign-to]").forEach(sel=>sel.addEventListener("change", async ()=>{
     const q = questions.find(x=>x.id===sel.dataset.reassignTo);
     const newEmail = sel.value;
@@ -7631,10 +7712,14 @@ function renderAdmin(){
     const t = allTeachers.find(x=>x.email===newEmail);
     if(!(await confirmDialog(`Reassign "${q.titleEn||"this question"}" from ${q.peerReview.reviewerName} to ${t?.name||newEmail}? Their in-progress review (if any) will be discarded.`))) { sel.value=""; return; }
     try{
-      await updateDoc(doc(db,"questions",q.id), {peerReview: freshPeerReview(t||{email:newEmail})});
+      // Same "can't be both locked AND pending" guard as
+      // reassignBrokenReviews()/shiftReviewsToOthers() above.
+      const update = {peerReview: freshPeerReview(t||{email:newEmail})};
+      if(q.status==="finalized") update.status = "in_review";
+      await updateDoc(doc(db,"questions",q.id), update);
       logActivity("review_assigned", `Reassigned "${q.titleEn||"Untitled"}" from ${q.peerReview.reviewerName} to ${t?.name||newEmail} for review`, q.id);
       toast("Reassigned");
-    }catch(err){ console.error(err); toast("Couldn't reassign"); sel.value=""; }
+    }catch(err){ console.error(err); toast("Couldn't reassign ("+err.code+")"); sel.value=""; }
   }));
   document.querySelectorAll("[data-unassign]").forEach(b=>b.addEventListener("click", async ()=>{
     const q = questions.find(x=>x.id===b.dataset.unassign);
