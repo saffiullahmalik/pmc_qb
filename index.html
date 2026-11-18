@@ -4321,7 +4321,9 @@ async function commitSessionBuild(session, build){
   const contestIds = { ...(session.contestIds||{}) };
   for(const p of build.papers){
     const ids = build.paperQuestionIds[p.key];
-    const existingId = contestIds[p.key];
+    // A paper deleted from the Papers table leaves a dangling id here --
+    // updating it would fail the whole batch, so recreate it instead.
+    const existingId = contests.some(c=>c.id===contestIds[p.key]) ? contestIds[p.key] : null;
     const name = `${session.name} — Day ${p.day}, Slot ${p.slot}`;
     if(existingId){
       batch.update(doc(db,"contests",existingId), { questionIds: ids });
@@ -4363,6 +4365,41 @@ async function commitSessionBuild(session, build){
   if(session.id) batch.update(sessionRef, sessionBody); else batch.set(sessionRef, sessionBody);
   await batch.commit();
   return { ...sessionBody, id: sessionRef.id };
+}
+// Deletes a session doc, every paper it built that still exists, and its
+// usage tags on questions (Nov 2026, real report: a session rebuilt after
+// deleting its papers left the old session row behind -- there was no way
+// to delete a session at all, and deleting a paper never touched its
+// session). usageHistory entries are matched exactly by sessionId. usedIn
+// is stored by paper NAME, and a rebuilt session's papers share the old
+// names, so a name is only stripped from a question if no surviving paper
+// outside this session still carries that name AND that question.
+// Returns how many questions were updated.
+async function deleteSession(s){
+  const ownIds = new Set(Object.values(s.contestIds||{}));
+  const ownNames = new Set();
+  for(let d=1; d<=s.days; d++) for(let sl=1; sl<=s.slotsPerDay; sl++) ownNames.add(`${s.name} — Day ${d}, Slot ${sl}`);
+  contests.filter(c=>ownIds.has(c.id)).forEach(c=>ownNames.add(c.name));
+  const others = contests.filter(c=>!ownIds.has(c.id));
+  const writes = [];
+  questions.forEach(q=>{
+    const hist = q.usageHistory||[];
+    const keptHist = hist.filter(h=>h.sessionId!==s.id);
+    const stripNames = (q.usedIn||[]).filter(n=>ownNames.has(n) && !others.some(c=>c.name===n && (c.questionIds||[]).includes(q.id)));
+    if(keptHist.length===hist.length && stripNames.length===0) return;
+    const update = {};
+    if(keptHist.length!==hist.length) update.usageHistory = keptHist;
+    if(stripNames.length) update.usedIn = arrayRemove(...stripNames);
+    writes.push(batch=>batch.update(doc(db,"questions",q.id), update));
+  });
+  ownIds.forEach(id=>{ if(contests.some(c=>c.id===id)) writes.push(batch=>batch.delete(doc(db,"contests",id))); });
+  writes.push(batch=>batch.delete(doc(db,"contestSessions",s.id)));
+  for(let i=0; i<writes.length; i+=400){
+    const batch = writeBatch(db);
+    writes.slice(i, i+400).forEach(w=>w(batch));
+    await batch.commit();
+  }
+  return writes.length - 1 - [...ownIds].filter(id=>contests.some(c=>c.id===id)).length;
 }
 
 // Dry-run summary for the "Build a session" preview -- runs the REAL
@@ -4908,6 +4945,13 @@ function renderContests(){
           // never bundled into the primary one.
           const sessionLiveCounts = (s.round && !isComplete) ? sessionLiveShortfallCounts(s) : null;
           const crossRoundHelps = sessionLiveCounts && sessionCrossRoundWouldHelp(freshBuild.shortfalls, sessionLiveCounts.extraCounts, sessionLiveCounts.counts);
+          // A session whose papers were all deleted from the Papers table
+          // (deleting a paper never removed its session) -- nothing left to
+          // fill into, so it only offers Delete. Gated on dataReady.contests
+          // so a still-loading contests list never makes every session look
+          // orphaned for a moment.
+          const paperIds = Object.values(s.contestIds||{});
+          const orphaned = dataReady.contests && paperIds.length>0 && !paperIds.some(id=>contests.some(c=>c.id===id));
           return `
         <tr>
           <td>${escapeHtml(s.name)}</td>
@@ -4916,11 +4960,12 @@ function renderContests(){
           <td class="mono">${s.questionsPerPaper}</td>
           <td>${s.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}</td>
           <td>${s.round?escapeHtml(s.round):`<span class="hint">All rounds</span>`}</td>
-          <td>${isComplete ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}${readyCount>0?` <span class="pill" style="background:var(--accent-soft); color:var(--accent); font-weight:700;" title="These chapters now have at least one locked question that wasn't there before">⚡ ${readyCount} ready to add</span>`:""}</td>
+          <td>${orphaned ? `<span class="pill" style="background:var(--red-soft); color:var(--red);" title="Every paper this session built has been deleted from the Papers table">Papers deleted</span>` : `${isComplete ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}${readyCount>0?` <span class="pill" style="background:var(--accent-soft); color:var(--accent); font-weight:700;" title="These chapters now have at least one locked question that wasn't there before">⚡ ${readyCount} ready to add</span>`:""}`}</td>
           <td style="white-space:nowrap;">
-            <button class="btn small" data-view-session="${s.id}">View</button>
-            ${!isComplete ? `<button class="btn small ${readyCount>0?"primary":""}" data-fill-session="${s.id}">Add more now</button>` : ""}
-            ${crossRoundHelps ? `<button class="btn small ghost" data-fill-session-cross="${s.id}" title="Standby option -- only pulls in other rounds' questions for cells that have nothing left in ${escapeHtml(s.round)}">+ other rounds</button>` : ""}
+            ${orphaned ? "" : `<button class="btn small" data-view-session="${s.id}">View</button>`}
+            ${!orphaned && !isComplete ? `<button class="btn small ${readyCount>0?"primary":""}" data-fill-session="${s.id}">Add more now</button>` : ""}
+            ${!orphaned && crossRoundHelps ? `<button class="btn small ghost" data-fill-session-cross="${s.id}" title="Standby option -- only pulls in other rounds' questions for cells that have nothing left in ${escapeHtml(s.round)}">+ other rounds</button>` : ""}
+            ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete-session="${s.id}">Delete</button>` : ""}
           </td>
         </tr>`;}).join("")}
       </tbody>
@@ -4999,12 +5044,29 @@ function renderContests(){
     }
     catch(err){ toast("Couldn't update contest"); }
   }));
+  main.querySelectorAll("[data-delete-session]").forEach(b=>b.addEventListener("click", async ()=>{
+    const s = contestSessions.find(x=>x.id===b.dataset.deleteSession);
+    if(!s) return;
+    const livePapers = Object.values(s.contestIds||{}).filter(id=>contests.some(c=>c.id===id)).length;
+    if(!(await confirmDialog(`Delete session "${s.name}"${livePapers>0?` and its ${livePapers} paper${livePapers===1?"":"s"}`:""}? Its questions become free to use again. This can't be undone.`, {danger:true}))) return;
+    b.disabled = true; b.textContent = "Deleting…";
+    try{
+      const n = await deleteSession(s);
+      logActivity("session_deleted", `Deleted session "${s.name}" (${livePapers} paper(s), ${n} question tag(s) cleaned)`, s.id);
+      toast("Session deleted");
+    }catch(err){ console.error(err); toast("Couldn't delete session ("+err.code+")"); b.disabled=false; b.textContent="Delete"; }
+  }));
   main.querySelectorAll("[data-delete-contest]").forEach(b=>b.addEventListener("click", async ()=>{
-    if(!(await confirmDialog("Delete this contest record? This also removes its usage tag from every question that was tagged with it.", {danger:true}))) return;
     const c = contests.find(x=>x.id===b.dataset.deleteContest);
+    const owner = c?.sessionId ? contestSessions.find(x=>x.id===c.sessionId) : null;
+    if(!(await confirmDialog(`Delete this contest record? This also removes its usage tag from every question that was tagged with it.${owner?` This paper belongs to session "${owner.name}" — to remove the whole session, use Delete in the Sessions table instead.`:""}`, {danger:true}))) return;
     try{
       await deleteDoc(doc(db,"contests",b.dataset.deleteContest));
-      if(c) await Promise.all((c.questionIds||[]).map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayRemove(c.name)}).catch(()=>{})));
+      // usedIn tags are stored by contest NAME, and two papers can share a
+      // name (e.g. a session rebuilt twice) -- never strip the tag from a
+      // question that another surviving paper with the same name still uses.
+      const keepTag = qid=>contests.some(x=>x.id!==c.id && x.name===c.name && (x.questionIds||[]).includes(qid));
+      if(c) await Promise.all((c.questionIds||[]).filter(qid=>!keepTag(qid)).map(qid=>updateDoc(doc(db,"questions",qid), {usedIn: arrayRemove(c.name)}).catch(()=>{})));
       logActivity("contest_deleted", `Deleted contest "${c?.name||"—"}"`, b.dataset.deleteContest);
       toast("Contest deleted");
     }
