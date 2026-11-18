@@ -1558,7 +1558,9 @@ function startDataSubscriptions(){
   const csy = query(collection(db,"contestSessions"), orderBy("createdAt","desc"), limit(100));
   unsubContestSessions = onSnapshot(csy, snap=>{
     contestSessions = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(currentTab==="contests") renderTab();
+    // Upload reads activeContests(), which depends on each session's
+    // archived flag, so it needs refreshing too.
+    if(currentTab==="contests" || currentTab==="quilgo") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contest sessions ("+err.code+")"); });
   const ay = query(collection(db,"assignments"), orderBy("createdAt","desc"), limit(200));
   unsubAssignments = onSnapshot(ay, snap=>{
@@ -4918,12 +4920,12 @@ function renderContests(){
       ${eligible.some(q=>(q.level||[]).length>1) ? `<p class="hint" style="margin-top:4px;">A question tagged for more than one PMC category counts toward each one's row above, so the rows can add up to more than the overall totals — that's expected, not an error.</p>` : ""}
       `;
     })()}
-    ${contestSessions.length>0 ? `
+    ${contestSessions.some(s=>!s.archived) ? `
     <div class="section-label" style="margin-top:0;">Sessions</div>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Questions/paper</th><th>Overlap</th><th>Round</th><th>Status</th><th></th></tr></thead>
       <tbody>
-        ${contestSessions.map(s=>{
+        ${contestSessions.filter(s=>!s.archived).map(s=>{
           const totalPapers = s.days*s.slotsPerDay;
           // Nov 2026 fix ("why is a session showing Complete at 39/60"):
           // don't trust the session's stored status/shortfalls -- a
@@ -5006,17 +5008,39 @@ function renderContests(){
             ${orphaned ? "" : `<button class="btn small" data-view-session="${s.id}">View</button>`}
             ${!orphaned && !isComplete ? `<button class="btn small ${readyCount>0?"primary":""}" data-fill-session="${s.id}">Add more now</button>` : ""}
             ${!orphaned && crossRoundHelps ? `<button class="btn small ghost" data-fill-session-cross="${s.id}" title="Standby option -- only pulls in other rounds' questions for cells that have nothing left in ${escapeHtml(s.round)}">+ other rounds</button>` : ""}
+            ${isAdminUser && !orphaned ? `<button class="btn small" data-archive-session="${s.id}" title="Hide this session and its papers from Contests and Upload. Restore any time from Archived below.">Archive</button>` : ""}
             ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete-session="${s.id}">Delete</button>` : ""}
           </td>
         </tr>`;}).join("")}
       </tbody>
     </table></div>` : ""}
+    ${contestSessions.some(s=>s.archived) ? `
+    <details class="records-details" style="margin-top:8px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Archived sessions (${contestSessions.filter(s=>s.archived).length})</summary>
+      <p class="hint">Hidden from Contests and Upload, along with their papers. Post Processing still shows them so results can be imported and analysed after the round.</p>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Round</th><th>Archived</th><th></th></tr></thead>
+        <tbody>
+          ${contestSessions.filter(s=>s.archived).map(s=>`<tr>
+            <td>${escapeHtml(s.name)}</td>
+            <td class="mono">${escapeHtml(s.pmcType)}</td>
+            <td class="mono">${s.days} × ${s.slotsPerDay}</td>
+            <td>${s.round?escapeHtml(s.round):`<span class="hint">All rounds</span>`}</td>
+            <td class="mono">${s.archivedAt?fmtDate(s.archivedAt):"—"}</td>
+            <td style="white-space:nowrap;">
+              ${isAdminUser ? `<button class="btn small" data-unarchive-session="${s.id}">Restore</button>` : ""}
+              ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete-session="${s.id}">Delete</button>` : ""}
+            </td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </details>` : ""}
     <div class="section-label">Papers</div>
-    ${!dataReady.contests ? loadingState("Loading contests…") : contests.length===0 ? emptyState("No contests created yet.") : `
+    ${!dataReady.contests ? loadingState("Loading contests…") : activeContests().length===0 ? emptyState(contests.length ? "Every paper is archived — see Archived papers below." : "No contests created yet.") : `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Upload</th><th></th></tr></thead>
       <tbody>
-        ${contests.map(c=>{
+        ${activeContests().map(c=>{
           const pending = contestPendingCount(c);
           return `
         <tr>
@@ -5032,12 +5056,60 @@ function renderContests(){
           <td style="white-space:nowrap;">
             <button class="btn small" data-edit-contest="${c.id}">Edit</button>
             <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
+            ${isAdminUser && !c.sessionId ? `<button class="btn small" data-archive-contest="${c.id}" title="Hide this paper from Contests and Upload. Papers built by a session are archived with their session instead.">Archive</button>` : ""}
             ${isAdminUser?`<button class="btn small" style="color:var(--red);" data-delete-contest="${c.id}">Delete</button>`:""}
           </td>
         </tr>`;}).join("")}
       </tbody>
     </table></div>`}
+    ${dataReady.contests && contests.some(isContestArchived) ? `
+    <details class="records-details" style="margin-top:8px;">
+      <summary class="section-label" style="cursor:pointer; display:inline-block;">Archived papers (${contests.filter(isContestArchived).length})</summary>
+      <div class="table-wrap"><table class="data">
+        <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Questions</th><th></th></tr></thead>
+        <tbody>
+          ${contests.filter(isContestArchived).map(c=>`<tr>
+            <td class="mono">${escapeHtml(c.contestLevel||"—")}</td>
+            <td class="mono">${c.day??"—"}</td>
+            <td class="mono">${c.slot??"—"}</td>
+            <td>${escapeHtml(c.name)}</td>
+            <td class="mono">${(c.questionIds||[]).length}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
+              ${isAdminUser && c.archived ? `<button class="btn small" data-unarchive-contest="${c.id}">Restore</button>` : `<span class="hint">archived with its session</span>`}
+            </td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </details>` : ""}
   `;
+  const setArchived = async (coll, id, archived, label)=>{
+    try{
+      await updateDoc(doc(db, coll, id), archived ? {archived:true, archivedAt:new Date().toISOString(), archivedBy:currentUser.email} : {archived:false});
+      logActivity(archived?"archived":"unarchived", `${archived?"Archived":"Restored"} ${label}`, id);
+      toast(archived ? "Archived" : "Restored");
+    }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
+  };
+  main.querySelectorAll("[data-archive-session]").forEach(b=>b.addEventListener("click", async ()=>{
+    const s = contestSessions.find(x=>x.id===b.dataset.archiveSession);
+    if(!s) return;
+    if(!(await confirmDialog(`Archive session "${s.name}"? It and its papers disappear from Contests and Upload. Nothing is deleted — restore it any time from "Archived sessions".`))) return;
+    setArchived("contestSessions", s.id, true, `session "${s.name}"`);
+  }));
+  main.querySelectorAll("[data-unarchive-session]").forEach(b=>b.addEventListener("click", ()=>{
+    const s = contestSessions.find(x=>x.id===b.dataset.unarchiveSession);
+    if(s) setArchived("contestSessions", s.id, false, `session "${s.name}"`);
+  }));
+  main.querySelectorAll("[data-archive-contest]").forEach(b=>b.addEventListener("click", async ()=>{
+    const c = contests.find(x=>x.id===b.dataset.archiveContest);
+    if(!c) return;
+    if(!(await confirmDialog(`Archive paper "${c.name}"? It disappears from Contests and Upload. Nothing is deleted — restore it any time from "Archived papers".`))) return;
+    setArchived("contests", c.id, true, `paper "${c.name}"`);
+  }));
+  main.querySelectorAll("[data-unarchive-contest]").forEach(b=>b.addEventListener("click", ()=>{
+    const c = contests.find(x=>x.id===b.dataset.unarchiveContest);
+    if(c) setArchived("contests", c.id, false, `paper "${c.name}"`);
+  }));
   document.getElementById("new-contest").addEventListener("click", ()=>openContestForm());
   document.getElementById("new-session").addEventListener("click", ()=>openSessionForm());
   main.querySelectorAll("[data-view-session]").forEach(b=>b.addEventListener("click", ()=>{
@@ -6635,11 +6707,26 @@ function openAssignmentForm(existing, opts){
 // questionId that no longer resolves to a real question, same as the
 // paper-level "Pending upload (N)" count already does) so this never
 // over/under-counts relative to what a single paper's own screen shows.
+// Archiving (Nov 2026, real request: "archive previous round or sessions so
+// they can be disabled from every tab, only active contests show"). A
+// paper is archived if its own `archived` flag is set (hand-built papers)
+// or its session's is (session-built papers -- archiving a session hides
+// all of its papers at once). activeContests() is what the Upload tab and
+// the Contests tab's main lists read. Post Processing deliberately still
+// reads every contest: importing results and item analysis happen AFTER a
+// round is over, which is exactly when it gets archived.
+function isContestArchived(c){
+  if(c.archived) return true;
+  return !!(c.sessionId && contestSessions.find(s=>s.id===c.sessionId)?.archived);
+}
+function activeContests(){
+  return contests.filter(c=>!isContestArchived(c));
+}
 function uploadProgressStats(){
   const byLevel = {};
   LEVELS.forEach(l=>{ byLevel[l] = {total:0, uploaded:0}; });
   let totalAll=0, uploadedAll=0;
-  contests.forEach(c=>{
+  activeContests().forEach(c=>{
     const total = (c.questionIds||[]).map(id=>questions.find(q=>q.id===id)).filter(Boolean).length;
     const uploaded = total - contestPendingCount(c);
     totalAll += total; uploadedAll += uploaded;
@@ -6653,8 +6740,9 @@ function renderQuilgo(){
   // shipped) to be findable this way -- older contests without them fall
   // into the "Unspecified" bucket, which points back at Edit instead of
   // silently disappearing from the tab.
-  const withMeta = contests.filter(c=>c.contestLevel && c.day!=null && c.slot!=null);
-  const unspecified = contests.filter(c=>!(c.contestLevel && c.day!=null && c.slot!=null));
+  const live = activeContests();
+  const withMeta = live.filter(c=>c.contestLevel && c.day!=null && c.slot!=null);
+  const unspecified = live.filter(c=>!(c.contestLevel && c.day!=null && c.slot!=null));
   const days = quilgoLevel ? Array.from(new Set(withMeta.filter(c=>c.contestLevel===quilgoLevel).map(c=>c.day))).sort((a,b)=>a-b) : [];
   const slots = (quilgoLevel && quilgoDay!=="") ? Array.from(new Set(withMeta.filter(c=>c.contestLevel===quilgoLevel && String(c.day)===String(quilgoDay)).map(c=>c.slot))).sort((a,b)=>a-b) : [];
   const matches = (quilgoLevel && quilgoDay!=="" && quilgoSlot!=="") ? withMeta.filter(c=>c.contestLevel===quilgoLevel && String(c.day)===String(quilgoDay) && String(c.slot)===String(quilgoSlot)) : [];
