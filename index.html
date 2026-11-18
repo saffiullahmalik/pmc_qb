@@ -4003,10 +4003,29 @@ function sessionLiveShortfallCounts(session){
 // next time.
 async function sessionFillDraft(session){
   if(!session.round) return session;
-  const { extraCounts } = sessionLiveShortfallCounts(session);
-  const extraTotal = Object.values(extraCounts).reduce((a,b)=>a+b,0);
-  if(extraTotal===0) return session;
-  const useAll = await confirmDialog(`Some still-short chapters have questions available in OTHER rounds (not "${session.round}"). Fill using ALL rounds this time? This session's own Round setting stays "${session.round}" for next time — this only applies to this one fill.`);
+  const shortfalls = session.shortfalls||[];
+  if(shortfalls.length===0) return session;
+  // Real bug fixed Nov 2026 ("it says it will add from previous round
+  // while i have locked more in round 2"): this used to prompt whenever
+  // ANY (chapter, difficulty) combination anywhere had SOME cross-round
+  // content, regardless of whether that cell was even still short, or
+  // whether the admin had just locked enough SAME-round content to cover
+  // it already -- so locking a fresh batch of matching Round-2 questions
+  // and clicking "Add more now" could still get interrupted by an
+  // unnecessary "fill using other rounds?" prompt. Now only checks the
+  // SPECIFIC cells this session's own `shortfalls` list says are still
+  // empty, and only counts a cell as "cross-round would help" when its
+  // SAME-round count is genuinely 0 -- if what was just locked already
+  // covers every short cell, this returns immediately with no prompt at
+  // all, exactly like a plain "Add more now" always worked before the
+  // Round filter existed.
+  const { counts, extraCounts } = sessionLiveShortfallCounts(session);
+  const wouldHelp = shortfalls.some(sf=>{
+    const k = `${sf.unit}|${sf.difficulty}`;
+    return (counts[k]||0)===0 && (extraCounts[k]||0)>0;
+  });
+  if(!wouldHelp) return session;
+  const useAll = await confirmDialog(`Some still-short chapters have NO questions in "${session.round}" but DO have some in other rounds. Fill using ALL rounds this time? This session's own Round setting stays "${session.round}" for next time — this only applies to this one fill.`);
   return useAll ? { ...session, round: null } : session;
 }
 // Per-chapter need vs. locked-available breakdown for a session -- the
