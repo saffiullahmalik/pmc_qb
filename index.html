@@ -837,6 +837,47 @@ async function backfillQuestionRounds(cutoffDate, beforeLabel, afterLabel){
   }
   return targets.length;
 }
+// Rename / merge round labels (Nov 2026, real report: the Round filter
+// listed both "PMC Fall 2026 Round 2" and "PMC Fall 2026 – Round 2"). A
+// round label lives in three places: questions.round (stored tag),
+// contestSessions.round (what a session builds from), and assignments'
+// `name` (what new questions auto-tag with, and what effectiveRound()
+// resolves unresolved questions to). The backfill tool's default label
+// used an en dash while the Round 2 assignment didn't, so the bank ended
+// up with two spellings of one round -- and a session built for one
+// spelling treated questions tagged with the other as a DIFFERENT round
+// and skipped them. renameRound() rewrites all three in one pass.
+function roundNameKey(label){
+  return String(label||"").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+function roundUsage(){
+  const map = {};
+  const bump = (label, k)=>{ if(!label) return; (map[label] = map[label]||{questions:0, sessions:0, assignments:0})[k]++; };
+  questions.forEach(q=>bump(q.round, "questions"));
+  contestSessions.forEach(s=>bump(s.round, "sessions"));
+  assignments.forEach(a=>bump(a.name, "assignments"));
+  return map;
+}
+// Groups of labels that differ only in punctuation/spacing/case -- almost
+// certainly the same round spelled two ways.
+function nearDuplicateRounds(){
+  const usage = roundUsage();
+  const byKey = {};
+  Object.keys(usage).filter(l=>usage[l].questions>0 || usage[l].sessions>0).forEach(l=>{ (byKey[roundNameKey(l)] = byKey[roundNameKey(l)]||[]).push(l); });
+  return Object.values(byKey).filter(g=>g.length>1);
+}
+async function renameRound(from, to){
+  const writes = [];
+  questions.filter(q=>q.round===from).forEach(q=>writes.push(b=>b.update(doc(db,"questions",q.id), {round:to})));
+  contestSessions.filter(s=>s.round===from).forEach(s=>writes.push(b=>b.update(doc(db,"contestSessions",s.id), {round:to})));
+  assignments.filter(a=>a.name===from).forEach(a=>writes.push(b=>b.update(doc(db,"assignments",a.id), {name:to})));
+  for(let i=0; i<writes.length; i+=400){
+    const batch = writeBatch(db);
+    writes.slice(i, i+400).forEach(w=>w(batch));
+    await batch.commit();
+  }
+  return writes.length;
+}
 // Which status values a role may pick in the editor. The question's current
 // value is always included even if not normally pickable by this role, so
 // re-saving never silently downgrades a status someone else set.
@@ -8373,6 +8414,33 @@ function renderAdmin(){
       <div class="field" style="margin:0;"><label>Label for on/after the cutoff</label><input type="text" id="rb-after" value="PMC Fall 2026 – Round 2" style="width:220px;" /></div>
       <button class="btn primary" id="rb-run" ${questionsNeedingRoundBackfill().length===0?"disabled":""}>Backfill rounds</button>
     </div>
+    ${(()=>{
+      const usage = roundUsage();
+      const labels = Object.keys(usage).sort();
+      const dups = nearDuplicateRounds();
+      // Pre-fill from the first near-duplicate pair: rename the spelling no
+      // assignment uses INTO the one an assignment uses, since that's the
+      // spelling new questions will keep auto-tagging with.
+      let preFrom = "", preTo = "";
+      if(dups.length){
+        const g = dups[0];
+        preTo = g.find(l=>usage[l].assignments>0) || g[0];
+        preFrom = g.find(l=>l!==preTo);
+      }
+      const desc = l=>{ const u=usage[l]; return [u.questions?`${u.questions} question${u.questions===1?"":"s"}`:"", u.sessions?`${u.sessions} session${u.sessions===1?"":"s"}`:"", u.assignments?`${u.assignments} assignment${u.assignments===1?"":"s"}`:""].filter(Boolean).join(", "); };
+      return `
+    <div class="section-label">Rename / merge rounds</div>
+    ${dups.length ? `<div class="callout warn">⚠ These look like the same round spelled differently: ${dups.map(g=>g.map(l=>`<b>${escapeHtml(l)}</b> (${desc(l)})`).join(" and ")).join("; ")}. Questions under one spelling are treated as a different round from the other — including when a session builds its papers. Merge them below.</div>` : ""}
+    <p class="desc">Renames a round label everywhere it's used: every question tagged with it, every session built from it, and every assignment with that name (so new questions keep auto-tagging with the new name). Renaming to a name that already exists merges the two.</p>
+    <div class="filters" style="align-items:flex-end;">
+      <div class="field" style="margin:0;"><label>Rename this round</label><select id="rr-from" style="min-width:240px;">
+        ${labels.map(l=>`<option value="${escapeHtml(l)}" ${l===preFrom?"selected":""}>${escapeHtml(l)} — ${desc(l)}</option>`).join("")}
+      </select></div>
+      <div class="field" style="margin:0;"><label>To</label><input type="text" id="rr-to" list="rr-to-list" value="${escapeHtml(preTo)}" style="width:240px;" placeholder="New or existing round name" />
+        <datalist id="rr-to-list">${labels.map(l=>`<option value="${escapeHtml(l)}"></option>`).join("")}</datalist></div>
+      <button class="btn primary" id="rr-run" ${labels.length===0?"disabled":""}>Rename</button>
+    </div>`;
+    })()}
     <div class="section-label">Backup</div>
     <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
     <button class="btn" id="export-data">⬇ Export all data as JSON</button>
@@ -8548,6 +8616,23 @@ function renderAdmin(){
       toast(`Labeled ${n} question(s)`);
       renderTab();
     }catch(err){ console.error(err); toast("Couldn't backfill rounds ("+err.code+")"); }
+  });
+  document.getElementById("rr-run")?.addEventListener("click", async ()=>{
+    const from = document.getElementById("rr-from").value;
+    const to = document.getElementById("rr-to").value.trim();
+    if(!from || !to){ toast("Pick a round and type the new name"); return; }
+    if(from===to){ toast("That's already its name"); return; }
+    const u = roundUsage()[from] || {questions:0, sessions:0, assignments:0};
+    const merging = !!roundUsage()[to];
+    if(!(await confirmDialog(`${merging?"Merge":"Rename"} "${from}" ${merging?"into":"to"} "${to}"? This updates ${u.questions} question(s), ${u.sessions} session(s), and ${u.assignments} assignment(s).`))) return;
+    const btn = document.getElementById("rr-run");
+    btn.disabled = true; btn.textContent = "Renaming…";
+    try{
+      const n = await renameRound(from, to);
+      logActivity("round_renamed", `Renamed round "${from}" to "${to}" (${n} record(s))`, null);
+      toast(`Updated ${n} record(s)`);
+      renderTab();
+    }catch(err){ console.error(err); toast("Couldn't rename round ("+err.code+")"); btn.disabled=false; btn.textContent="Rename"; }
   });
   document.getElementById("cx-add-chapter").addEventListener("click", async ()=>{
     const bookId = document.getElementById("cx-book").value;
