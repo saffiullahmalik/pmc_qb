@@ -674,6 +674,77 @@ function allRounds(){
   questions.forEach(q=>{ if(q.round) used.add(q.round); });
   return Array.from(used).sort();
 }
+// Nov 2026, real report: a question drafted before 29 Oct 2026 was
+// backfilled as "Round 1" (see backfillQuestionRounds() below) and never
+// touched again -- but it's STILL sitting unresolved (sent back, fixed,
+// reviewed again) well into Round 2, because nobody locked it before
+// Round 2's own assignment took over that chapter. Its stored `round`
+// field, taken literally, made it look like permanently-abandoned
+// "Round 1 debt" even though it's actively live work today -- exactly
+// the confusion behind "round 1 is archived... how however nothing was
+// left for review" when a Round-1-tagged item was still being reviewed
+// in November.
+//
+// `effectiveRound(q)` is the fix: the round a question's PROGRESS counts
+// toward right now, as opposed to `q.round`, the round it was literally
+// first drafted under (a fixed historical fact, never silently changed
+// by this). Once a question is LOCKED (finalized/uploaded), it's settled
+// -- `effectiveRound()` returns its stored `round` forever, same as
+// reading `q.round` directly, since locking is what actually closes a
+// round's book on that question. Before that, an unresolved question
+// always tracks forward to whichever round's assignment CURRENTLY covers
+// its own chapter for its own author (`currentAssignmentEntries()`, the
+// same per-chapter "which round is this, right now" lookup the
+// assignment-progress widgets already use) -- falling back to its stored
+// `round` only if that chapter isn't currently assigned to its author at
+// all (a genuinely orphaned case, not just "an older round"). This is
+// used everywhere a question's round needs to mean "what round does
+// finishing this contribute to" -- filtering, dashboards, contest/session
+// eligibility -- never for the editor's own Round field itself, which
+// always shows and saves the real stored value a teacher can see and
+// override directly.
+function effectiveRound(q){
+  if(q.status==="finalized" || q.status==="uploaded") return q.round || null;
+  const entry = currentAssignmentEntries().find(e=>e.email===q.authorEmail && e.unit===q.unit && (q.level||[]).includes(e.level));
+  return entry ? entry.assignment.name : (q.round || null);
+}
+// Admin & Analytics -> "Round summary" (Nov 2026, real request: "need
+// this flow very clear so everyone can understand... all progress...
+// should be balanced"): the one authoritative, reconciled breakdown --
+// every question in the bank falls into EXACTLY ONE row (by
+// effectiveRound()) and EXACTLY ONE status column, so the six status
+// columns always sum to that row's own total, and every row's total
+// always sums to the bank's grand total (the same "Total questions" tile
+// above it) -- nothing is ever double-counted or silently dropped. The
+// six columns are deliberately mutually exclusive, not the three raw
+// status values: "in_review" splits three ways by peerReview.outcome
+// (pending/no-reviewer-yet -> "In Review", "agree" -> "Reviewed OK",
+// "disagree" -> "Sent back"), matching the exact same split
+// countByStatus() already uses for every other progress display in the
+// app, so this table's numbers are never a DIFFERENT way of counting
+// the same thing -- just the same counting, organized by round instead
+// of by teacher or chapter.
+function roundSummaryRows(){
+  const buckets = {};
+  questions.forEach(q=>{
+    const r = effectiveRound(q) || "";
+    const b = buckets[r] = buckets[r] || {round:r, draft:0, inReview:0, sentBack:0, reviewed:0, locked:0, uploaded:0, total:0};
+    b.total++;
+    if(q.status==="draft") b.draft++;
+    else if(q.status==="finalized") b.locked++;
+    else if(q.status==="uploaded") b.uploaded++;
+    else if(q.status==="in_review"){
+      if(q.peerReview?.outcome==="agree") b.reviewed++;
+      else if(q.peerReview?.outcome==="disagree") b.sentBack++;
+      else b.inReview++;
+    }
+  });
+  return Object.values(buckets).sort((a,b)=>{
+    if(a.round==="") return 1;
+    if(b.round==="") return -1;
+    return b.round.localeCompare(a.round);
+  });
+}
 // Nov 2026, one-time admin tool (Admin & Analytics -> "Round backfill"):
 // every question saved BEFORE this feature existed has no round at all,
 // which is harmless (it stays includable in every round's contest build
@@ -1536,26 +1607,28 @@ function renderInsightsRail(){
   // a genuinely-unresolved flag from a round whose exam already happened
   // looked identical to one from the teacher's current, active work,
   // permanently cluttering the "needs your fix" list with something
-  // there's no real reason left to act on. Split into current-round (or
-  // round-less/reusable, which stays "current" by definition) vs. older:
-  // myCurrentRounds is every round name `myAssignedChapters()` currently
-  // resolves to for this teacher (the SAME per-chapter "which round is
-  // this, right now" lookup the assignment-progress widgets below already
-  // use) -- a flagged question is "current" if it has no round at all, or
-  // its round is still one of those; anything else is from a round
-  // that's since been superseded. Current ones keep the prominent red
-  // card exactly as before; anything older is still fully visible (never
+  // there's no real reason left to act on. Fixed with effectiveRound()
+  // (see its own comment above): a sent-back question is never locked by
+  // definition, so effectiveRound() always tracks it forward to
+  // whichever round currently covers its chapter -- "current" is simply
+  // "effectiveRound() is null, or is still one of myAssignedChapters()'s
+  // own current round names"; "old" is only the genuinely orphaned case
+  // (the chapter isn't assigned to this author at all anymore, so
+  // effectiveRound() had nothing current to fall forward to and kept the
+  // stale stored value). Current ones keep the prominent red card exactly
+  // as before; anything genuinely old is still fully visible (never
   // silently hidden -- it's real unresolved history), just folded into a
   // clearly-labeled, closed-by-default list underneath instead of
   // competing for attention with what's actually actionable today.
   const myCurrentRounds = new Set(myAssignedChapters().map(m=>m.assignment.name));
   const allSentBack = mine.filter(q=>q.peerReview?.outcome==="disagree");
-  const sentBack = allSentBack.filter(q=>!q.round || myCurrentRounds.has(q.round));
-  const oldSentBack = allSentBack.filter(q=>q.round && !myCurrentRounds.has(q.round));
+  const sentBack = allSentBack.filter(q=>!effectiveRound(q) || myCurrentRounds.has(effectiveRound(q)));
+  const oldSentBack = allSentBack.filter(q=>effectiveRound(q) && !myCurrentRounds.has(effectiveRound(q)));
   const sentBackRow = q=>{
     const reason = REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Flagged";
+    const r = effectiveRound(q);
     return `<button type="button" class="btn small" style="justify-content:space-between; text-align:left; width:100%;" data-sentback-open="${q.id}">
-      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(q.titleEn||"Untitled")}${q.round?` <span class="hint">(${escapeHtml(q.round)})</span>`:""}</span>
+      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(q.titleEn||"Untitled")}${r?` <span class="hint">(${escapeHtml(r)})</span>`:""}</span>
       <span class="pill" style="background:var(--red-soft); color:var(--red); margin-left:6px; flex:0 0 auto;">${escapeHtml(reason)}</span>
     </button>`;
   };
@@ -1683,9 +1756,13 @@ function filteredQuestions(){
     // building uses (see sessionEligibleQuestions()/openContestForm()) --
     // here the admin is looking for a specific round's content, so a
     // round-less (reusable) question is correctly excluded unless they
-    // explicitly pick the "No round" sentinel.
-    if(filters.round==="__none__"){ if(q.round) return false; }
-    else if(filters.round && q.round!==filters.round) return false;
+    // explicitly pick the "No round" sentinel. Checked against
+    // effectiveRound(), not the raw stored q.round, so an unresolved
+    // question that's actually live Round-2 work (even though it was
+    // first drafted before Round 2 existed) shows up when filtering for
+    // Round 2, not stuck looking like old Round-1 leftovers.
+    if(filters.round==="__none__"){ if(effectiveRound(q)) return false; }
+    else if(filters.round && effectiveRound(q)!==filters.round) return false;
     // Dates compare on the local calendar day, not a raw ISO-string prefix
     // match, so "before/after" reads naturally regardless of time-of-day.
     if(filters.dateFrom){
@@ -2139,7 +2216,7 @@ function cardHtml(q){
           <button type="button" class="pill status-${statusInfo.v}" data-quickfilter-status="${q.status}" title="Filter by status">${escapeHtml(statusInfo.l)}</button>
           ${q.peerReview?.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);" title="A reviewer sent this back">⚠ ${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Sent back")}</span>` : ""}
           ${(q.skills||[]).map(s=>`<button type="button" class="pill skill-chip" data-quickfilter-skill="${escapeHtml(s)}" title="Filter by skill">${escapeHtml(s)}</button>`).join("")}
-          ${q.round ? `<button type="button" class="pill" style="background:var(--surface-2);" data-quickfilter-round="${escapeHtml(q.round)}" title="Filter by round">${escapeHtml(q.round)}</button>` : ""}
+          ${effectiveRound(q) ? `<button type="button" class="pill" style="background:var(--surface-2);" data-quickfilter-round="${escapeHtml(effectiveRound(q))}" title="Filter by round${q.round && q.round!==effectiveRound(q)?` -- originally drafted under ${escapeHtml(q.round)}`:""}">${escapeHtml(effectiveRound(q))}</button>` : ""}
           ${(q.usedIn||[]).map(u=>`<span class="pill level" title="${escapeHtml(usageHistoryTitle(q,u))}">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>
         <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
@@ -2687,20 +2764,34 @@ function openForm(existing){
   formEl.querySelectorAll('input[name="level"]').forEach(el=>el.addEventListener("change", updateDifficultyBalanceHint));
 
   // Round (Nov 2026): auto-stamped from whichever round's assignment
-  // currently covers this chapter for ME (myAssignedChapters(), the same
-  // round-scoping system built for the "184 of 54" fix) -- a chapter with
-  // no current assignment (e.g. IQ, if it's never formally quota'd) gets
-  // no round at all, and stays includable in every round's contest build
-  // automatically (see sessionEligibleQuestions()/openContestForm()).
-  // Only auto-fills while the teacher hasn't touched the field
-  // themselves, and never for an existing question (its round, once set,
-  // stays exactly as saved unless deliberately changed).
-  let roundTouched = isEdit;
+  // currently covers this chapter, for the QUESTION'S OWN AUTHOR (not
+  // necessarily whoever has it open -- an admin fixing someone else's
+  // flagged question shouldn't get a guess based on the ADMIN's own
+  // assignments) -- a chapter with no current assignment (e.g. IQ, if
+  // it's never formally quota'd) gets no round at all, and stays
+  // includable in every round's contest build automatically.
+  //
+  // Real bug fixed Nov 2026 ("question from round 1 is reviewed... now
+  // in round 2... however round 1 was locked, nothing was left for
+  // review"): this used to NEVER auto-fill for an existing question,
+  // full stop -- so a question drafted (and backfilled as "Round 1")
+  // before Round 2's assignment existed, but still unresolved and
+  // actively being re-reviewed well into Round 2, kept showing a frozen
+  // "Round 1" here forever, even though it's clearly live Round 2 work
+  // by now. Once a question is actually LOCKED, its round genuinely IS
+  // settled history and must never silently change again -- but before
+  // that, re-opening it for editing now re-suggests the CURRENT round
+  // the same way a brand-new question would, so fixing a flagged
+  // question and saving it also naturally heals its round tag to match
+  // reality, with no separate migration step needed. Only auto-fills
+  // while the teacher/admin hasn't touched the field themselves.
+  let roundTouched = isEdit && (existing.status==="finalized" || existing.status==="uploaded");
   function autoRoundGuess(){
     const chapterCode = document.getElementById("f-chapter").value;
     const chosenLevels = Array.from(formEl.querySelectorAll('input[name="level"]:checked')).map(el=>el.value);
-    const relevant = myAssignedChapters().find(m=>m.unit===chapterCode && chosenLevels.includes(m.contestLevel));
-    return relevant?.assignmentName || "";
+    const authorEmail = existing?.authorEmail || currentUser.email;
+    const relevant = currentAssignmentEntries().find(e=>e.email===authorEmail && e.unit===chapterCode && chosenLevels.includes(e.level));
+    return relevant?.assignment?.name || "";
   }
   function maybeAutoFillRound(){
     if(roundTouched) return;
@@ -3597,7 +3688,7 @@ function renderDrawerBody(){
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
           <span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span>
           ${(q.skills||[]).map(s=>`<span class="pill skill-chip">${escapeHtml(s)}</span>`).join("")}
-          ${q.round ? `<span class="pill" style="background:var(--surface-2);">${escapeHtml(q.round)}</span>` : ""}
+          ${effectiveRound(q) ? `<span class="pill" style="background:var(--surface-2);" title="${q.round && q.round!==effectiveRound(q)?`Originally drafted under ${escapeHtml(q.round)}`:""}">${escapeHtml(effectiveRound(q))}</span>` : ""}
           ${(q.usedIn||[]).map(u=>`<span class="pill level" title="${escapeHtml(usageHistoryTitle(q,u))}">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
         </div>
         ${quilgo ? `<div class="hint" style="margin-top:4px;">Uploaded by <b>${escapeHtml(quilgo.uploadedByName||"—")}</b> on ${fmtDate(quilgo.uploadedAt)} — manage this from the Upload tab.</div>` : ""}
@@ -3935,7 +4026,7 @@ function computeSessionBuild(session){
   // carrying a DIFFERENT round's own tag gets excluded.
   const eligible = sessionEligibleQuestions()
     .filter(q=>(q.level||[]).includes(session.pmcType))
-    .filter(q=>!session.round || !q.round || q.round===session.round);
+    .filter(q=>!session.round || !effectiveRound(q) || effectiveRound(q)===session.round);
   const shortfalls = [];
   const newlyPlaced = []; // {questionId, day, slot}
   chapters.forEach((ch,ci)=>{
@@ -4029,8 +4120,8 @@ function sessionLiveShortfallCounts(session){
   // A round-less question (reusable/cross-round content, e.g. IQ) is
   // always included regardless of session.round -- only a question
   // carrying a DIFFERENT round's own tag gets excluded from `counts`.
-  const counts = tally(session.round ? base.filter(q=>!q.round || q.round===session.round) : base);
-  const extraCounts = session.round ? tally(base.filter(q=>q.round && q.round!==session.round)) : {};
+  const counts = tally(session.round ? base.filter(q=>!effectiveRound(q) || effectiveRound(q)===session.round) : base);
+  const extraCounts = session.round ? tally(base.filter(q=>effectiveRound(q) && effectiveRound(q)!==session.round)) : {};
   return { counts, extraCounts };
 }
 // "Add more now"'s own round-relaxation prompt (Nov 2026, same real
@@ -4095,7 +4186,7 @@ function sessionChapterBreakdown(session){
   // carrying a DIFFERENT round's own tag gets excluded.
   const eligible = sessionEligibleQuestions()
     .filter(q=>(q.level||[]).includes(session.pmcType))
-    .filter(q=>!session.round || !q.round || q.round===session.round);
+    .filter(q=>!session.round || !effectiveRound(q) || effectiveRound(q)===session.round);
   const haveByCell = {};
   eligible.forEach(q=>{ const k=`${q.unit}|${q.difficulty}`; haveByCell[k]=(haveByCell[k]||0)+1; });
   return chapters.map((ch,ci)=>{
@@ -4188,7 +4279,7 @@ function sessionDryRunSummary(pmcType, g, chapterTotals, excludedChapters){
   const build = computeSessionBuild(draft);
   const totalPapers = g.days*g.slotsPerDay;
   const shortfallPapers = new Set(build.shortfalls.map(sf=>paperKey(sf.day,sf.slot)));
-  const totalEligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType) && (!g.round || !q.round || q.round===g.round)).length;
+  const totalEligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType) && (!g.round || !effectiveRound(q) || effectiveRound(q)===g.round)).length;
   return {
     totalEligible, totalPapers, completePapers: totalPapers-shortfallPapers.size,
     shortChapters: Array.from(new Set(build.shortfalls.map(sf=>sf.unit))),
@@ -4810,7 +4901,7 @@ function openContestForm(existing){
       // A round-less question (reusable/cross-round content, e.g. IQ) is
       // always included regardless of which round is picked -- only a
       // question that carries a DIFFERENT round's own tag is excluded.
-      if(pickerFilters.round) list = list.filter(q=>!q.round || q.round===pickerFilters.round);
+      if(pickerFilters.round) list = list.filter(q=>!effectiveRound(q) || effectiveRound(q)===pickerFilters.round);
       const needle = pickerFilters.search.trim().toLowerCase();
       if(needle) list = list.filter(q=>(q.titleEn||"").toLowerCase().includes(needle) || (q.promptEn||"").toLowerCase().includes(needle));
       return list.slice().sort(SORTERS[pickerFilters.sort] || SORTERS.unit);
@@ -4837,7 +4928,7 @@ function openContestForm(existing){
         <label style="display:flex; align-items:flex-start; gap:8px; padding:9px 6px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
           <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
           <span style="flex:1; min-width:0;">
-            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span>${q.round?`<span class="unit-chip">${escapeHtml(q.round)}</span>`:""}</div>
+            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span>${effectiveRound(q)?`<span class="unit-chip">${escapeHtml(effectiveRound(q))}</span>`:""}</div>
             <div style="white-space:pre-wrap;">${escapeHtml(q.promptEn||"")}</div>
             <div class="hint" style="margin-top:4px;">by ${escapeHtml(q.authorName||q.authorEmail||"—")}${(q.skills||[]).length?" · "+q.skills.map(escapeHtml).join(", "):""}</div>
             ${(q.usedIn||[]).length ? `<div class="hint" style="color:var(--gold);">⚠ Already used in: ${(q.usedIn||[]).map(escapeHtml).join(", ")}</div>` : ""}
@@ -7816,6 +7907,7 @@ function renderAdmin(){
   const reviewedCount = questions.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
   const inReviewCount = byStatus.in_review - reviewedCount;
   const teamRows = teacherComparisonData();
+  const summaryRows = roundSummaryRows();
   const pendingReviews = questions.filter(q=>q.peerReview?.outcome==="pending")
     .sort((a,b)=>(a.peerReview.assignedAt||"").localeCompare(b.peerReview.assignedAt||""));
   const brokenSelfAssigned = selfAssignedReviews();
@@ -7848,6 +7940,33 @@ function renderAdmin(){
       <div class="stat-tile"><div class="num">${byStatus.uploaded||0}</div><div class="lbl">Uploaded</div></div>
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
+    <div class="section-label">Round summary</div>
+    <p class="desc">Every question in the bank, grouped by the round its progress counts toward right now — NOT scoped by author or chapter, and NOT the same as the Team comparison numbers below (those exclude a teacher's work on anything they're not currently assigned). Each question falls into exactly one row and one status column here, so the columns always add up to that row's own Total, and every row's Total always adds up to the ${questions.length} in the "Total questions" tile above — if those don't match, something is genuinely wrong and worth reporting. A question still unresolved (not yet locked) always counts toward whichever round CURRENTLY covers its chapter, even if it happened to be drafted earlier — only a locked question's round is permanently fixed.</p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Round</th><th>Draft</th><th>In Review</th><th>Sent back</th><th>Reviewed OK</th><th>Locked</th><th>Uploaded</th><th>Total</th></tr></thead>
+      <tbody>
+        ${summaryRows.map(r=>`<tr>
+          <td>${r.round?escapeHtml(r.round):`<span class="hint">No round (reusable)</span>`}</td>
+          <td class="mono">${r.draft}</td>
+          <td class="mono">${r.inReview}</td>
+          <td class="mono" style="${r.sentBack>0?"color:var(--red); font-weight:700;":""}">${r.sentBack}</td>
+          <td class="mono">${r.reviewed}</td>
+          <td class="mono">${r.locked}</td>
+          <td class="mono">${r.uploaded}</td>
+          <td class="mono"><b>${r.total}</b></td>
+        </tr>`).join("")}
+        <tr style="font-weight:700; border-top:2px solid var(--border);">
+          <td>All rounds combined</td>
+          <td class="mono">${summaryRows.reduce((s,r)=>s+r.draft,0)}</td>
+          <td class="mono">${summaryRows.reduce((s,r)=>s+r.inReview,0)}</td>
+          <td class="mono">${summaryRows.reduce((s,r)=>s+r.sentBack,0)}</td>
+          <td class="mono">${summaryRows.reduce((s,r)=>s+r.reviewed,0)}</td>
+          <td class="mono">${summaryRows.reduce((s,r)=>s+r.locked,0)}</td>
+          <td class="mono">${summaryRows.reduce((s,r)=>s+r.uploaded,0)}</td>
+          <td class="mono">${questions.length}</td>
+        </tr>
+      </tbody>
+    </table></div>
     <div class="section-label">Team comparison</div>
     <p class="desc">How much each teacher is actually producing — created vs. locked, against their assigned target where one exists. Scoped to each teacher's CURRENT round only (an older, already-superseded round's progress is never added on top) — this is what to check against "is this round done," not the whole-bank tiles above.</p>
     ${teamRows.length===0 ? emptyState("No teacher activity yet.") : `
@@ -7916,7 +8035,7 @@ function renderAdmin(){
             const candidates = eligibleReviewerCandidates(q.authorEmail, q.peerReview.reviewerEmail);
             return `<tr>
               <td><button type="button" class="link-btn" data-goto-question="${q.id}" style="text-align:left;">${escapeHtml(q.titleEn||"Untitled")}</button></td>
-              <td>${q.round?escapeHtml(q.round):`<span class="hint">—</span>`}</td>
+              <td>${effectiveRound(q)?escapeHtml(effectiveRound(q)):`<span class="hint">—</span>`}</td>
               <td>${escapeHtml(q.authorName||"—")}</td>
               <td>${escapeHtml(q.peerReview.reviewerName)}</td>
               <td class="mono">${fmtDate(q.peerReview.assignedAt)}</td>
