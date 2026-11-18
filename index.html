@@ -459,6 +459,7 @@
   <button data-tab="activity">Activity <span class="nav-badge" id="nav-badge-activity-m" hidden></span></button>
   <button data-tab="contests">Contests</button>
   <button data-tab="quilgo">Upload</button>
+  <button data-tab="archive">Archive</button>
   <button data-tab="workload">Assignment</button>
   <button data-tab="curriculum">Curriculum</button>
   <button data-tab="sop">SOP</button>
@@ -481,6 +482,7 @@
       <button data-tab="activity"><span class="dot"></span>Activity <span class="nav-badge" id="nav-badge-activity" hidden></span></button>
       <button data-tab="contests"><span class="dot"></span>Contests</button>
       <button data-tab="quilgo"><span class="dot"></span>Upload</button>
+      <button data-tab="archive"><span class="dot"></span>Archive</button>
       <button data-tab="workload"><span class="dot"></span>Assignment</button>
       <button data-tab="curriculum"><span class="dot"></span>Curriculum Map</button>
       <button data-tab="sop"><span class="dot"></span>SOP</button>
@@ -1141,7 +1143,7 @@ let activityLogEntries = [];
 // enforceTabForRole(), called at the top of EVERY renderTab(), already
 // corrects `currentTab` back to whatever that role is restricted to
 // before anything renders, regardless of how it got set.
-const VALID_TABS = ["bank","activity","contests","quilgo","workload","curriculum","sop","postproc","reviewstudents","admin"];
+const VALID_TABS = ["bank","activity","contests","quilgo","archive","workload","curriculum","sop","postproc","reviewstudents","admin"];
 let currentTab = "bank";
 try{
   const savedTab = localStorage.getItem("pmcqb-last-tab");
@@ -1436,7 +1438,7 @@ async function checkTeacherStatus(){
         // search, every question regardless of status) -- just not
         // create/edit/status controls -- so the rest of the app is
         // hidden for them.
-        ["activity","contests","quilgo","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
+        ["activity","contests","quilgo","archive","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
           document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = true);
         });
       }
@@ -1445,7 +1447,7 @@ async function checkTeacherStatus(){
         // else, including Bank, is hidden; they land there directly
         // since Bank (the app's normal default tab) isn't available to
         // them at all.
-        ["bank","activity","contests","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
+        ["bank","activity","contests","archive","workload","curriculum","sop","postproc","reviewstudents"].forEach(t=>{
           document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = true);
         });
       }
@@ -1457,7 +1459,7 @@ async function checkTeacherStatus(){
         // the isStudentReviewer checkbox is NOT affected by this block
         // (isStudentReviewerOnlyUser stays false for them) -- they keep
         // every tab their actual role already gave them, plus this one.
-        ["bank","activity","contests","quilgo","workload","curriculum","sop","postproc"].forEach(t=>{
+        ["bank","activity","contests","quilgo","archive","workload","curriculum","sop","postproc"].forEach(t=>{
           document.querySelectorAll(`[data-tab="${t}"]`).forEach(b=>b.hidden = true);
         });
       }
@@ -1543,7 +1545,7 @@ function startDataSubscriptions(){
     dataReady.questions = true;
     // renderWorkload()'s progress cards also read `questions` (countByStatus)
     // to show live draft/in-review/locked counts per assigned chapter.
-    if(currentTab==="bank" || currentTab==="activity" || currentTab==="contests" || currentTab==="quilgo" || currentTab==="workload") renderTab();
+    if(currentTab==="bank" || currentTab==="activity" || currentTab==="contests" || currentTab==="quilgo" || currentTab==="archive" || currentTab==="workload") renderTab();
     if(openQuestionId) renderDrawer();
     updateActivityBadge();
     renderGamifyBar();
@@ -1553,14 +1555,14 @@ function startDataSubscriptions(){
   unsubContests = onSnapshot(cy, snap=>{
     contests = snap.docs.map(d=>({id:d.id, ...d.data()}));
     dataReady.contests = true;
-    if(currentTab==="contests" || currentTab==="quilgo") renderTab();
+    if(currentTab==="contests" || currentTab==="quilgo" || currentTab==="archive") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contests ("+err.code+")"); });
   const csy = query(collection(db,"contestSessions"), orderBy("createdAt","desc"), limit(100));
   unsubContestSessions = onSnapshot(csy, snap=>{
     contestSessions = snap.docs.map(d=>({id:d.id, ...d.data()}));
     // Upload reads activeContests(), which depends on each session's
     // archived flag, so it needs refreshing too.
-    if(currentTab==="contests" || currentTab==="quilgo") renderTab();
+    if(currentTab==="contests" || currentTab==="quilgo" || currentTab==="archive") renderTab();
   }, err=>{ console.error(err); toast("Couldn't load contest sessions ("+err.code+")"); });
   const ay = query(collection(db,"assignments"), orderBy("createdAt","desc"), limit(200));
   unsubAssignments = onSnapshot(ay, snap=>{
@@ -1624,6 +1626,7 @@ function renderTab(){
   else if(currentTab==="activity") renderActivityFeed();
   else if(currentTab==="contests") renderContests();
   else if(currentTab==="quilgo") renderQuilgo();
+  else if(currentTab==="archive") renderArchive();
   else if(currentTab==="workload") renderWorkload();
   else if(currentTab==="curriculum") renderCurriculum();
   else if(currentTab==="sop") renderSOP();
@@ -5014,29 +5017,9 @@ function renderContests(){
         </tr>`;}).join("")}
       </tbody>
     </table></div>` : ""}
-    ${contestSessions.some(s=>s.archived) ? `
-    <details class="records-details" style="margin-top:8px;">
-      <summary class="section-label" style="cursor:pointer; display:inline-block;">Archived sessions (${contestSessions.filter(s=>s.archived).length})</summary>
-      <p class="hint">Hidden from Contests and Upload, along with their papers. Post Processing still shows them so results can be imported and analysed after the round.</p>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Round</th><th>Archived</th><th></th></tr></thead>
-        <tbody>
-          ${contestSessions.filter(s=>s.archived).map(s=>`<tr>
-            <td>${escapeHtml(s.name)}</td>
-            <td class="mono">${escapeHtml(s.pmcType)}</td>
-            <td class="mono">${s.days} × ${s.slotsPerDay}</td>
-            <td>${s.round?escapeHtml(s.round):`<span class="hint">All rounds</span>`}</td>
-            <td class="mono">${s.archivedAt?fmtDate(s.archivedAt):"—"}</td>
-            <td style="white-space:nowrap;">
-              ${isAdminUser ? `<button class="btn small" data-unarchive-session="${s.id}">Restore</button>` : ""}
-              ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete-session="${s.id}">Delete</button>` : ""}
-            </td>
-          </tr>`).join("")}
-        </tbody>
-      </table></div>
-    </details>` : ""}
+    ${dataReady.contests && (contestSessions.some(s=>s.archived) || contests.some(isContestArchived)) ? `<p class="hint" style="margin-top:6px;">${contestSessions.filter(s=>s.archived).length} archived session(s) and ${contests.filter(isContestArchived).length} archived paper(s) are hidden here — <button type="button" class="link-btn" data-goto-archive>open the Archive tab</button>.</p>` : ""}
     <div class="section-label">Papers</div>
-    ${!dataReady.contests ? loadingState("Loading contests…") : activeContests().length===0 ? emptyState(contests.length ? "Every paper is archived — see Archived papers below." : "No contests created yet.") : `
+    ${!dataReady.contests ? loadingState("Loading contests…") : activeContests().length===0 ? emptyState(contests.length ? "Every paper is archived — see the Archive tab." : "No contests created yet.") : `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Date</th><th>Questions</th><th>Duration</th><th>Total marks</th><th>Upload</th><th></th></tr></thead>
       <tbody>
@@ -5062,54 +5045,20 @@ function renderContests(){
         </tr>`;}).join("")}
       </tbody>
     </table></div>`}
-    ${dataReady.contests && contests.some(isContestArchived) ? `
-    <details class="records-details" style="margin-top:8px;">
-      <summary class="section-label" style="cursor:pointer; display:inline-block;">Archived papers (${contests.filter(isContestArchived).length})</summary>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Questions</th><th></th></tr></thead>
-        <tbody>
-          ${contests.filter(isContestArchived).map(c=>`<tr>
-            <td class="mono">${escapeHtml(c.contestLevel||"—")}</td>
-            <td class="mono">${c.day??"—"}</td>
-            <td class="mono">${c.slot??"—"}</td>
-            <td>${escapeHtml(c.name)}</td>
-            <td class="mono">${(c.questionIds||[]).length}</td>
-            <td style="white-space:nowrap;">
-              <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
-              ${isAdminUser && c.archived ? `<button class="btn small" data-unarchive-contest="${c.id}">Restore</button>` : `<span class="hint">archived with its session</span>`}
-            </td>
-          </tr>`).join("")}
-        </tbody>
-      </table></div>
-    </details>` : ""}
   `;
-  const setArchived = async (coll, id, archived, label)=>{
-    try{
-      await updateDoc(doc(db, coll, id), archived ? {archived:true, archivedAt:new Date().toISOString(), archivedBy:currentUser.email} : {archived:false});
-      logActivity(archived?"archived":"unarchived", `${archived?"Archived":"Restored"} ${label}`, id);
-      toast(archived ? "Archived" : "Restored");
-    }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
-  };
   main.querySelectorAll("[data-archive-session]").forEach(b=>b.addEventListener("click", async ()=>{
     const s = contestSessions.find(x=>x.id===b.dataset.archiveSession);
     if(!s) return;
-    if(!(await confirmDialog(`Archive session "${s.name}"? It and its papers disappear from Contests and Upload. Nothing is deleted — restore it any time from "Archived sessions".`))) return;
-    setArchived("contestSessions", s.id, true, `session "${s.name}"`);
-  }));
-  main.querySelectorAll("[data-unarchive-session]").forEach(b=>b.addEventListener("click", ()=>{
-    const s = contestSessions.find(x=>x.id===b.dataset.unarchiveSession);
-    if(s) setArchived("contestSessions", s.id, false, `session "${s.name}"`);
+    if(!(await confirmDialog(`Archive session "${s.name}"? It and its papers move to the Archive tab and disappear from Contests and Upload. Nothing is deleted — restore it any time from the Archive tab.`))) return;
+    setArchivedFlag("contestSessions", s.id, true, `session "${s.name}"`);
   }));
   main.querySelectorAll("[data-archive-contest]").forEach(b=>b.addEventListener("click", async ()=>{
     const c = contests.find(x=>x.id===b.dataset.archiveContest);
     if(!c) return;
-    if(!(await confirmDialog(`Archive paper "${c.name}"? It disappears from Contests and Upload. Nothing is deleted — restore it any time from "Archived papers".`))) return;
-    setArchived("contests", c.id, true, `paper "${c.name}"`);
+    if(!(await confirmDialog(`Archive paper "${c.name}"? It moves to the Archive tab and disappears from Contests and Upload. Nothing is deleted — restore it any time from the Archive tab.`))) return;
+    setArchivedFlag("contests", c.id, true, `paper "${c.name}"`);
   }));
-  main.querySelectorAll("[data-unarchive-contest]").forEach(b=>b.addEventListener("click", ()=>{
-    const c = contests.find(x=>x.id===b.dataset.unarchiveContest);
-    if(c) setArchived("contests", c.id, false, `paper "${c.name}"`);
-  }));
+  main.querySelectorAll("[data-goto-archive]").forEach(b=>b.addEventListener("click", ()=>switchTab("archive")));
   document.getElementById("new-contest").addEventListener("click", ()=>openContestForm());
   document.getElementById("new-session").addEventListener("click", ()=>openSessionForm());
   main.querySelectorAll("[data-view-session]").forEach(b=>b.addEventListener("click", ()=>{
@@ -5157,18 +5106,7 @@ function renderContests(){
     }
     catch(err){ toast("Couldn't update contest"); }
   }));
-  main.querySelectorAll("[data-delete-session]").forEach(b=>b.addEventListener("click", async ()=>{
-    const s = contestSessions.find(x=>x.id===b.dataset.deleteSession);
-    if(!s) return;
-    const livePapers = Object.values(s.contestIds||{}).filter(id=>contests.some(c=>c.id===id)).length;
-    if(!(await confirmDialog(`Delete session "${s.name}"${livePapers>0?` and its ${livePapers} paper${livePapers===1?"":"s"}`:""}? Its questions become free to use again. This can't be undone.`, {danger:true}))) return;
-    b.disabled = true; b.textContent = "Deleting…";
-    try{
-      const n = await deleteSession(s);
-      logActivity("session_deleted", `Deleted session "${s.name}" (${livePapers} paper(s), ${n} question tag(s) cleaned)`, s.id);
-      toast("Session deleted");
-    }catch(err){ console.error(err); toast("Couldn't delete session ("+err.code+")"); b.disabled=false; b.textContent="Delete"; }
-  }));
+  main.querySelectorAll("[data-delete-session]").forEach(b=>b.addEventListener("click", ()=>confirmAndDeleteSession(b)));
   main.querySelectorAll("[data-delete-contest]").forEach(b=>b.addEventListener("click", async ()=>{
     const c = contests.find(x=>x.id===b.dataset.deleteContest);
     const owner = c?.sessionId ? contestSessions.find(x=>x.id===c.sessionId) : null;
@@ -5187,6 +5125,89 @@ function renderContests(){
   }));
 }
 
+async function setArchivedFlag(coll, id, archived, label){
+  try{
+    await updateDoc(doc(db, coll, id), archived ? {archived:true, archivedAt:new Date().toISOString(), archivedBy:currentUser.email} : {archived:false});
+    logActivity(archived?"archived":"unarchived", `${archived?"Archived":"Restored"} ${label}`, id);
+    toast(archived ? "Archived — now in the Archive tab" : "Restored");
+  }catch(err){ console.error(err); toast("Couldn't update ("+err.code+")"); }
+}
+// Shared by the Contests tab's and the Archive tab's session Delete buttons.
+async function confirmAndDeleteSession(btn){
+  const s = contestSessions.find(x=>x.id===btn.dataset.deleteSession);
+  if(!s) return;
+  const livePapers = Object.values(s.contestIds||{}).filter(id=>contests.some(c=>c.id===id)).length;
+  if(!(await confirmDialog(`Delete session "${s.name}"${livePapers>0?` and its ${livePapers} paper${livePapers===1?"":"s"}`:""}? Its questions become free to use again. This can't be undone.`, {danger:true}))) return;
+  btn.disabled = true; btn.textContent = "Deleting…";
+  try{
+    const n = await deleteSession(s);
+    logActivity("session_deleted", `Deleted session "${s.name}" (${livePapers} paper(s), ${n} question tag(s) cleaned)`, s.id);
+    toast("Session deleted");
+  }catch(err){ console.error(err); toast("Couldn't delete session ("+err.code+")"); btn.disabled=false; btn.textContent="Delete"; }
+}
+// Archive tab (Nov 2026, real request: "there must be archive tab where
+// previous contest should exist"). Everything isContestArchived() hides
+// from Contests and Upload lands here: archived sessions with the papers
+// they built nested under each, then any individually archived hand-built
+// papers. Read-only for content (Print stays available); Restore/Delete
+// are admin-only.
+function renderArchive(){
+  const main = document.getElementById("main");
+  if(!dataReady.contests){ main.innerHTML = `<div class="pagehead"><h1>Archive</h1></div>${loadingState("Loading archive…")}`; return; }
+  const archivedSessions = contestSessions.filter(s=>s.archived);
+  const looseArchived = contests.filter(c=>c.archived && !(c.sessionId && contestSessions.some(s=>s.id===c.sessionId && s.archived)));
+  const uploadedCount = c=>{ const total=(c.questionIds||[]).length; return `${total-contestPendingCount(c)}/${total}`; };
+  const paperRows = list=>list.slice().sort((a,b)=>(a.day-b.day)||(a.slot-b.slot)).map(c=>`<tr>
+      <td class="mono">${escapeHtml(c.contestLevel||"—")}</td>
+      <td class="mono">${c.day??"—"}</td>
+      <td class="mono">${c.slot??"—"}</td>
+      <td>${escapeHtml(c.name)}</td>
+      <td class="mono">${(c.questionIds||[]).length}</td>
+      <td class="mono">${uploadedCount(c)}</td>
+      <td class="mono">${c.resultsImportedAt?`${c.submissionCount??"—"} students`:`<span class="hint">not imported</span>`}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn small" data-print="${c.id}">Print / Export PDF</button>
+        ${isAdminUser && c.archived ? `<button class="btn small" data-unarchive-contest="${c.id}">Restore</button>` : ""}
+      </td>
+    </tr>`).join("");
+  const paperTable = list=>`<div class="table-wrap"><table class="data">
+      <thead><tr><th>Category</th><th>Day</th><th>Slot</th><th>Name</th><th>Questions</th><th>Uploaded</th><th>Results</th><th></th></tr></thead>
+      <tbody>${paperRows(list)}</tbody>
+    </table></div>`;
+  main.innerHTML = `
+    <div class="pagehead"><h1>Archive</h1></div>
+    <p class="desc">Previous rounds' sessions and papers. Archived items are hidden from Contests and Upload so only the active round shows there. Nothing here is deleted — print any paper, and ${isAdminUser?"restore anything back to the active lists with Restore":"ask an admin to restore anything you need back"}. Results import and item analysis for these papers still work from the Post Processing tab.</p>
+    ${archivedSessions.length===0 && looseArchived.length===0 ? emptyState("Nothing archived yet. Use Archive on a session or paper in the Contests tab.") : ""}
+    ${archivedSessions.length ? `<div class="section-label">Archived sessions (${archivedSessions.length})</div>
+    ${archivedSessions.slice().sort((a,b)=>(b.archivedAt||"").localeCompare(a.archivedAt||"")).map(s=>{
+      const papers = contests.filter(c=>c.sessionId===s.id);
+      return `<div class="progress-card" style="margin-bottom:10px;">
+        <div class="row" style="flex-wrap:wrap; gap:8px;">
+          <div><b>${escapeHtml(s.name)}</b> <span class="hint">· ${escapeHtml(s.pmcType)} · ${s.days} × ${s.slotsPerDay} · ${s.questionsPerPaper} questions/paper · ${s.round?escapeHtml(s.round):"All rounds"}${s.archivedAt?` · archived ${fmtDate(s.archivedAt)}`:""}</span></div>
+          <div style="white-space:nowrap;">
+            ${isAdminUser ? `<button class="btn small" data-unarchive-session="${s.id}">Restore</button>` : ""}
+            ${isAdminUser ? `<button class="btn small" style="color:var(--red);" data-delete-session="${s.id}">Delete</button>` : ""}
+          </div>
+        </div>
+        <details class="records-details" style="margin-top:6px;">
+          <summary style="cursor:pointer; font-size:12.5px; font-weight:600; color:var(--accent);">Papers (${papers.length})</summary>
+          ${papers.length ? paperTable(papers) : `<p class="hint">This session's papers were deleted.</p>`}
+        </details>
+      </div>`;
+    }).join("")}` : ""}
+    ${looseArchived.length ? `<div class="section-label">Archived papers (${looseArchived.length})</div>${paperTable(looseArchived)}` : ""}
+  `;
+  main.querySelectorAll("[data-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.print)));
+  main.querySelectorAll("[data-unarchive-session]").forEach(b=>b.addEventListener("click", ()=>{
+    const s = contestSessions.find(x=>x.id===b.dataset.unarchiveSession);
+    if(s) setArchivedFlag("contestSessions", s.id, false, `session "${s.name}"`);
+  }));
+  main.querySelectorAll("[data-unarchive-contest]").forEach(b=>b.addEventListener("click", ()=>{
+    const c = contests.find(x=>x.id===b.dataset.unarchiveContest);
+    if(c) setArchivedFlag("contests", c.id, false, `paper "${c.name}"`);
+  }));
+  main.querySelectorAll("[data-delete-session]").forEach(b=>b.addEventListener("click", ()=>confirmAndDeleteSession(b)));
+}
 function openContestForm(existing){
   const isEdit = !!existing;
   const root = document.getElementById("modal-root");
