@@ -3480,6 +3480,20 @@ function renderDrawerBody(){
   const isLocked = q.status==="finalized" && !isAdminUser;
   const statusInfo = questionStatusInfo(q);
   const reviewerBadge = email=>allTeachers.find(t=>t.email===email)?.role==="external_reviewer" ? ` <span class="pill role-external_reviewer" style="font-size:9.5px; padding:1px 6px;">External Reviewer</span>` : "";
+  // Nov 2026, real report: a fast double/triple-click on "Submit review"
+  // (now fixed -- see the button-disable guard in openReviewForm()) could
+  // post the SAME auto-comment several times in a row. Flags any comment
+  // that's an exact repeat (same author, text, and kind) of the one
+  // immediately before it, posted within a few minutes -- the shape that
+  // bug actually produced -- so admins can spot and clean up whatever
+  // already got duplicated before the fix, without hunting through every
+  // question by hand.
+  const dupCommentIds = isAdminUser ? _comments.filter((c,i)=>{
+    if(i===0) return false;
+    const prev = _comments[i-1];
+    return prev.authorEmail===c.authorEmail && prev.text===c.text && prev.kind===c.kind
+      && Math.abs(new Date(c.createdAt)-new Date(prev.createdAt)) < 5*60*1000;
+  }).map(c=>c.id) : [];
   body.innerHTML = `
     <div class="drawer-head">
       <div>
@@ -3539,9 +3553,10 @@ function renderDrawerBody(){
     </div>
     ${(q.likes||[]).length ? `<div class="hint" style="margin-top:4px;">Liked by ${(q.likes||[]).map(e=>escapeHtml(allTeachers.find(t=>t.email===e)?.name||e)).join(", ")}</div>` : ""}
     <div class="section-label">Comments (${_comments.length})</div>
+    ${dupCommentIds.length>0 ? `<div class="callout warn" style="margin-bottom:8px;">⚠ ${dupCommentIds.length} duplicate comment${dupCommentIds.length===1?"":"s"} found (same author, text, and time — the shape a fast double-click used to produce, now prevented going forward). <button type="button" class="btn small primary" id="remove-dup-comments">Remove duplicate${dupCommentIds.length===1?"":"s"}</button></div>` : ""}
     <div id="comments-list">${_comments.length? _comments.map(c=>`
       <div class="comment-card${c.kind==="peer_review"?` review-${c.reviewOutcome}`:""}">
-        <div class="comment-head"><span class="comment-avatar">${escapeHtml((c.authorName||"?").trim().charAt(0).toUpperCase())}</span><b>${escapeHtml(c.authorName)}</b>${reviewerBadge(c.authorEmail)}${c.kind==="peer_review" ? (c.reviewOutcome==="agree" ? ` <span class="pill status-reviewed" style="font-size:9.5px; padding:1px 6px;">Peer review: OK</span>` : ` <span class="pill" style="background:var(--red-soft); color:var(--red); font-size:9.5px; padding:1px 6px;">Peer review: Flagged</span>`) : ""}<span class="hint mono">${fmtDate(c.createdAt)}</span></div>
+        <div class="comment-head"><span class="comment-avatar">${escapeHtml((c.authorName||"?").trim().charAt(0).toUpperCase())}</span><b>${escapeHtml(c.authorName)}</b>${reviewerBadge(c.authorEmail)}${c.kind==="peer_review" ? (c.reviewOutcome==="agree" ? ` <span class="pill status-reviewed" style="font-size:9.5px; padding:1px 6px;">Peer review: OK</span>` : ` <span class="pill" style="background:var(--red-soft); color:var(--red); font-size:9.5px; padding:1px 6px;">Peer review: Flagged</span>`) : ""}<span class="hint mono">${fmtDate(c.createdAt)}</span>${isAdminUser ? `<button type="button" class="btn small ghost" style="margin-left:auto; color:var(--red); padding:1px 6px;" data-delete-comment="${c.id}" title="Delete this comment" aria-label="Delete comment">🗑</button>` : ""}</div>
         <div class="comment-txt">${escapeHtml(c.text)}</div>
       </div>`).join("") : `<div class="hint">No comments yet — be the first to give feedback.</div>`}</div>
     <div class="field" style="margin-top:10px;"><textarea id="new-comment" rows="2" placeholder="Add a comment for other teachers…"></textarea><button class="btn small primary" id="post-comment" style="align-self:flex-start;">Post comment</button></div>
@@ -3626,6 +3641,18 @@ function renderDrawerBody(){
       document.getElementById("new-comment").value = "";
     }catch(err){ toast("Couldn't post comment"); }
     finally{ btn.disabled = false; }
+  });
+  document.querySelectorAll("[data-delete-comment]").forEach(b=>b.addEventListener("click", async ()=>{
+    if(!(await confirmDialog("Delete this comment? This can't be undone.", {danger:true}))) return;
+    try{ await deleteDoc(doc(db,"questions",q.id,"comments",b.dataset.deleteComment)); toast("Comment deleted"); }
+    catch(err){ console.error(err); toast("Couldn't delete comment ("+err.code+")"); }
+  }));
+  document.getElementById("remove-dup-comments")?.addEventListener("click", async ()=>{
+    if(!(await confirmDialog(`Delete ${dupCommentIds.length} duplicate comment${dupCommentIds.length===1?"":"s"}? The original post is kept either way.`, {danger:true}))) return;
+    try{
+      await Promise.all(dupCommentIds.map(id=>deleteDoc(doc(db,"questions",q.id,"comments",id))));
+      toast(`Removed ${dupCommentIds.length} duplicate comment${dupCommentIds.length===1?"":"s"}`);
+    }catch(err){ console.error(err); toast("Couldn't remove duplicates ("+err.code+")"); }
   });
   document.getElementById("like-btn").addEventListener("click", async ()=>{
     try{
