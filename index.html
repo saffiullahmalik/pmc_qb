@@ -658,6 +658,48 @@ function allAuthors(){
   questions.forEach(q=>{ if(q.authorEmail && !seen.has(q.authorEmail)) seen.set(q.authorEmail, q.authorName||q.authorEmail); });
   return Array.from(seen.entries()).sort((a,b)=>a[1].localeCompare(b[1]));
 }
+// Nov 2026: every distinct "round" label actually present on a question --
+// derived live from the data, same pattern as allSkills()/allAuthors()
+// (no separate collection to maintain, nothing to keep in sync by hand).
+// A question's round is normally auto-stamped (see autoRoundGuess() in
+// openForm()) from the NAME of whichever assignment doc currently covers
+// its chapter -- so this list just naturally tracks whatever an admin has
+// actually named their assignment rounds (e.g. "PMC Fall 2026 — Round 2"),
+// no separate "manage rounds" admin screen needed. A question with no
+// round (round:null/undefined) means "reusable across every round" --
+// IQ/cross-cutting content, or anything made before this feature existed
+// -- and is never excluded by a round filter anywhere in the app.
+function allRounds(){
+  const used = new Set();
+  questions.forEach(q=>{ if(q.round) used.add(q.round); });
+  return Array.from(used).sort();
+}
+// Nov 2026, one-time admin tool (Admin & Analytics -> "Round backfill"):
+// every question saved BEFORE this feature existed has no round at all,
+// which is harmless (it stays includable in every round's contest build
+// either way) but makes the new Round filter/round-aware building less
+// useful for a bank that's mostly pre-existing content. A cutoff date
+// splits them into two labels -- real request: "question build before 29
+// oct 2026 are round 1 and later round 2... all belong PMC Fall 2026".
+// Only ever touches a question that doesn't already carry a round, so
+// it's safe to run again later (e.g. with a different cutoff for a
+// different slice) without re-labeling anything already set by this tool,
+// a teacher's manual choice, or the editor's own auto-fill.
+function questionsNeedingRoundBackfill(){
+  return questions.filter(q=>!q.round);
+}
+async function backfillQuestionRounds(cutoffDate, beforeLabel, afterLabel){
+  const cutoff = cutoffDate+"T00:00:00";
+  const targets = questionsNeedingRoundBackfill();
+  for(let i=0; i<targets.length; i+=400){
+    const batch = writeBatch(db);
+    targets.slice(i, i+400).forEach(q=>{
+      batch.update(doc(db,"questions",q.id), {round: (q.createdAt||"") < cutoff ? beforeLabel : afterLabel});
+    });
+    await batch.commit();
+  }
+  return targets.length;
+}
 // Which status values a role may pick in the editor. The question's current
 // value is always included even if not normally pickable by this role, so
 // re-saving never silently downgrades a status someone else set.
@@ -889,7 +931,7 @@ let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubContestSessions = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null, unsubSop = null;
 let dataReady = { questions:false, contests:false, assignments:false };
 let _comments = [], _ratings = [];
-let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"", usedIn:"" };
+let filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:"newest", mine:false, skill:"", author:"", dateFrom:"", dateTo:"", usedIn:"", round:"" };
 let bankVisibleCount = 30;
 // One-shot (not live) per-question {comments, avgStars, ratingCount} cache
 // for the Bank tab's inline comments/ratings preview -- a getDocs() per
@@ -1542,6 +1584,14 @@ function filteredQuestions(){
     if(filters.skill && !(Array.isArray(q.skills) && q.skills.includes(filters.skill))) return false;
     if(filters.usedIn==="used" && !(Array.isArray(q.usedIn) && q.usedIn.length>0)) return false;
     if(filters.usedIn==="unused" && Array.isArray(q.usedIn) && q.usedIn.length>0) return false;
+    // A literal equality filter for browsing ("show me exactly Round 2"),
+    // unlike the "reusable questions always pass" rule contest/session
+    // building uses (see sessionEligibleQuestions()/openContestForm()) --
+    // here the admin is looking for a specific round's content, so a
+    // round-less (reusable) question is correctly excluded unless they
+    // explicitly pick the "No round" sentinel.
+    if(filters.round==="__none__"){ if(q.round) return false; }
+    else if(filters.round && q.round!==filters.round) return false;
     // Dates compare on the local calendar day, not a raw ISO-string prefix
     // match, so "before/after" reads naturally regardless of time-of-day.
     if(filters.dateFrom){
@@ -1572,6 +1622,21 @@ function sortQuestions(list){
 }
 
 const SORT_LABEL = {newest:"Newest first", oldest:"Oldest first", updated:"Recently updated", difficulty:"Hardest first"};
+// Nov 2026, part of the Bank tab filter-bar redesign ("filter options are
+// increasing, it's becoming a mess"): Level/Status/Round/Search stay
+// always visible, everything else (chapter, type, difficulty, skill,
+// author, used-in, date range, "Only mine") is tucked behind a collapsed
+// "More filters" <details>. Rather than relying on the browser to
+// remember whether the admin manually opened it (innerHTML rebuilds on
+// every keystroke would reset that anyway -- the Bank search box's own
+// focus-loss bug was fixed for exactly this reason), the open/closed
+// state is derived FRESH from whether anything inside it is actually
+// active, every render -- so a filter set via a card's quickfilter pill
+// (chapter/skill/type/difficulty) is never hidden behind a closed panel
+// the admin has to go hunting for.
+function moreFiltersActive(f){
+  return !!(f.qtype || f.diff || f.book || f.unit || f.skill || f.author || f.usedIn || f.dateFrom || f.dateTo || f.mine || f.sort!=="newest");
+}
 function activeFilterChips(){
   const chips = [];
   if(filters.level) chips.push({k:"level", l:`Level: ${filters.level}`});
@@ -1586,6 +1651,7 @@ function activeFilterChips(){
   if(filters.author) chips.push({k:"author", l:`Author: ${allAuthors().find(([e])=>e===filters.author)?.[1]||filters.author}`});
   if(filters.dateFrom) chips.push({k:"dateFrom", l:`After ${fmtDateOnly(filters.dateFrom)}`});
   if(filters.dateTo) chips.push({k:"dateTo", l:`Before ${fmtDateOnly(filters.dateTo)}`});
+  if(filters.round) chips.push({k:"round", l: filters.round==="__none__" ? "Round: no round (reusable)" : `Round: ${filters.round}`});
   if(filters.q) chips.push({k:"q", l:`Search: "${filters.q}"`});
   return chips;
 }
@@ -1613,21 +1679,27 @@ function renderBank(){
       : `Draft, tag, and review PMC items together. Every post is visible to all teachers immediately for comment and rating — see the Teacher Guide for the full workflow.`}</p>
     <div class="filters">
       <select id="f-level"><option value="">All levels</option>${LEVELS.map(l=>`<option ${filters.level===l?"selected":""}>${l}</option>`).join("")}</select>
-      <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
-      <select id="f-diff"><option value="">All difficulty</option>${DIFFS.map(t=>`<option value="${t.v}" ${filters.diff===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
       <select id="f-status"><option value="">All statuses</option>${BANK_STATUS_FILTERS.map(t=>`<option value="${t.v}" ${filters.status===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
-      <select id="f-book">${bookSelectOptions(filters.book)}</select>
-      <select id="f-unit">${chapterSelectOptions(filters.book, filters.unit, true)}</select>
-      <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
-      <select id="f-skill"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}" ${filters.skill===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
-      <select id="f-author"><option value="">All authors</option>${allAuthors().map(([email,name])=>`<option value="${escapeHtml(email)}" ${filters.author===email?"selected":""}>${escapeHtml(name)}</option>`).join("")}</select>
-      <select id="f-usedin"><option value="">Used in: any</option><option value="used" ${filters.usedIn==="used"?"selected":""}>Used in a contest</option><option value="unused" ${filters.usedIn==="unused"?"selected":""}>Not used yet</option></select>
-      <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">Made after <input type="date" id="f-date-from" value="${escapeHtml(filters.dateFrom)}" style="padding:6px 8px;" /></label>
-      <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">before <input type="date" id="f-date-to" value="${escapeHtml(filters.dateTo)}" style="padding:6px 8px;" /></label>
+      <select id="f-round"><option value="">All rounds</option><option value="__none__" ${filters.round==="__none__"?"selected":""}>No round (reusable)</option>${allRounds().map(r=>`<option value="${escapeHtml(r)}" ${filters.round===r?"selected":""}>${escapeHtml(r)}</option>`).join("")}</select>
       <input class="search" id="f-q" type="search" placeholder="Search title, prompt, subtopic…" value="${escapeHtml(filters.q)}" />
-      ${isExternalReviewerUser ? "" : `<label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;"><input type="checkbox" id="f-mine" ${filters.mine?"checked":""}/> Only mine</label>`}
       <span class="count">${list.length} of ${questions.length} question${questions.length===1?"":"s"}</span>
     </div>
+    <details class="records-details" style="margin-top:6px;" ${moreFiltersActive(filters)?"open":""}>
+      <summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0;">More filters</summary>
+      <div class="filters" style="margin-top:8px;">
+        <select id="f-type"><option value="">All types</option>${QTYPES.map(t=>`<option value="${t.v}" ${filters.qtype===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+        <select id="f-diff"><option value="">All difficulty</option>${DIFFS.map(t=>`<option value="${t.v}" ${filters.diff===t.v?"selected":""}>${t.l}</option>`).join("")}</select>
+        <select id="f-book">${bookSelectOptions(filters.book)}</select>
+        <select id="f-unit">${chapterSelectOptions(filters.book, filters.unit, true)}</select>
+        <select id="f-sort">${Object.entries(SORT_LABEL).map(([v,l])=>`<option value="${v}" ${filters.sort===v?"selected":""}>${l}</option>`).join("")}</select>
+        <select id="f-skill"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}" ${filters.skill===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
+        <select id="f-author"><option value="">All authors</option>${allAuthors().map(([email,name])=>`<option value="${escapeHtml(email)}" ${filters.author===email?"selected":""}>${escapeHtml(name)}</option>`).join("")}</select>
+        <select id="f-usedin"><option value="">Used in: any</option><option value="used" ${filters.usedIn==="used"?"selected":""}>Used in a contest</option><option value="unused" ${filters.usedIn==="unused"?"selected":""}>Not used yet</option></select>
+        <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">Made after <input type="date" id="f-date-from" value="${escapeHtml(filters.dateFrom)}" style="padding:6px 8px;" /></label>
+        <label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;">before <input type="date" id="f-date-to" value="${escapeHtml(filters.dateTo)}" style="padding:6px 8px;" /></label>
+        ${isExternalReviewerUser ? "" : `<label style="display:flex; align-items:center; gap:5px; font-size:12.5px; font-weight:400; white-space:nowrap;"><input type="checkbox" id="f-mine" ${filters.mine?"checked":""}/> Only mine</label>`}
+      </div>
+    </details>
     ${chips.length ? `<div class="filter-chips">
       ${chips.map(c=>`<span class="filter-chip">${escapeHtml(c.l)} <button type="button" data-clear-chip="${c.k}" aria-label="Remove filter">×</button></span>`).join("")}
       <button type="button" class="filter-chip clear-all" id="clear-all-filters">Clear all</button>
@@ -1635,7 +1707,7 @@ function renderBank(){
     ${!dataReady.questions ? loadingState("Loading questions…") : list.length===0 ? emptyState("No questions match these filters yet."+(questions.length===0?" Be the first to post one.":"")) : `<div class="q-list" id="q-grid"></div><div id="load-more-wrap"></div>`}
   `;
   document.getElementById("new-q")?.addEventListener("click", openNewQuestionGuarded);
-  ["level","type","diff","status","unit","sort","skill","author"].forEach(k=>{
+  ["level","type","diff","status","unit","sort","skill","author","round"].forEach(k=>{
     document.getElementById("f-"+k).addEventListener("change", e=>{ filters[k==="type"?"qtype":k] = e.target.value; bankVisibleCount = 30; renderBank(); });
   });
   document.getElementById("f-book").addEventListener("change", e=>{ filters.book = e.target.value; filters.unit = ""; bankVisibleCount = 30; renderBank(); });
@@ -1650,7 +1722,7 @@ function renderBank(){
     bankVisibleCount = 30; renderBank();
   }));
   document.getElementById("clear-all-filters")?.addEventListener("click", ()=>{
-    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false, skill:"", author:"", dateFrom:"", dateTo:"", usedIn:"" };
+    filters = { level:"", qtype:"", diff:"", status:"", unit:"", book:"", q:"", sort:filters.sort, mine:false, skill:"", author:"", dateFrom:"", dateTo:"", usedIn:"", round:"" };
     bankVisibleCount = 30; renderBank();
   });
   if(list.length){
@@ -1678,6 +1750,7 @@ function renderBank(){
     grid.querySelectorAll("[data-quickfilter-status]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.status = b.dataset.quickfilterStatus; bankVisibleCount = 30; renderBank(); }));
     grid.querySelectorAll("[data-quickfilter-unit]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.unit = b.dataset.quickfilterUnit; bankVisibleCount = 30; renderBank(); }));
     grid.querySelectorAll("[data-quickfilter-skill]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.skill = b.dataset.quickfilterSkill; bankVisibleCount = 30; renderBank(); }));
+    grid.querySelectorAll("[data-quickfilter-round]").forEach(b=>b.addEventListener("click", e=>{ e.stopPropagation(); filters.round = b.dataset.quickfilterRound; bankVisibleCount = 30; renderBank(); }));
     grid.addEventListener("click", e=>{ const row = e.target.closest(".q-row"); if(row) openQuestion(row.dataset.id); });
   }
   if(wasSearchFocused){
@@ -1936,6 +2009,12 @@ function duplicateQuestion(q){
     titleEn: (q.titleEn || "Untitled question") + " (Copy)",
     status: "draft",
     peerReview: null,
+    // Not carried over -- a duplicate re-derives its round fresh from
+    // whatever round's assignment currently covers its chapter (same
+    // auto-fill maybeAutoFillRound() gives any new question), since a
+    // duplicate is almost always made to build a variant for the CURRENT
+    // round, not to stay frozen to the original's old one.
+    round: undefined,
     usedIn: [],
     usageHistory: [],
     likes: [],
@@ -1966,6 +2045,7 @@ function cardHtml(q){
           <button type="button" class="pill status-${statusInfo.v}" data-quickfilter-status="${q.status}" title="Filter by status">${escapeHtml(statusInfo.l)}</button>
           ${q.peerReview?.outcome==="disagree" ? `<span class="pill" style="background:var(--red-soft); color:var(--red);" title="A reviewer sent this back">⚠ ${escapeHtml(REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Sent back")}</span>` : ""}
           ${(q.skills||[]).map(s=>`<button type="button" class="pill skill-chip" data-quickfilter-skill="${escapeHtml(s)}" title="Filter by skill">${escapeHtml(s)}</button>`).join("")}
+          ${q.round ? `<button type="button" class="pill" style="background:var(--surface-2);" data-quickfilter-round="${escapeHtml(q.round)}" title="Filter by round">${escapeHtml(q.round)}</button>` : ""}
           ${(q.usedIn||[]).map(u=>`<span class="pill level" title="${escapeHtml(usageHistoryTitle(q,u))}">Used in: ${escapeHtml(u)}</span>`).join("")}
         </div>
         <div class="qtitle">${escapeHtml(q.titleEn || "Untitled question")}</div>
@@ -2206,6 +2286,12 @@ function openForm(existing){
             <div class="field"><label>Status</label><select name="status">${allowedStatusOptions(existing?.status, existing?.peerReview).map(t=>`<option value="${t.v}" ${existing?.status===t.v?"selected":(!isEdit && t.v==="draft"?"selected":"")}>${t.l}</option>`).join("")}</select>
               ${existing?.peerReview?.outcome==="disagree" ? `<div class="callout warn" style="margin-top:6px;">⚠ Reviewer flagged: <b>${escapeHtml(REVIEW_FLAGS.find(f=>f.v===existing.peerReview.issueFlag)?.short || "issue found")}</b> — see the comments below, fix it, then save to send it back to the same reviewer.</div>` : ""}
               ${existing?.peerReview?.outcome==="pending" ? `<div class="hint" style="margin-top:4px;">Awaiting review from ${escapeHtml(existing.peerReview.reviewerName)}.</div>` : ""}
+            </div>
+            <div class="field"><label>Round <span class="hint">(which PMC round/cycle this is for — auto-filled from your current assignment for this chapter, editable)</span></label>
+              <select name="round" id="round-input">
+                <option value="">No round (reusable across every round)</option>
+                ${allRounds().map(r=>`<option value="${escapeHtml(r)}" ${existing?.round===r?"selected":""}>${escapeHtml(r)}</option>`).join("")}
+              </select>
             </div>
             ${isEdit ? `<div class="field">
               <label>Comments <span class="hint">(read-only here — reply from the question's View screen)</span></label>
@@ -2506,6 +2592,44 @@ function openForm(existing){
   document.getElementById("f-difficulty").addEventListener("change", ()=>{ updateDifficultyCallout(); updateDifficultyBalanceHint(); });
   formEl.querySelectorAll('input[name="level"]').forEach(el=>el.addEventListener("change", updateDifficultyBalanceHint));
 
+  // Round (Nov 2026): auto-stamped from whichever round's assignment
+  // currently covers this chapter for ME (myAssignedChapters(), the same
+  // round-scoping system built for the "184 of 54" fix) -- a chapter with
+  // no current assignment (e.g. IQ, if it's never formally quota'd) gets
+  // no round at all, and stays includable in every round's contest build
+  // automatically (see sessionEligibleQuestions()/openContestForm()).
+  // Only auto-fills while the teacher hasn't touched the field
+  // themselves, and never for an existing question (its round, once set,
+  // stays exactly as saved unless deliberately changed).
+  let roundTouched = isEdit;
+  function autoRoundGuess(){
+    const chapterCode = document.getElementById("f-chapter").value;
+    const chosenLevels = Array.from(formEl.querySelectorAll('input[name="level"]:checked')).map(el=>el.value);
+    const relevant = myAssignedChapters().find(m=>m.unit===chapterCode && chosenLevels.includes(m.contestLevel));
+    return relevant?.assignmentName || "";
+  }
+  function maybeAutoFillRound(){
+    if(roundTouched) return;
+    const sel = document.getElementById("round-input");
+    if(!sel) return;
+    const guess = autoRoundGuess();
+    // The guessed round (the CURRENT assignment's own name) may not be
+    // in allRounds() yet -- that list is derived from rounds already
+    // used on a saved question, so the very first question made under a
+    // brand-new round has no matching <option> until one exists. Add it
+    // on the fly rather than leaving the select stuck on its default.
+    if(guess && !Array.from(sel.options).some(o=>o.value===guess)){
+      const opt = document.createElement("option");
+      opt.value = guess; opt.textContent = guess;
+      sel.appendChild(opt);
+    }
+    sel.value = guess;
+  }
+  maybeAutoFillRound();
+  document.getElementById("round-input").addEventListener("change", ()=>{ roundTouched = true; });
+  formEl.querySelectorAll('input[name="level"]').forEach(el=>el.addEventListener("change", maybeAutoFillRound));
+  document.getElementById("f-chapter").addEventListener("change", maybeAutoFillRound);
+
   // The skill list has grown past what a flat click-to-tag chip wall can show
   // cleanly -- Oct 2026, switched to a dropdown-to-add pattern: the chip wrap
   // now only shows what's already SELECTED (each removable via its own ×),
@@ -2704,7 +2828,7 @@ function openForm(existing){
       lineHeightEn: previewEnLineHeight, lineHeightUr: previewUrLineHeight,
       fontFamilyEn: previewEnFont, fontFamilyUr: previewUrFont,
       textAlignEn: previewEnAlign, textAlignUr: previewUrAlign,
-      status: fd.get("status"), authorEmail: existing?.authorEmail || currentUser.email,
+      status: fd.get("status"), round: fd.get("round")||null, authorEmail: existing?.authorEmail || currentUser.email,
       authorName: existing?.authorName || authorName, updatedAt: new Date().toISOString(),
     };
     // The author revising a question a reviewer disagreed with re-queues it
@@ -3350,6 +3474,7 @@ function renderDrawerBody(){
           <span class="pill diff-${q.difficulty}">${DIFFS.find(d=>d.v===q.difficulty)?.l||q.difficulty}${difficultyDots(q.difficulty)}</span>
           <span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span>
           ${(q.skills||[]).map(s=>`<span class="pill skill-chip">${escapeHtml(s)}</span>`).join("")}
+          ${q.round ? `<span class="pill" style="background:var(--surface-2);">${escapeHtml(q.round)}</span>` : ""}
           ${(q.usedIn||[]).map(u=>`<span class="pill level" title="${escapeHtml(usageHistoryTitle(q,u))}">Used in: ${escapeHtml(u)}${isAdminUser?` <span data-remove-usedin="${escapeHtml(u)}" style="cursor:pointer; font-weight:700;" title="Remove this tag">×</span>`:""}</span>`).join("")}
         </div>
         ${quilgo ? `<div class="hint" style="margin-top:4px;">Uploaded by <b>${escapeHtml(quilgo.uploadedByName||"—")}</b> on ${fmtDate(quilgo.uploadedAt)} — manage this from the Upload tab.</div>` : ""}
@@ -3662,7 +3787,12 @@ function computeSessionBuild(session){
       Object.values(byDiff||{}).forEach(qid=>{ if(qid) usedThisSession.add(qid); });
     });
   });
-  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType));
+  // A round-less question (reusable/cross-round content, e.g. IQ) is
+  // always included regardless of session.round -- only a question
+  // carrying a DIFFERENT round's own tag gets excluded.
+  const eligible = sessionEligibleQuestions()
+    .filter(q=>(q.level||[]).includes(session.pmcType))
+    .filter(q=>!session.round || !q.round || q.round===session.round);
   const shortfalls = [];
   const newlyPlaced = []; // {questionId, day, slot}
   chapters.forEach((ch,ci)=>{
@@ -3728,7 +3858,12 @@ function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper, c
 // picked" (count is >0 immediately after a rebuild that still lists this
 // cell as short) without needing to inspect Firestore by hand.
 function sessionLiveShortfallCounts(session){
-  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType));
+  // A round-less question (reusable/cross-round content, e.g. IQ) is
+  // always included regardless of session.round -- only a question
+  // carrying a DIFFERENT round's own tag gets excluded.
+  const eligible = sessionEligibleQuestions()
+    .filter(q=>(q.level||[]).includes(session.pmcType))
+    .filter(q=>!session.round || !q.round || q.round===session.round);
   const usedThisSession = new Set();
   if(session.overlapMode!=="overlapping"){
     Object.values(session.placements||{}).forEach(byChapter=>{
@@ -3764,7 +3899,12 @@ function sessionChapterBreakdown(session){
   const numPapers = session.days*session.slotsPerDay;
   const chapterTotals = session.chapterTotals ? chapters.map(ch=>session.chapterTotals[ch.code]??defaultPerChapterTotal(chapters,numPapers,session.questionsPerPaper)) : null;
   const blueprint = buildBlueprint(numPapers, session.questionsPerPaper, chapters, chapterTotals);
-  const eligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType));
+  // A round-less question (reusable/cross-round content, e.g. IQ) is
+  // always included regardless of session.round -- only a question
+  // carrying a DIFFERENT round's own tag gets excluded.
+  const eligible = sessionEligibleQuestions()
+    .filter(q=>(q.level||[]).includes(session.pmcType))
+    .filter(q=>!session.round || !q.round || q.round===session.round);
   const haveByCell = {};
   eligible.forEach(q=>{ const k=`${q.unit}|${q.difficulty}`; haveByCell[k]=(haveByCell[k]||0)+1; });
   return chapters.map((ch,ci)=>{
@@ -3831,7 +3971,7 @@ async function commitSessionBuild(session, build){
   });
   const sessionBody = {
     name:session.name, pmcType:session.pmcType, days:session.days, slotsPerDay:session.slotsPerDay,
-    questionsPerPaper:session.questionsPerPaper, overlapMode:session.overlapMode,
+    questionsPerPaper:session.questionsPerPaper, overlapMode:session.overlapMode, round: session.round||null,
     chapterTotals: session.chapterTotals||null, excludedChapters: session.excludedChapters||[],
     placements: build.placements, shortfalls: build.shortfalls, contestIds,
     status: build.shortfalls.length===0 ? "complete" : "pending",
@@ -3853,11 +3993,11 @@ async function commitSessionBuild(session, build){
 // this is strictly more accurate since it's the literal build, not a
 // stand-in for "paper 1 only".
 function sessionDryRunSummary(pmcType, g, chapterTotals, excludedChapters){
-  const draft = { pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper, overlapMode:g.overlapMode, chapterTotals: chapterTotals||null, excludedChapters, placements:{} };
+  const draft = { pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper, overlapMode:g.overlapMode, round:g.round, chapterTotals: chapterTotals||null, excludedChapters, placements:{} };
   const build = computeSessionBuild(draft);
   const totalPapers = g.days*g.slotsPerDay;
   const shortfallPapers = new Set(build.shortfalls.map(sf=>paperKey(sf.day,sf.slot)));
-  const totalEligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType)).length;
+  const totalEligible = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(pmcType) && (!g.round || !q.round || q.round===g.round)).length;
   return {
     totalEligible, totalPapers, completePapers: totalPapers-shortfallPapers.size,
     shortChapters: Array.from(new Set(build.shortfalls.map(sf=>sf.unit))),
@@ -3910,6 +4050,9 @@ function openSessionForm(){
         Allow the same question to repeat across this round's own papers <span class="hint">(leave unticked — the normal, safer choice)</span>
       </label>
       <div class="hint" style="margin:-4px 0 12px;">A question already used in an OTHER contest or an earlier round can still be picked here either way — this only controls repeats within this one round. Every pick is recorded on that question's own usage history, so there's always a full record of where it's been used.</div>
+      <div class="field"><label>Round <span class="hint">(optional — restrict this build to one round's own questions, e.g. "PMC Fall 2026 — Round 2". A round-less question, such as reusable IQ content, is always included either way)</span></label>
+        <select id="sf-round"><option value="">All rounds</option>${allRounds().map(r=>`<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("")}</select>
+      </div>
       <div class="level-tabs" id="sf-cat-tabs"></div>
       <div id="sf-category-panel"></div>
       <button class="btn primary" id="sf-build" style="width:100%; justify-content:center; margin-top:12px;">Build now</button>
@@ -3923,6 +4066,7 @@ function openSessionForm(){
       slotsPerDay: Math.max(1, parseInt(document.getElementById("sf-slots").value,10)||1),
       questionsPerPaper: Math.max(1, parseInt(document.getElementById("sf-qpp").value,10)||1),
       overlapMode: document.getElementById("sf-overlap").checked ? "overlapping" : "non_overlapping",
+      round: document.getElementById("sf-round").value || null,
     };
   }
   // The single source of truth for "what chapters, and how many questions
@@ -4083,6 +4227,7 @@ function openSessionForm(){
     renderAll();
   }));
   document.getElementById("sf-overlap").addEventListener("change", renderAll);
+  document.getElementById("sf-round").addEventListener("change", renderAll);
   // Changing days/slots/questions-per-paper does NOT auto-reseed a
   // category's chapter totals once the admin has edited them -- a hand-
   // edited distribution is never silently overwritten by a later shape
@@ -4104,7 +4249,7 @@ function openSessionForm(){
         const name = categories.length>1 ? `${g.name} — ${pmcType}` : g.name;
         const draft = {
           name, pmcType, days:g.days, slotsPerDay:g.slotsPerDay, questionsPerPaper:g.questionsPerPaper,
-          overlapMode:g.overlapMode, chapterTotals: chapterTotalsByCategory[pmcType]||null,
+          overlapMode:g.overlapMode, round:g.round, chapterTotals: chapterTotalsByCategory[pmcType]||null,
           excludedChapters: Array.from(excludedChaptersByCategory[pmcType]||[]),
           placements:{}, contestIds:{},
         };
@@ -4131,7 +4276,7 @@ function openSessionResultsView(session){
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>${escapeHtml(session.name)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      <div class="hint" style="margin-bottom:10px;">${escapeHtml(session.pmcType)} · ${session.days} day(s) × ${session.slotsPerDay} slot(s) · ${session.questionsPerPaper} questions/paper · ${session.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"} · ${session.status==="complete"?`<span class="pill status-uploaded">Complete</span>`:`<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending</span>`}</div>
+      <div class="hint" style="margin-bottom:10px;">${escapeHtml(session.pmcType)} · ${session.days} day(s) × ${session.slotsPerDay} slot(s) · ${session.questionsPerPaper} questions/paper · ${session.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}${session.round?` · Round: ${escapeHtml(session.round)}`:""} · ${session.status==="complete"?`<span class="pill status-uploaded">Complete</span>`:`<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending</span>`}</div>
       ${papers.map(p=>{
         const contestId = (session.contestIds||{})[p.key];
         const c = contestId ? contests.find(x=>x.id===contestId) : null;
@@ -4254,7 +4399,7 @@ function renderContests(){
     ${contestSessions.length>0 ? `
     <div class="section-label" style="margin-top:0;">Sessions</div>
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Questions/paper</th><th>Overlap</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Category</th><th>Days × Slots</th><th>Questions/paper</th><th>Overlap</th><th>Round</th><th>Status</th><th></th></tr></thead>
       <tbody>
         ${contestSessions.map(s=>{
           const totalPapers = s.days*s.slotsPerDay;
@@ -4267,6 +4412,7 @@ function renderContests(){
           <td class="mono">${s.days} × ${s.slotsPerDay}</td>
           <td class="mono">${s.questionsPerPaper}</td>
           <td>${s.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}</td>
+          <td>${s.round?escapeHtml(s.round):`<span class="hint">All rounds</span>`}</td>
           <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}</td>
           <td style="white-space:nowrap;">
             <button class="btn small" data-view-session="${s.id}">View</button>
@@ -4387,6 +4533,7 @@ function openContestForm(existing){
               <select id="qp-diff" style="flex:1; min-width:120px;"><option value="">All difficulties</option>${DIFFS.map(d=>`<option value="${d.v}">${d.l}</option>`).join("")}</select>
               <select id="qp-skill" style="flex:1; min-width:140px;"><option value="">All skills</option>${allSkills().map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}</select>
               <select id="qp-author" style="flex:1; min-width:140px;"><option value="">All authors</option>${allAuthors().map(([email,name])=>`<option value="${escapeHtml(email)}">${escapeHtml(name)}</option>`).join("")}</select>
+              <select id="qp-round" style="flex:1; min-width:150px;" title="A round-less question (e.g. reusable IQ content) is always included, whichever round you pick"><option value="">All rounds</option>${allRounds().map(r=>`<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("")}</select>
               <select id="qp-sort" style="flex:1; min-width:150px;">
                 <option value="unit">Sort: Chapter</option>
                 <option value="difficulty">Sort: Difficulty</option>
@@ -4419,7 +4566,7 @@ function openContestForm(existing){
     // Filters live here (not in a module-level object) since they only
     // matter for the lifetime of this picker -- reset every time the modal
     // opens fresh, same scoping as selectedOrder above.
-    const pickerFilters = {search:"", unit:"", diff:"", skill:"", author:"", sort:"unit", hideUsed:true};
+    const pickerFilters = {search:"", unit:"", diff:"", skill:"", author:"", round:"", sort:"unit", hideUsed:true};
     const SORTERS = {
       unit: (a,b)=> (a.unit||"").localeCompare(b.unit||"") || (DIFF_DOTS[a.difficulty]||0)-(DIFF_DOTS[b.difficulty]||0),
       difficulty: (a,b)=> (DIFF_DOTS[a.difficulty]||0)-(DIFF_DOTS[b.difficulty]||0),
@@ -4437,6 +4584,10 @@ function openContestForm(existing){
       if(pickerFilters.diff) list = list.filter(q=>q.difficulty===pickerFilters.diff);
       if(pickerFilters.skill) list = list.filter(q=>(q.skills||[]).includes(pickerFilters.skill));
       if(pickerFilters.author) list = list.filter(q=>q.authorEmail===pickerFilters.author);
+      // A round-less question (reusable/cross-round content, e.g. IQ) is
+      // always included regardless of which round is picked -- only a
+      // question that carries a DIFFERENT round's own tag is excluded.
+      if(pickerFilters.round) list = list.filter(q=>!q.round || q.round===pickerFilters.round);
       const needle = pickerFilters.search.trim().toLowerCase();
       if(needle) list = list.filter(q=>(q.titleEn||"").toLowerCase().includes(needle) || (q.promptEn||"").toLowerCase().includes(needle));
       return list.slice().sort(SORTERS[pickerFilters.sort] || SORTERS.unit);
@@ -4463,7 +4614,7 @@ function openContestForm(existing){
         <label style="display:flex; align-items:flex-start; gap:8px; padding:9px 6px; font-weight:400; font-size:13px; border-bottom:1px solid var(--border);">
           <input type="checkbox" data-qid="${q.id}" ${selectedOrder.includes(q.id)?"checked":""} style="margin-top:3px;" />
           <span style="flex:1; min-width:0;">
-            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span></div>
+            <div class="tags" style="margin-bottom:5px;">${(q.level||[]).map(l=>`<span class="pill level">${l}</span>`).join("")}<span class="pill diff-${q.difficulty}">${diffLbl}${difficultyDots(q.difficulty)}</span><span class="pill status-${statusInfo.v}">${escapeHtml(statusInfo.l)}</span><span class="unit-chip">${escapeHtml(chapterLabel(q.unit))}</span>${q.round?`<span class="unit-chip">${escapeHtml(q.round)}</span>`:""}</div>
             <div style="white-space:pre-wrap;">${escapeHtml(q.promptEn||"")}</div>
             <div class="hint" style="margin-top:4px;">by ${escapeHtml(q.authorName||q.authorEmail||"—")}${(q.skills||[]).length?" · "+q.skills.map(escapeHtml).join(", "):""}</div>
             ${(q.usedIn||[]).length ? `<div class="hint" style="color:var(--gold);">⚠ Already used in: ${(q.usedIn||[]).map(escapeHtml).join(", ")}</div>` : ""}
@@ -4482,6 +4633,7 @@ function openContestForm(existing){
     document.getElementById("qp-diff").addEventListener("change", e=>{ pickerFilters.diff = e.target.value; renderPicker(); });
     document.getElementById("qp-skill").addEventListener("change", e=>{ pickerFilters.skill = e.target.value; renderPicker(); });
     document.getElementById("qp-author").addEventListener("change", e=>{ pickerFilters.author = e.target.value; renderPicker(); });
+    document.getElementById("qp-round").addEventListener("change", e=>{ pickerFilters.round = e.target.value; renderPicker(); });
     document.getElementById("qp-sort").addEventListener("change", e=>{ pickerFilters.sort = e.target.value; renderPicker(); });
     document.getElementById("qp-hide-used").addEventListener("change", e=>{ pickerFilters.hideUsed = e.target.checked; renderPicker(); });
     document.getElementById("qp-select-all").addEventListener("click", ()=>{
@@ -7596,6 +7748,14 @@ function renderAdmin(){
       <button class="btn primary" id="save-limits">Save limits</button>
     </div>
     <p class="hint" style="margin-top:4px;">"Review backlog block": once a teacher has more than this many peer reviews waiting on them, they can't start a new question until they clear some — review first, write second. An admin can also pause a specific teacher's question-making directly, regardless of their backlog — see the "Paused" column in Teacher accounts below.</p>
+    <div class="section-label">Round backfill <span class="hint" style="text-transform:none; font-weight:400; letter-spacing:normal;">(one-time — labels existing questions by round)</span></div>
+    <p class="desc">Every NEW question now auto-tags itself with a round (whichever round's assignment currently covers its chapter — see the editor's own "Round" field). Questions made before this feature existed have no round yet, which is fine — they stay includable in every round's contest build either way — but if you'd rather label them for filtering, pick a cutoff date: everything created before it gets one label, everything on/after it gets another. ${questionsNeedingRoundBackfill().length>0 ? `<b>${questionsNeedingRoundBackfill().length} question(s) still have no round.</b>` : `All questions already have a round — nothing left to backfill.`} This never touches a question that already has a round, so it's safe to run again later (e.g. for a new backfill cutoff) without re-labeling anything already set.</p>
+    <div class="filters" style="align-items:flex-end;">
+      <div class="field" style="margin:0;"><label>Cutoff date</label><input type="date" id="rb-cutoff" value="2026-10-29" style="width:150px;" /></div>
+      <div class="field" style="margin:0;"><label>Label for before the cutoff</label><input type="text" id="rb-before" value="PMC Fall 2026 – Round 1" style="width:220px;" /></div>
+      <div class="field" style="margin:0;"><label>Label for on/after the cutoff</label><input type="text" id="rb-after" value="PMC Fall 2026 – Round 2" style="width:220px;" /></div>
+      <button class="btn primary" id="rb-run" ${questionsNeedingRoundBackfill().length===0?"disabled":""}>Backfill rounds</button>
+    </div>
     <div class="section-label">Backup</div>
     <p class="desc">There's no automated backup on the free Firebase plan — download a full copy of the question bank, contests, and assignments any time before making a risky change.</p>
     <button class="btn" id="export-data">⬇ Export all data as JSON</button>
@@ -7748,6 +7908,21 @@ function renderAdmin(){
       logActivity("limits_updated", `Set daily limits to target ${dailyCreationTarget}, creation cap ${dailyCreationLimit}, review cap ${dailyReviewLimit}, review backlog block ${reviewBacklogBlockThreshold}`, null);
       toast("Limits saved");
     }catch(err){ console.error(err); toast("Couldn't save limits"); }
+  });
+  document.getElementById("rb-run").addEventListener("click", async ()=>{
+    const cutoff = document.getElementById("rb-cutoff").value;
+    const beforeLabel = document.getElementById("rb-before").value.trim();
+    const afterLabel = document.getElementById("rb-after").value.trim();
+    if(!cutoff || !beforeLabel || !afterLabel){ toast("Fill in the cutoff date and both labels"); return; }
+    const targets = questionsNeedingRoundBackfill();
+    if(targets.length===0) return;
+    if(!(await confirmDialog(`Label ${targets.length} question(s) — "${beforeLabel}" before ${fmtDateOnly(cutoff)}, "${afterLabel}" on/after it?`))) return;
+    try{
+      const n = await backfillQuestionRounds(cutoff, beforeLabel, afterLabel);
+      logActivity("rounds_backfilled", `Backfilled round labels for ${n} question(s) (cutoff ${cutoff})`, null);
+      toast(`Labeled ${n} question(s)`);
+      renderTab();
+    }catch(err){ console.error(err); toast("Couldn't backfill rounds ("+err.code+")"); }
   });
   document.getElementById("cx-add-chapter").addEventListener("click", async ()=>{
     const bookId = document.getElementById("cx-book").value;
