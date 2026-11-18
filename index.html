@@ -4565,6 +4565,25 @@ function renderContests(){
           const totalPapers = s.days*s.slotsPerDay;
           const shortPapers = new Set((s.shortfalls||[]).map(sf=>paperKey(sf.day,sf.slot))).size;
           const completePapers = totalPapers-shortPapers;
+          // Real request (Nov 2026, "when more question are ready let it
+          // add when finished"): locking a question never auto-fills a
+          // pending session by itself -- that still requires an explicit
+          // "Add more now" click, on purpose (silently rewriting a
+          // contest paper the moment someone locks an unrelated question
+          // elsewhere would be a surprising, hard-to-predict side effect
+          // for something as consequential as exam content). What WAS
+          // missing is any visible sign that new content became eligible
+          // in the meantime, so a pending session could look permanently
+          // stuck even right after locking a batch that would fill it.
+          // `readyCount` -- how many of THIS session's still-short cells
+          // now have at least one eligible pick, using the exact same
+          // live eligibility sessionLiveShortfallCounts() already
+          // computes for the results view -- turns that into a visible,
+          // reactive "N ready to add" badge right in the Sessions list,
+          // so the next natural action is obvious without opening
+          // anything first.
+          const liveCounts = s.status!=="complete" ? sessionLiveShortfallCounts(s).counts : {};
+          const readyCount = (s.shortfalls||[]).filter(sf=>(liveCounts[`${sf.unit}|${sf.difficulty}`]||0)>0).length;
           return `
         <tr>
           <td>${escapeHtml(s.name)}</td>
@@ -4573,10 +4592,10 @@ function renderContests(){
           <td class="mono">${s.questionsPerPaper}</td>
           <td>${s.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}</td>
           <td>${s.round?escapeHtml(s.round):`<span class="hint">All rounds</span>`}</td>
-          <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}</td>
+          <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}${readyCount>0?` <span class="pill" style="background:var(--accent-soft); color:var(--accent); font-weight:700;" title="These chapters now have at least one locked question that wasn't there before">⚡ ${readyCount} ready to add</span>`:""}</td>
           <td style="white-space:nowrap;">
             <button class="btn small" data-view-session="${s.id}">View</button>
-            ${s.status!=="complete" ? `<button class="btn small primary" data-fill-session="${s.id}">Add more now</button>` : ""}
+            ${s.status!=="complete" ? `<button class="btn small ${readyCount>0?"primary":""}" data-fill-session="${s.id}">Add more now</button>` : ""}
           </td>
         </tr>`;}).join("")}
       </tbody>
