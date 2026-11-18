@@ -724,26 +724,92 @@ function effectiveRound(q){
 // app, so this table's numbers are never a DIFFERENT way of counting
 // the same thing -- just the same counting, organized by round instead
 // of by teacher or chapter.
+// Which of the six mutually-exclusive Round-summary columns a question
+// falls into -- factored out so roundSummaryRows() (the counts) and
+// openRoundDrillDown() (Nov 2026, real request: "complete tracking of
+// question like now 8 in review who is reviewing or sent back not
+// created, exact place where the question exists" -- clicking any
+// number in the Round summary table) can never disagree with each other:
+// both read the exact same bucket for the exact same question.
+function questionBucket(q){
+  if(q.status==="draft") return "draft";
+  if(q.status==="finalized") return "locked";
+  if(q.status==="uploaded") return "uploaded";
+  if(q.status==="in_review"){
+    if(q.peerReview?.outcome==="agree") return "reviewed";
+    if(q.peerReview?.outcome==="disagree") return "sentBack";
+    return "inReview";
+  }
+  return null;
+}
 function roundSummaryRows(){
   const buckets = {};
   questions.forEach(q=>{
     const r = effectiveRound(q) || "";
     const b = buckets[r] = buckets[r] || {round:r, draft:0, inReview:0, sentBack:0, reviewed:0, locked:0, uploaded:0, total:0};
     b.total++;
-    if(q.status==="draft") b.draft++;
-    else if(q.status==="finalized") b.locked++;
-    else if(q.status==="uploaded") b.uploaded++;
-    else if(q.status==="in_review"){
-      if(q.peerReview?.outcome==="agree") b.reviewed++;
-      else if(q.peerReview?.outcome==="disagree") b.sentBack++;
-      else b.inReview++;
-    }
+    const key = questionBucket(q);
+    if(key) b[key]++;
   });
   return Object.values(buckets).sort((a,b)=>{
     if(a.round==="") return 1;
     if(b.round==="") return -1;
     return b.round.localeCompare(a.round);
   });
+}
+// The actual question list behind one Round-summary cell -- `round` is
+// either a real round label, "" for the "No round" row, or "__all__" for
+// the combined totals row at the bottom (every question in that bucket,
+// regardless of round).
+function roundSummaryDrillDown(round, bucket){
+  return questions.filter(q=>questionBucket(q)===bucket && (round==="__all__" || (effectiveRound(q)||"")===round));
+}
+const ROUND_BUCKET_LABEL = {draft:"Draft", inReview:"In Review", sentBack:"Sent back", reviewed:"Reviewed OK", locked:"Locked", uploaded:"Uploaded"};
+// "Exact place where the question exists" -- who's reviewing it, who
+// sent it back and why, which contest it landed in, etc. -- varies by
+// bucket, so each row's detail column means something different
+// depending on which cell was clicked, same as the Pending Reviews table
+// already does for its own one bucket (peerReview.outcome==="pending").
+function openRoundDrillDown(round, bucket){
+  const root = document.getElementById("modal-root");
+  const list = roundSummaryDrillDown(round, bucket)
+    .sort((a,b)=>(b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+  const roundLabel = round==="__all__" ? "all rounds" : (round || "No round (reusable)");
+  root.innerHTML = `<div class="overlay" id="ov"><div class="drawer wide">
+    <div class="drawer-head"><h2>${escapeHtml(ROUND_BUCKET_LABEL[bucket]||bucket)} — ${escapeHtml(roundLabel)} <span class="hint" style="font-weight:400;">(${list.length})</span></h2><button class="btn ghost small" id="close-form">Close</button></div>
+    ${list.length===0 ? emptyState("Nothing here.") : `
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Question</th><th>Round</th><th>Chapter</th><th>Author</th><th>${bucket==="sentBack"?"Reviewer / reason":(bucket==="inReview"||bucket==="reviewed")?"Reviewer":bucket==="uploaded"||bucket==="locked"?"Used in":"Last updated"}</th><th>Date</th></tr></thead>
+      <tbody>
+        ${list.map(q=>{
+          let detail = `<span class="hint">—</span>`, date = fmtDate(q.updatedAt||q.createdAt);
+          if(bucket==="sentBack"){
+            const reason = REVIEW_FLAGS.find(f=>f.v===q.peerReview?.issueFlag)?.short || "Flagged";
+            detail = `${escapeHtml(q.peerReview?.reviewerName||"—")} — <span style="color:var(--red);">${escapeHtml(reason)}</span>`;
+            date = fmtDate(q.peerReview?.submittedAt||q.updatedAt);
+          } else if(bucket==="inReview"){
+            detail = q.peerReview?.reviewerName ? `${escapeHtml(q.peerReview.reviewerName)} <span class="hint">(assigned ${fmtDate(q.peerReview.assignedAt)})</span>` : `<span class="hint">not yet assigned</span>`;
+          } else if(bucket==="reviewed"){
+            detail = escapeHtml(q.peerReview?.reviewerName||"—");
+            date = fmtDate(q.peerReview?.submittedAt||q.updatedAt);
+          } else if(bucket==="uploaded" || bucket==="locked"){
+            detail = (q.usedIn||[]).length ? escapeHtml(q.usedIn.join(", ")) : `<span class="hint">not used yet</span>`;
+          }
+          return `<tr>
+            <td><button type="button" class="link-btn" data-goto-question="${q.id}" style="text-align:left;">${escapeHtml(q.titleEn||"Untitled")}</button></td>
+            <td>${q.round?escapeHtml(q.round):`<span class="hint">—</span>`}</td>
+            <td class="mono">${escapeHtml(chapterLabel(q.unit))}</td>
+            <td>${escapeHtml(q.authorName||"—")}</td>
+            <td>${detail}</td>
+            <td class="mono">${date}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>`}
+  </div></div>`;
+  document.getElementById("close-form").addEventListener("click", closeModal);
+  document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
+  root.querySelectorAll("[data-goto-question]").forEach(b=>b.addEventListener("click", ()=>{ closeModal(); openQuestion(b.dataset.gotoQuestion); }));
 }
 // Nov 2026, one-time admin tool (Admin & Analytics -> "Round backfill"):
 // every question saved BEFORE this feature existed has no round at all,
@@ -7941,32 +8007,37 @@ function renderAdmin(){
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
     <div class="section-label">Round summary</div>
-    <p class="desc">Every question in the bank, grouped by the round its progress counts toward right now — NOT scoped by author or chapter, and NOT the same as the Team comparison numbers below (those exclude a teacher's work on anything they're not currently assigned). Each question falls into exactly one row and one status column here, so the columns always add up to that row's own Total, and every row's Total always adds up to the ${questions.length} in the "Total questions" tile above — if those don't match, something is genuinely wrong and worth reporting. A question still unresolved (not yet locked) always counts toward whichever round CURRENTLY covers its chapter, even if it happened to be drafted earlier — only a locked question's round is permanently fixed.</p>
-    <div class="table-wrap"><table class="data">
+    <p class="desc">Every question in the bank, grouped by the round its progress counts toward right now — NOT scoped by author or chapter, and NOT the same as the Team comparison numbers below (those exclude a teacher's work on anything they're not currently assigned). Each question falls into exactly one row and one status column here, so the columns always add up to that row's own Total, and every row's Total always adds up to the ${questions.length} in the "Total questions" tile above — if those don't match, something is genuinely wrong and worth reporting. A question still unresolved (not yet locked) always counts toward whichever round CURRENTLY covers its chapter, even if it happened to be drafted earlier — only a locked question's round is permanently fixed. <b>Click any number</b> to see exactly which questions it's counting — who's reviewing each one, why one was sent back, or which contest an uploaded one landed in.</p>
+    ${(()=>{
+      const cell = (round, bucket, count, extraStyle="")=> count>0
+        ? `<td class="mono" style="${extraStyle}"><button type="button" class="link-btn" data-round-drill="${escapeHtml(round)}|${bucket}">${count}</button></td>`
+        : `<td class="mono" style="${extraStyle}">${count}</td>`;
+      return `<div class="table-wrap"><table class="data">
       <thead><tr><th>Round</th><th>Draft</th><th>In Review</th><th>Sent back</th><th>Reviewed OK</th><th>Locked</th><th>Uploaded</th><th>Total</th></tr></thead>
       <tbody>
         ${summaryRows.map(r=>`<tr>
           <td>${r.round?escapeHtml(r.round):`<span class="hint">No round (reusable)</span>`}</td>
-          <td class="mono">${r.draft}</td>
-          <td class="mono">${r.inReview}</td>
-          <td class="mono" style="${r.sentBack>0?"color:var(--red); font-weight:700;":""}">${r.sentBack}</td>
-          <td class="mono">${r.reviewed}</td>
-          <td class="mono">${r.locked}</td>
-          <td class="mono">${r.uploaded}</td>
+          ${cell(r.round, "draft", r.draft)}
+          ${cell(r.round, "inReview", r.inReview)}
+          ${cell(r.round, "sentBack", r.sentBack, r.sentBack>0?"color:var(--red); font-weight:700;":"")}
+          ${cell(r.round, "reviewed", r.reviewed)}
+          ${cell(r.round, "locked", r.locked)}
+          ${cell(r.round, "uploaded", r.uploaded)}
           <td class="mono"><b>${r.total}</b></td>
         </tr>`).join("")}
         <tr style="font-weight:700; border-top:2px solid var(--border);">
           <td>All rounds combined</td>
-          <td class="mono">${summaryRows.reduce((s,r)=>s+r.draft,0)}</td>
-          <td class="mono">${summaryRows.reduce((s,r)=>s+r.inReview,0)}</td>
-          <td class="mono">${summaryRows.reduce((s,r)=>s+r.sentBack,0)}</td>
-          <td class="mono">${summaryRows.reduce((s,r)=>s+r.reviewed,0)}</td>
-          <td class="mono">${summaryRows.reduce((s,r)=>s+r.locked,0)}</td>
-          <td class="mono">${summaryRows.reduce((s,r)=>s+r.uploaded,0)}</td>
+          ${cell("__all__", "draft", summaryRows.reduce((s,r)=>s+r.draft,0))}
+          ${cell("__all__", "inReview", summaryRows.reduce((s,r)=>s+r.inReview,0))}
+          ${cell("__all__", "sentBack", summaryRows.reduce((s,r)=>s+r.sentBack,0))}
+          ${cell("__all__", "reviewed", summaryRows.reduce((s,r)=>s+r.reviewed,0))}
+          ${cell("__all__", "locked", summaryRows.reduce((s,r)=>s+r.locked,0))}
+          ${cell("__all__", "uploaded", summaryRows.reduce((s,r)=>s+r.uploaded,0))}
           <td class="mono">${questions.length}</td>
         </tr>
       </tbody>
-    </table></div>
+    </table></div>`;
+    })()}
     <div class="section-label">Team comparison</div>
     <p class="desc">How much each teacher is actually producing — created vs. locked, against their assigned target where one exists. Scoped to each teacher's CURRENT round only (an older, already-superseded round's progress is never added on top) — this is what to check against "is this round done," not the whole-bank tiles above.</p>
     ${teamRows.length===0 ? emptyState("No teacher activity yet.") : `
@@ -8209,6 +8280,14 @@ function renderAdmin(){
   document.getElementById("fix-self-assigned")?.addEventListener("click", fixSelfAssignedReviews);
   document.getElementById("fix-ineligible-assigned")?.addEventListener("click", fixIneligibleAssignedReviews);
   document.getElementById("fix-locked-pending")?.addEventListener("click", fixLockedWithPendingReview);
+  document.querySelectorAll("[data-round-drill]").forEach(b=>b.addEventListener("click", ()=>{
+    // Split on the LAST "|", not the first -- a round name is free text
+    // an admin typed, so it could in principle contain a "|" itself; the
+    // bucket suffix never does, so this stays correct either way.
+    const raw = b.dataset.roundDrill;
+    const idx = raw.lastIndexOf("|");
+    openRoundDrillDown(raw.slice(0, idx), raw.slice(idx+1));
+  }));
   document.querySelectorAll("[data-reassign-to]").forEach(sel=>sel.addEventListener("change", async ()=>{
     const q = questions.find(x=>x.id===sel.dataset.reassignTo);
     const newEmail = sel.value;
