@@ -4672,9 +4672,29 @@ function openSessionResultsView(session){
   // the true current state and offers "Add more now" whenever it's
   // actually needed, regardless of what an earlier, buggy build persisted.
   const freshBuild = computeSessionBuild(session);
-  const isComplete = freshBuild.shortfalls.length===0;
+  // Real bug fixed Nov 2026, found immediately after the fix above shipped
+  // ("its 39 and no add more button"): `shortfalls.length===0` alone is
+  // NOT "already complete" -- computeSessionBuild() is a dry run that
+  // actively PICKS a question for every still-empty slot that has an
+  // eligible pool, so shortfalls only lists cells with NO eligible
+  // question at all. A session with plenty of eligible, not-yet-COMMITTED
+  // questions waiting (exactly what `newlyPlaced`/the "ready to add" badge
+  // represents) would see shortfalls go to zero in this dry run WITHOUT
+  // anything actually having been saved -- showing "Complete" with a
+  // nonzero "ready to add" count at the same time, and no "Add more now"
+  // button to actually commit them, because the button was hidden on the
+  // (wrong) belief nothing was left to do. True completeness requires the
+  // dry run to find NOTHING left to place at all -- both shortfalls AND
+  // newlyPlaced empty.
+  const isComplete = freshBuild.shortfalls.length===0 && freshBuild.newlyPlaced.length===0;
   const shortfallsByKey = {};
   freshBuild.shortfalls.forEach(sf=>{ const k=paperKey(sf.day,sf.slot); (shortfallsByKey[k]=shortfallsByKey[k]||[]).push(sf); });
+  // Per-paper count of slots the dry run found eligible content for but
+  // hasn't committed yet (see the isComplete note above) -- a paper with
+  // zero genuine shortfalls can still have these, and should say so
+  // instead of claiming "Complete".
+  const newlyPlacedCountByKey = {};
+  freshBuild.newlyPlaced.forEach(np=>{ const k=paperKey(np.day,np.slot); newlyPlacedCountByKey[k] = (newlyPlacedCountByKey[k]||0)+1; });
   const { counts: liveCounts, extraCounts } = sessionLiveShortfallCounts({...session, shortfalls:freshBuild.shortfalls});
   const crossRoundHelps = session.round && sessionCrossRoundWouldHelp(freshBuild.shortfalls, extraCounts, liveCounts);
   root.innerHTML = `
@@ -4685,6 +4705,7 @@ function openSessionResultsView(session){
         const contestId = (session.contestIds||{})[p.key];
         const c = contestId ? contests.find(x=>x.id===contestId) : null;
         const sf = shortfallsByKey[p.key]||[];
+        const readyForPaper = newlyPlacedCountByKey[p.key]||0;
         return `
         <div class="progress-card" style="margin-bottom:8px;">
           <div class="row"><b>Day ${p.day}, Slot ${p.slot}</b><span class="mono">${c?(c.questionIds||[]).length:0} / ${session.questionsPerPaper}</span></div>
@@ -4693,7 +4714,7 @@ function openSessionResultsView(session){
             const extra = extraCounts[`${x.unit}|${x.difficulty}`]||0;
             return `${escapeHtml(chapterLabel(x.unit))} (${DIFFS.find(d=>d.v===x.difficulty)?.l||x.difficulty}) — <span style="${n>0?"color:var(--red); font-weight:700;":""}">${n} eligible available</span>${extra>0?` <span class="hint" style="color:var(--gold);">(+${extra} more in other rounds)</span>`:""}`;
           }).join(", ")}</div>
-          ${sf.some(x=>(liveCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">⚠ Some of these show eligible questions available but still unfilled — click "Add more now" below to pick them up.</div>` : sf.some(x=>(extraCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">None in <b>${escapeHtml(session.round)}</b> yet, but other rounds already have some — use "Also fill from other rounds" below if you want to pull them in for this one fill.</div>` : `<div class="hint" style="margin-top:2px;">No eligible question exists yet for any of these — lock a question matching that exact chapter, difficulty, and PMC level (${escapeHtml(session.pmcType)}) to fill it.</div>`}` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
+          ${sf.some(x=>(liveCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">⚠ Some of these show eligible questions available but still unfilled — click "Add more now" below to pick them up.</div>` : sf.some(x=>(extraCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">None in <b>${escapeHtml(session.round)}</b> yet, but other rounds already have some — use "Also fill from other rounds" below if you want to pull them in for this one fill.</div>` : `<div class="hint" style="margin-top:2px;">No eligible question exists yet for any of these — lock a question matching that exact chapter, difficulty, and PMC level (${escapeHtml(session.pmcType)}) to fill it.</div>`}` : readyForPaper>0 ? `<div class="hint" style="color:var(--red); font-weight:700; margin-top:4px;">⚡ ${readyForPaper} question(s) eligible but not yet added — click "Add more now" below to commit them.</div>` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
           ${c ? `<div style="margin-top:8px; display:flex; gap:6px;">
             <button type="button" class="btn small" data-sr-edit="${c.id}">Edit</button>
             <button type="button" class="btn small" data-sr-print="${c.id}">Print / Export PDF</button>
@@ -4838,8 +4859,29 @@ function renderContests(){
           // the true current state rather than whatever an earlier,
           // buggy build persisted.
           const freshBuild = computeSessionBuild(s);
-          const isComplete = freshBuild.shortfalls.length===0;
-          const shortPapers = new Set(freshBuild.shortfalls.map(sf=>paperKey(sf.day,sf.slot))).size;
+          // Real bug fixed Nov 2026, found immediately after the fix above
+          // shipped ("its 39 and no add more button in pmc 6 and pmc 7"):
+          // `shortfalls.length===0` alone is NOT "already complete" --
+          // computeSessionBuild() is a dry run that actively PICKS a
+          // question for every still-empty slot that has an eligible pool,
+          // so `shortfalls` only lists cells with NO eligible question at
+          // all. A session with plenty of eligible, not-yet-COMMITTED
+          // questions waiting (exactly what `newlyPlaced`/the "ready to
+          // add" badge represents) saw shortfalls go to zero in this dry
+          // run WITHOUT anything actually having been saved -- showing
+          // "Complete" with a nonzero "ready to add" count at the same
+          // time, and no "Add more now" button to actually commit them,
+          // since the button was hidden on the (wrong) belief nothing was
+          // left to do. True completeness requires the dry run to find
+          // NOTHING left to place at all -- both shortfalls AND
+          // newlyPlaced empty. A paper counts as "still short" for the
+          // N/M papers-complete readout the same way -- either a genuine
+          // shortfall or something still waiting to be committed.
+          const isComplete = freshBuild.shortfalls.length===0 && freshBuild.newlyPlaced.length===0;
+          const shortPapers = new Set([
+            ...freshBuild.shortfalls.map(sf=>paperKey(sf.day,sf.slot)),
+            ...freshBuild.newlyPlaced.map(np=>paperKey(np.day,np.slot)),
+          ]).size;
           const completePapers = totalPapers-shortPapers;
           // Real request (Nov 2026, "when more question are ready let it
           // add when finished"): locking a question never auto-fills a
