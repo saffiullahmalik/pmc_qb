@@ -4073,6 +4073,49 @@ function sessionChapters(pmcType, excludedChapters){
   const excluded = new Set(excludedChapters);
   return chaptersForLevel(pmcType).filter(ch=>!excluded.has(ch.code));
 }
+// Real bug fixed Nov 2026 ("why is a session showing Complete at 39/60"):
+// `placements[paperKey][chapterCode][difficulty]` used to be a single
+// nullable question id -- but a chapter can legitimately need MORE THAN
+// ONE question of the SAME difficulty in the SAME paper (e.g. 60
+// questions/paper over 12 chapters = 5 each = 2 medium/2 hard/1 very_hard
+// per chapter -- with only 1 paper, BOTH of that chapter's medium
+// questions have nowhere to go but that one paper). buildGeneralBlueprint()
+// (any non-6x30x12 shape, or a customized chapterTotals even at that
+// shape) can and does produce a cell with the same difficulty listed more
+// than once for exactly this reason. The single-scalar slot silently
+// COLLAPSED the second occurrence -- `if(placements[...][diff]) return;`
+// treated it as "already filled" by the first pick, so the second
+// question was never placed AND never recorded as a shortfall either --
+// confirmed by direct reproduction: a 1-paper/60-question/12-chapter
+// session only ever placed 1 of each chapter's 2 medium + 2 hard slots
+// (36 instead of 60, close to the 39 a real report showed once eligible
+// pools for a few cells came up empty too), while `shortfalls` stayed
+// empty and the session was saved as "complete". Fixed by making each
+// difficulty slot an ARRAY of ids (one entry per occurrence that
+// difficulty needs for that chapter+paper) instead of a single id-or-null.
+// toDiffArray()/normalizePlacements() upgrade an older session's
+// single-scalar shape to this array shape on read, so existing session
+// docs keep working -- and since computeSessionBuild() only fills an
+// array slot that's still empty, re-running "Add more now" on an
+// already-affected session correctly picks up exactly the slots that were
+// silently dropped before, without disturbing anything already placed.
+function toDiffArray(v){
+  return Array.isArray(v) ? v : (v ? [v] : []);
+}
+function normalizePlacements(raw){
+  const out = {};
+  Object.entries(raw||{}).forEach(([pkey, byChapter])=>{
+    out[pkey] = {};
+    Object.entries(byChapter||{}).forEach(([code, byDiff])=>{
+      out[pkey][code] = {
+        medium: toDiffArray(byDiff?.medium),
+        hard: toDiffArray(byDiff?.hard),
+        very_hard: toDiffArray(byDiff?.very_hard),
+      };
+    });
+  });
+  return out;
+}
 function computeSessionBuild(session){
   const chapters = sessionChapters(session.pmcType, session.excludedChapters);
   const numPapers = session.days*session.slotsPerDay;
@@ -4080,11 +4123,11 @@ function computeSessionBuild(session){
   const blueprint = buildBlueprint(numPapers, session.questionsPerPaper, chapters, chapterTotals);
   const papers = []; // {day, slot, key}
   for(let d=1; d<=session.days; d++) for(let s=1; s<=session.slotsPerDay; s++) papers.push({day:d, slot:s, key:paperKey(d,s)});
-  const placements = JSON.parse(JSON.stringify(session.placements||{}));
+  const placements = normalizePlacements(session.placements);
   const usedThisSession = new Set();
   papers.forEach(p=>{
     Object.values(placements[p.key]||{}).forEach(byDiff=>{
-      Object.values(byDiff||{}).forEach(qid=>{ if(qid) usedThisSession.add(qid); });
+      Object.values(byDiff||{}).forEach(arr=>{ arr.forEach(qid=>{ if(qid) usedThisSession.add(qid); }); });
     });
   });
   // A round-less question (reusable/cross-round content, e.g. IQ) is
@@ -4098,15 +4141,22 @@ function computeSessionBuild(session){
   chapters.forEach((ch,ci)=>{
     papers.forEach((p,pi)=>{
       const cell = blueprint[ci][pi]||[];
+      // A chapter can need more than one question of the SAME difficulty
+      // in the same paper (see note above) -- track which occurrence of
+      // this difficulty within this cell we're on (0-based), since `cell`
+      // can list a difficulty more than once.
+      const seenInCell = {};
       cell.forEach(diff=>{
+        const occurrence = seenInCell[diff] = (seenInCell[diff]===undefined ? 0 : seenInCell[diff]+1);
         placements[p.key] = placements[p.key]||{};
-        placements[p.key][ch.code] = placements[p.key][ch.code]||{medium:null,hard:null,very_hard:null};
-        if(placements[p.key][ch.code][diff]) return; // already filled -- incremental rebuild skips it
+        placements[p.key][ch.code] = placements[p.key][ch.code]||{medium:[],hard:[],very_hard:[]};
+        const slot = placements[p.key][ch.code][diff];
+        if(slot[occurrence]) return; // already filled -- incremental rebuild skips it
         let pool = eligible.filter(q=>q.unit===ch.code && q.difficulty===diff);
         if(session.overlapMode!=="overlapping") pool = pool.filter(q=>!usedThisSession.has(q.id));
         if(pool.length===0){ shortfalls.push({day:p.day, slot:p.slot, unit:ch.code, difficulty:diff}); return; }
         const picked = pool[Math.floor(Math.random()*pool.length)];
-        placements[p.key][ch.code][diff] = picked.id;
+        slot[occurrence] = picked.id;
         usedThisSession.add(picked.id);
         newlyPlaced.push({questionId:picked.id, day:p.day, slot:p.slot});
       });
@@ -4120,8 +4170,7 @@ function computeSessionBuild(session){
     const ids = [];
     chapters.forEach(ch=>{
       ["medium","hard","very_hard"].forEach(diff=>{
-        const qid = placements[p.key]?.[ch.code]?.[diff];
-        if(qid) ids.push(qid);
+        toDiffArray(placements[p.key]?.[ch.code]?.[diff]).forEach(qid=>{ if(qid) ids.push(qid); });
       });
     });
     paperQuestionIds[p.key] = ids;
@@ -4173,7 +4222,7 @@ function sessionLiveShortfallCounts(session){
   if(session.overlapMode!=="overlapping"){
     Object.values(session.placements||{}).forEach(byChapter=>{
       Object.values(byChapter||{}).forEach(byDiff=>{
-        Object.values(byDiff||{}).forEach(qid=>{ if(qid) usedThisSession.add(qid); });
+        Object.values(byDiff||{}).forEach(v=>{ toDiffArray(v).forEach(qid=>{ if(qid) usedThisSession.add(qid); }); });
       });
     });
   }
@@ -4262,7 +4311,7 @@ function sessionChapterBreakdown(session){
     Object.values(session.placements||{}).forEach(byChapter=>{
       const cell = byChapter?.[ch.code];
       if(!cell) return;
-      ["medium","hard","very_hard"].forEach(d=>{ if(cell[d]) used[d]++; });
+      ["medium","hard","very_hard"].forEach(d=>{ used[d] += toDiffArray(cell[d]).filter(Boolean).length; });
     });
     const have = {
       medium: haveByCell[`${ch.code}|medium`]||0,
@@ -4628,13 +4677,24 @@ function openSessionResultsView(session){
   const root = document.getElementById("modal-root");
   const papers = [];
   for(let d=1; d<=session.days; d++) for(let s=1; s<=session.slotsPerDay; s++) papers.push({day:d, slot:s, key:paperKey(d,s)});
+  // Nov 2026 fix: don't trust the session's stored status/shortfalls --
+  // a session built before the placements-array fix on computeSessionBuild()
+  // could have been saved as "complete" with an empty shortfalls list while
+  // actually under-filled (the dropped slots were never recorded as
+  // shortfalls at all, see that function's own note). Recompute a fresh,
+  // READ-ONLY dry run here instead (computeSessionBuild() never writes to
+  // Firestore -- only commitSessionBuild() does), so the view always shows
+  // the true current state and offers "Add more now" whenever it's
+  // actually needed, regardless of what an earlier, buggy build persisted.
+  const freshBuild = computeSessionBuild(session);
+  const isComplete = freshBuild.shortfalls.length===0;
   const shortfallsByKey = {};
-  (session.shortfalls||[]).forEach(sf=>{ const k=paperKey(sf.day,sf.slot); (shortfallsByKey[k]=shortfallsByKey[k]||[]).push(sf); });
-  const { counts: liveCounts, extraCounts } = sessionLiveShortfallCounts(session);
+  freshBuild.shortfalls.forEach(sf=>{ const k=paperKey(sf.day,sf.slot); (shortfallsByKey[k]=shortfallsByKey[k]||[]).push(sf); });
+  const { counts: liveCounts, extraCounts } = sessionLiveShortfallCounts({...session, shortfalls:freshBuild.shortfalls});
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>${escapeHtml(session.name)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
-      <div class="hint" style="margin-bottom:10px;">${escapeHtml(session.pmcType)} · ${session.days} day(s) × ${session.slotsPerDay} slot(s) · ${session.questionsPerPaper} questions/paper · ${session.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}${session.round?` · Round: ${escapeHtml(session.round)}`:""} · ${session.status==="complete"?`<span class="pill status-uploaded">Complete</span>`:`<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending</span>`}</div>
+      <div class="hint" style="margin-bottom:10px;">${escapeHtml(session.pmcType)} · ${session.days} day(s) × ${session.slotsPerDay} slot(s) · ${session.questionsPerPaper} questions/paper · ${session.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}${session.round?` · Round: ${escapeHtml(session.round)}`:""} · ${isComplete?`<span class="pill status-uploaded">Complete</span>`:`<span class="pill" style="background:var(--gold-soft); color:var(--gold);">Pending</span>`}</div>
       ${papers.map(p=>{
         const contestId = (session.contestIds||{})[p.key];
         const c = contestId ? contests.find(x=>x.id===contestId) : null;
@@ -4675,7 +4735,7 @@ function openSessionResultsView(session){
           </table>
         </div>
       </details>
-      ${session.status!=="complete" ? `<button class="btn primary" id="sr-fill" style="width:100%; justify-content:center; margin-top:8px;">Add more now</button>` : ""}
+      ${!isComplete ? `<button class="btn primary" id="sr-fill" style="width:100%; justify-content:center; margin-top:8px;">Add more now</button>` : ""}
     </div></div>`;
   document.getElementById("close-form").addEventListener("click", closeModal);
   document.getElementById("ov").addEventListener("click", e=>{ if(e.target.id==="ov") closeModal(); });
@@ -4763,7 +4823,20 @@ function renderContests(){
       <tbody>
         ${contestSessions.map(s=>{
           const totalPapers = s.days*s.slotsPerDay;
-          const shortPapers = new Set((s.shortfalls||[]).map(sf=>paperKey(sf.day,sf.slot))).size;
+          // Nov 2026 fix ("why is a session showing Complete at 39/60"):
+          // don't trust the session's stored status/shortfalls -- a
+          // session built before the placements-array fix on
+          // computeSessionBuild() could have been saved as "complete"
+          // while actually under-filled (the dropped slots were never
+          // recorded as shortfalls at all -- see that function's own
+          // note). Recompute a fresh, READ-ONLY dry run per session
+          // instead (computeSessionBuild() never writes to Firestore --
+          // only commitSessionBuild() does), so this list always reflects
+          // the true current state rather than whatever an earlier,
+          // buggy build persisted.
+          const freshBuild = computeSessionBuild(s);
+          const isComplete = freshBuild.shortfalls.length===0;
+          const shortPapers = new Set(freshBuild.shortfalls.map(sf=>paperKey(sf.day,sf.slot))).size;
           const completePapers = totalPapers-shortPapers;
           // Real request (Nov 2026, "when more question are ready let it
           // add when finished"): locking a question never auto-fills a
@@ -4775,15 +4848,12 @@ function renderContests(){
           // missing is any visible sign that new content became eligible
           // in the meantime, so a pending session could look permanently
           // stuck even right after locking a batch that would fill it.
-          // `readyCount` -- how many of THIS session's still-short cells
-          // now have at least one eligible pick, using the exact same
-          // live eligibility sessionLiveShortfallCounts() already
-          // computes for the results view -- turns that into a visible,
-          // reactive "N ready to add" badge right in the Sessions list,
-          // so the next natural action is obvious without opening
-          // anything first.
-          const liveCounts = s.status!=="complete" ? sessionLiveShortfallCounts(s).counts : {};
-          const readyCount = (s.shortfalls||[]).filter(sf=>(liveCounts[`${sf.unit}|${sf.difficulty}`]||0)>0).length;
+          // `readyCount` is simply how many questions this same fresh dry
+          // run would place right now -- freshBuild.newlyPlaced.length --
+          // turned into a visible, reactive "N ready to add" badge right
+          // in the Sessions list, so the next natural action is obvious
+          // without opening anything first.
+          const readyCount = freshBuild.newlyPlaced.length;
           return `
         <tr>
           <td>${escapeHtml(s.name)}</td>
@@ -4792,10 +4862,10 @@ function renderContests(){
           <td class="mono">${s.questionsPerPaper}</td>
           <td>${s.overlapMode==="overlapping"?"Overlapping":"Non-overlapping"}</td>
           <td>${s.round?escapeHtml(s.round):`<span class="hint">All rounds</span>`}</td>
-          <td>${s.status==="complete" ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}${readyCount>0?` <span class="pill" style="background:var(--accent-soft); color:var(--accent); font-weight:700;" title="These chapters now have at least one locked question that wasn't there before">⚡ ${readyCount} ready to add</span>`:""}</td>
+          <td>${isComplete ? `<span class="pill status-uploaded">Complete — ${totalPapers}/${totalPapers} papers</span>` : `<span class="pill" style="background:var(--gold-soft); color:var(--gold);">${completePapers}/${totalPapers} papers complete</span>`}${readyCount>0?` <span class="pill" style="background:var(--accent-soft); color:var(--accent); font-weight:700;" title="These chapters now have at least one locked question that wasn't there before">⚡ ${readyCount} ready to add</span>`:""}</td>
           <td style="white-space:nowrap;">
             <button class="btn small" data-view-session="${s.id}">View</button>
-            ${s.status!=="complete" ? `<button class="btn small ${readyCount>0?"primary":""}" data-fill-session="${s.id}">Add more now</button>` : ""}
+            ${!isComplete ? `<button class="btn small ${readyCount>0?"primary":""}" data-fill-session="${s.id}">Add more now</button>` : ""}
           </td>
         </tr>`;}).join("")}
       </tbody>
