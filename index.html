@@ -1488,10 +1488,6 @@ function renderInsightsRail(){
   if(!rail) return;
   if(currentTab!=="bank" || !isTeacherApproved || !currentUser || isExternalReviewerUser || !dataReady.questions){ rail.innerHTML = ""; return; }
   const mine = questions.filter(q=>q.authorEmail===currentUser.email);
-  const done = mine.filter(q=>q.status==="finalized"||q.status==="uploaded").length;
-  const reviewed = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome==="agree").length;
-  const inReview = mine.filter(q=>q.status==="in_review" && q.peerReview?.outcome!=="agree").length;
-  const draft = mine.filter(q=>q.status==="draft").length;
   const week = last7DaysCounts(currentUser.email);
   const rv = myReviewStats(currentUser.email);
   const pending = pendingReviewsFor(currentUser.email);
@@ -1504,7 +1500,25 @@ function renderInsightsRail(){
   const byLevel = myAssignedByLevel();
   const levels = Object.keys(byLevel);
   const totalRemaining = levels.reduce((s,l)=>s+Math.max(0, byLevel[l].target-byLevel[l].done), 0);
-  const leaderboard = teacherComparisonData().map(r=>({ ...r, fullName:r.label, label:initials(r.label), isMe:r.email===currentUser.email }));
+  // Real bug fixed Nov 2026 ("5 in review while at admin end 100%
+  // locked"): the "Your questions" donut right below used to compute its
+  // own draft/reviewed/inReview/done straight off `mine` -- EVERY
+  // question this teacher has EVER authored, lifetime, every round --
+  // while the "Your assignments" bars above it and the "Team" chart
+  // below it both already went through the round-scoped
+  // myAssignedByLevel()/teacherComparisonData() (the fix built for the
+  // earlier "184 of 54" bug). Three different scopes on ONE dashboard
+  // meant a teacher who was genuinely 100% done with their CURRENT
+  // round's assignment could still see a nonzero "in review" count here,
+  // left over from an older, already-closed round that was never
+  // resolved. Now reuses the exact same `teacherComparisonData()` row
+  // the Team chart already computes (and already needed to call for
+  // `leaderboard` right below) -- one shared source for both, so they
+  // can't disagree with each other again.
+  const teamRows = teacherComparisonData();
+  const myRow = teamRows.find(r=>r.email===currentUser.email) || {draft:0, inReview:0, reviewed:0, done:0};
+  const { draft, inReview, reviewed, done } = myRow;
+  const leaderboard = teamRows.map(r=>({ ...r, fullName:r.label, label:initials(r.label), isMe:r.email===currentUser.email }));
   // Previously a reviewer's "disagree" only ever surfaced once the author
   // happened to open that specific question (its drawer/Edit screen) or
   // noticed the auto-posted comment -- nothing on the dashboard or the
@@ -1515,20 +1529,49 @@ function renderInsightsRail(){
   // first in the rail (ahead of "Your assignments") since it's the most
   // time-sensitive thing here, and omitted entirely when there's nothing
   // to fix so it never clutters an author with a clean slate.
-  const sentBack = mine.filter(q=>q.peerReview?.outcome==="disagree");
+  // Real report (Nov 2026, "ahmed sohail is show in dash board returned
+  // question from round 1 however round 1 is locked closed earlier"):
+  // this card used to show EVERY flagged question the author has ever
+  // had, forever, with no indication of which round it was even from --
+  // a genuinely-unresolved flag from a round whose exam already happened
+  // looked identical to one from the teacher's current, active work,
+  // permanently cluttering the "needs your fix" list with something
+  // there's no real reason left to act on. Split into current-round (or
+  // round-less/reusable, which stays "current" by definition) vs. older:
+  // myCurrentRounds is every round name `myAssignedChapters()` currently
+  // resolves to for this teacher (the SAME per-chapter "which round is
+  // this, right now" lookup the assignment-progress widgets below already
+  // use) -- a flagged question is "current" if it has no round at all, or
+  // its round is still one of those; anything else is from a round
+  // that's since been superseded. Current ones keep the prominent red
+  // card exactly as before; anything older is still fully visible (never
+  // silently hidden -- it's real unresolved history), just folded into a
+  // clearly-labeled, closed-by-default list underneath instead of
+  // competing for attention with what's actually actionable today.
+  const myCurrentRounds = new Set(myAssignedChapters().map(m=>m.assignment.name));
+  const allSentBack = mine.filter(q=>q.peerReview?.outcome==="disagree");
+  const sentBack = allSentBack.filter(q=>!q.round || myCurrentRounds.has(q.round));
+  const oldSentBack = allSentBack.filter(q=>q.round && !myCurrentRounds.has(q.round));
+  const sentBackRow = q=>{
+    const reason = REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Flagged";
+    return `<button type="button" class="btn small" style="justify-content:space-between; text-align:left; width:100%;" data-sentback-open="${q.id}">
+      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(q.titleEn||"Untitled")}${q.round?` <span class="hint">(${escapeHtml(q.round)})</span>`:""}</span>
+      <span class="pill" style="background:var(--red-soft); color:var(--red); margin-left:6px; flex:0 0 auto;">${escapeHtml(reason)}</span>
+    </button>`;
+  };
   rail.innerHTML = `
-    ${sentBack.length ? `
+    ${sentBack.length || oldSentBack.length ? `
     <div class="dash-chart-card" style="border-color:var(--red);">
-      <b style="color:var(--red);">⚠ Sent back (${sentBack.length}) — needs your fix</b>
+      ${sentBack.length ? `<b style="color:var(--red);">⚠ Sent back (${sentBack.length}) — needs your fix</b>
       <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
-        ${sentBack.map(q=>{
-          const reason = REVIEW_FLAGS.find(f=>f.v===q.peerReview.issueFlag)?.short || "Flagged";
-          return `<button type="button" class="btn small" style="justify-content:space-between; text-align:left; width:100%;" data-sentback-open="${q.id}">
-            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(q.titleEn||"Untitled")}</span>
-            <span class="pill" style="background:var(--red-soft); color:var(--red); margin-left:6px; flex:0 0 auto;">${escapeHtml(reason)}</span>
-          </button>`;
-        }).join("")}
-      </div>
+        ${sentBack.map(sentBackRow).join("")}
+      </div>` : ""}
+      ${oldSentBack.length ? `<details class="records-details" style="margin-top:${sentBack.length?"10px":"0"};">
+        <summary class="section-label" style="cursor:pointer; display:inline-block; margin-top:0; color:var(--ink-dim);">From earlier, already-superseded rounds (${oldSentBack.length})</summary>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+          ${oldSentBack.map(sentBackRow).join("")}
+        </div>
+      </details>` : ""}
     </div>` : ""}
     ${levels.length ? `
     <div class="dash-chart-card">
@@ -1564,7 +1607,7 @@ function renderInsightsRail(){
     </div>` : ""}
     <div class="dash-chart-card dash-chart-card-donut">
       <b>Your questions</b>
-      ${donutChartSvg([{value:done,cls:"bar-done"},{value:reviewed,cls:"bar-reviewed"},{value:inReview,cls:"bar-inreview"},{value:draft,cls:"bar-draft"}], mine.length, "locked")}
+      ${donutChartSvg([{value:done,cls:"bar-done"},{value:reviewed,cls:"bar-reviewed"},{value:inReview,cls:"bar-inreview"},{value:draft,cls:"bar-draft"}], done+reviewed+inReview+draft, "locked")}
       <div class="chart-legend">
         <span><span class="swatch bar-done"></span>Locked ${done}</span>
         <span><span class="swatch bar-reviewed"></span>Reviewed ${reviewed}</span>
@@ -7796,6 +7839,7 @@ function renderAdmin(){
   main.innerHTML = `
     <div class="pagehead"><h1>Admin &amp; Analytics</h1></div>
     <p class="desc">Enter post-test performance per question to compute p-value and discrimination index (Teacher Guide §10).</p>
+    <p class="hint" style="margin:-6px 0 8px;">The six tiles below are the whole bank's current state — every question ever created, across every round — not scoped to any one round or teacher. For "is THIS round actually done," use the round-scoped numbers in Team comparison and Assignment → Workload instead; a question from an old, already-superseded round sitting unresolved (still "In Review" with nobody acting on it) counts toward these totals just like a current one does, which is deliberate — it's real, unresolved data, not hidden just because its round moved on.</p>
     <div class="admin-grid">
       <div class="stat-tile"><div class="num">${byStatus.draft||0}</div><div class="lbl">Draft</div></div>
       <div class="stat-tile"><div class="num">${inReviewCount}</div><div class="lbl">In Review</div></div>
@@ -7805,7 +7849,7 @@ function renderAdmin(){
       <div class="stat-tile"><div class="num">${questions.length}</div><div class="lbl">Total questions</div></div>
     </div>
     <div class="section-label">Team comparison</div>
-    <p class="desc">How much each teacher is actually producing — created vs. locked, against their assigned target where one exists.</p>
+    <p class="desc">How much each teacher is actually producing — created vs. locked, against their assigned target where one exists. Scoped to each teacher's CURRENT round only (an older, already-superseded round's progress is never added on top) — this is what to check against "is this round done," not the whole-bank tiles above.</p>
     ${teamRows.length===0 ? emptyState("No teacher activity yet.") : `
       <div class="dash-charts">
         <div class="dash-chart-card">
@@ -7866,12 +7910,13 @@ function renderAdmin(){
       <p class="desc">Every question currently awaiting a peer review, with who it's assigned to and when. Reassign to a specific person, or take it back (unassign) if a reviewer's gone quiet — both work on any pending review, not just one at a time from inside the question itself.</p>
       ${pendingReviews.length===0 ? emptyState("Nothing awaiting review right now.") : `
       <div class="table-wrap"><table class="data">
-        <thead><tr><th>Question</th><th>Author</th><th>Reviewer</th><th>Assigned</th><th></th></tr></thead>
+        <thead><tr><th>Question</th><th>Round</th><th>Author</th><th>Reviewer</th><th>Assigned</th><th></th></tr></thead>
         <tbody>
           ${pendingReviews.map(q=>{
             const candidates = eligibleReviewerCandidates(q.authorEmail, q.peerReview.reviewerEmail);
             return `<tr>
               <td><button type="button" class="link-btn" data-goto-question="${q.id}" style="text-align:left;">${escapeHtml(q.titleEn||"Untitled")}</button></td>
+              <td>${q.round?escapeHtml(q.round):`<span class="hint">—</span>`}</td>
               <td>${escapeHtml(q.authorName||"—")}</td>
               <td>${escapeHtml(q.peerReview.reviewerName)}</td>
               <td class="mono">${fmtDate(q.peerReview.assignedAt)}</td>
