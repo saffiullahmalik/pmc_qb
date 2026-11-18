@@ -3345,6 +3345,20 @@ function openReviewForm(q){
     if(countTodaySubmittedReviews(currentUser.email) >= dailyLimits.dailyReviewLimit){
       toast(`Daily review limit reached — ${dailyLimits.dailyReviewLimit} is the cap for today`); return;
     }
+    // Real bug (fixed Nov 2026, report: the same "Reviewed OK" comment
+    // posted 3 times): nothing stopped this handler from running more
+    // than once for a single intended submit -- a fast double/triple
+    // click, or clicking again because the network felt slow, fired this
+    // `async` handler several times in parallel before the first one's
+    // `closeModal()` ever ran. The `updateDoc` below is harmless to
+    // repeat (same end state every time), but `addDoc` always creates a
+    // brand-new comment doc, so N clicks produced N identical comments.
+    // Disabling the button for the duration of this one submit (same
+    // "disable + relabel while in flight" pattern `sf-build` already
+    // uses for the session builder) is what actually prevents it --
+    // re-enabled only on failure, since success closes the modal anyway.
+    const btn = document.getElementById("review-submit");
+    btn.disabled = true; btn.textContent = "Submitting…";
     const flag = REVIEW_FLAGS.find(f=>f.v===flagEl.value);
     const issueNote = document.getElementById("review-flag-note").value.trim();
     const outcome = flag.outcome;
@@ -3392,6 +3406,7 @@ function openReviewForm(q){
       } else {
         toast("Couldn't submit review ("+err.code+")");
       }
+      btn.disabled = false; btn.textContent = "Submit review";
     }
   });
 }
@@ -3597,13 +3612,20 @@ function renderDrawerBody(){
       catch(err){ toast("Couldn't update status"); }
     });
   });
-  document.getElementById("post-comment").addEventListener("click", async ()=>{
+  document.getElementById("post-comment").addEventListener("click", async e=>{
     const txt = document.getElementById("new-comment").value.trim();
     if(!txt) return;
+    // Same double-click-creates-duplicates class of bug as the review
+    // submit button -- the textarea only cleared AFTER a successful
+    // addDoc, so a second click before the first one resolved posted the
+    // same comment twice. Disabling the button for the duration fixes it.
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try{
       await addDoc(collection(db,"questions",q.id,"comments"), {authorName: currentUser.displayName||currentUser.email, authorEmail: currentUser.email, text:txt, createdAt:new Date().toISOString()});
       document.getElementById("new-comment").value = "";
     }catch(err){ toast("Couldn't post comment"); }
+    finally{ btn.disabled = false; }
   });
   document.getElementById("like-btn").addEventListener("click", async ()=>{
     try{
