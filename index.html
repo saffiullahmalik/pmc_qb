@@ -800,7 +800,29 @@ function allCurriculum(){
   curriculumExtra.forEach(doc=>{
     if(doc.type==="chapter"){
       const b = merged.find(x=>x.bookId===doc.bookId);
-      if(b) b.chapters.push({code:doc.code, title:doc.title, subtopics:doc.subtopics||[], custom:true});
+      if(!b) return;
+      // Real bug (fixed Nov 2026, report: "IQ — Spatial reasoning" showing
+      // up 7 times over in the session builder's chapter list): nothing
+      // stopped more than one "chapter" doc from sharing the same `code`
+      // (e.g. "+ Add chapter" clicked twice for the same topic by
+      // mistake), and this pass pushed every one of them as its own
+      // separate row -- every place that reads chaptersForLevel() (the
+      // session builder, the editor's chapter dropdown, the Curriculum
+      // Map) then showed the same chapter N times instead of once. Merge
+      // a later duplicate's subtopics into the one already-kept entry
+      // (non-lossy -- two admins may have typed different subtopic lists
+      // for the "same" chapter) instead of pushing a second row. The
+      // underlying extra Firestore docs are still there (Admin ->
+      // Curriculum -> Added entries can remove them one at a time if you
+      // want the collection itself tidied up) -- this only fixes how
+      // they're MERGED for display/building, which is what actually
+      // mattered here.
+      const existing = b.chapters.find(c=>c.code===doc.code);
+      if(existing){
+        (doc.subtopics||[]).forEach(s=>{ if(!existing.subtopics.includes(s)) existing.subtopics.push(s); });
+      } else {
+        b.chapters.push({code:doc.code, title:doc.title, subtopics:doc.subtopics||[], custom:true});
+      }
     }
   });
   // "chapter_edit" fully replaces an EXISTING chapter's title/subtopics in
@@ -3906,13 +3928,18 @@ function sessionEligiblePreview(pmcType, days, slotsPerDay, questionsPerPaper, c
 // stays 0) apart from "a real bug -- a pool exists but still isn't being
 // picked" (count is >0 immediately after a rebuild that still lists this
 // cell as short) without needing to inspect Firestore by hand.
+// `extraCounts` (Nov 2026, real request: "if questions are not complete
+// in any specific topic ask to pick from previous round") answers the
+// shortfall diagnostic's next question directly -- not just "0 eligible
+// right now" but "would relaxing the Round filter actually help?" --
+// computed the SAME way as `counts` but ignoring session.round entirely,
+// so the difference between the two is exactly how many more questions
+// a chapter/difficulty cell would gain from OTHER rounds. 0 extra means
+// relaxing the round wouldn't help either -- the real gap is that no
+// question exists yet for that exact chapter+difficulty+level, in any
+// round, which is a "write one" situation, not a "pick a different
+// round" one.
 function sessionLiveShortfallCounts(session){
-  // A round-less question (reusable/cross-round content, e.g. IQ) is
-  // always included regardless of session.round -- only a question
-  // carrying a DIFFERENT round's own tag gets excluded.
-  const eligible = sessionEligibleQuestions()
-    .filter(q=>(q.level||[]).includes(session.pmcType))
-    .filter(q=>!session.round || !q.round || q.round===session.round);
   const usedThisSession = new Set();
   if(session.overlapMode!=="overlapping"){
     Object.values(session.placements||{}).forEach(byChapter=>{
@@ -3921,13 +3948,37 @@ function sessionLiveShortfallCounts(session){
       });
     });
   }
-  const counts = {};
-  eligible.forEach(q=>{
-    if(usedThisSession.has(q.id)) return;
-    const k = `${q.unit}|${q.difficulty}`;
-    counts[k] = (counts[k]||0)+1;
-  });
-  return counts;
+  const base = sessionEligibleQuestions().filter(q=>(q.level||[]).includes(session.pmcType) && !usedThisSession.has(q.id));
+  const tally = list=>{
+    const counts = {};
+    list.forEach(q=>{ const k = `${q.unit}|${q.difficulty}`; counts[k] = (counts[k]||0)+1; });
+    return counts;
+  };
+  // A round-less question (reusable/cross-round content, e.g. IQ) is
+  // always included regardless of session.round -- only a question
+  // carrying a DIFFERENT round's own tag gets excluded from `counts`.
+  const counts = tally(session.round ? base.filter(q=>!q.round || q.round===session.round) : base);
+  const extraCounts = session.round ? tally(base.filter(q=>q.round && q.round!==session.round)) : {};
+  return { counts, extraCounts };
+}
+// "Add more now"'s own round-relaxation prompt (Nov 2026, same real
+// request as extraCounts above): before actually filling, check whether
+// relaxing the session's own round restriction would unlock any more
+// eligible questions for a still-short cell -- if so, ask explicitly
+// instead of silently leaving those slots short forever while matching
+// content quietly sits available in another round. Returns a DRAFT to
+// run computeSessionBuild() against -- the session's own STORED `round`
+// is never changed by this, only what this one fill is allowed to pick
+// from; callers must still pass the ORIGINAL session (not this draft) to
+// commitSessionBuild() so the session's configured round survives for
+// next time.
+async function sessionFillDraft(session){
+  if(!session.round) return session;
+  const { extraCounts } = sessionLiveShortfallCounts(session);
+  const extraTotal = Object.values(extraCounts).reduce((a,b)=>a+b,0);
+  if(extraTotal===0) return session;
+  const useAll = await confirmDialog(`Some still-short chapters have questions available in OTHER rounds (not "${session.round}"). Fill using ALL rounds this time? This session's own Round setting stays "${session.round}" for next time — this only applies to this one fill.`);
+  return useAll ? { ...session, round: null } : session;
 }
 // Per-chapter need vs. locked-available breakdown for a session -- the
 // direct answer to "I have exactly enough questions in total, so why do
@@ -4321,7 +4372,7 @@ function openSessionResultsView(session){
   for(let d=1; d<=session.days; d++) for(let s=1; s<=session.slotsPerDay; s++) papers.push({day:d, slot:s, key:paperKey(d,s)});
   const shortfallsByKey = {};
   (session.shortfalls||[]).forEach(sf=>{ const k=paperKey(sf.day,sf.slot); (shortfallsByKey[k]=shortfallsByKey[k]||[]).push(sf); });
-  const liveCounts = sessionLiveShortfallCounts(session);
+  const { counts: liveCounts, extraCounts } = sessionLiveShortfallCounts(session);
   root.innerHTML = `
     <div class="overlay" id="ov"><div class="drawer wide">
       <div class="drawer-head"><h2>${escapeHtml(session.name)}</h2><button class="btn ghost small" id="close-form">Close</button></div>
@@ -4335,9 +4386,10 @@ function openSessionResultsView(session){
           <div class="row"><b>Day ${p.day}, Slot ${p.slot}</b><span class="mono">${c?(c.questionIds||[]).length:0} / ${session.questionsPerPaper}</span></div>
           ${sf.length>0 ? `<div class="hint" style="color:var(--gold); margin-top:4px;">Short: ${sf.map(x=>{
             const n = liveCounts[`${x.unit}|${x.difficulty}`]||0;
-            return `${escapeHtml(chapterLabel(x.unit))} (${DIFFS.find(d=>d.v===x.difficulty)?.l||x.difficulty}) — <span style="${n>0?"color:var(--red); font-weight:700;":""}">${n} eligible available</span>`;
+            const extra = extraCounts[`${x.unit}|${x.difficulty}`]||0;
+            return `${escapeHtml(chapterLabel(x.unit))} (${DIFFS.find(d=>d.v===x.difficulty)?.l||x.difficulty}) — <span style="${n>0?"color:var(--red); font-weight:700;":""}">${n} eligible available</span>${extra>0?` <span class="hint" style="color:var(--gold);">(+${extra} more in other rounds)</span>`:""}`;
           }).join(", ")}</div>
-          ${sf.some(x=>(liveCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">⚠ Some of these show eligible questions available but still unfilled — click "Add more now" below to pick them up.</div>` : `<div class="hint" style="margin-top:2px;">No eligible question exists yet for any of these — lock a question matching that exact chapter, difficulty, and PMC level (${escapeHtml(session.pmcType)}) to fill it.</div>`}` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
+          ${sf.some(x=>(liveCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">⚠ Some of these show eligible questions available but still unfilled — click "Add more now" below to pick them up.</div>` : sf.some(x=>(extraCounts[`${x.unit}|${x.difficulty}`]||0)>0) ? `<div class="hint" style="margin-top:2px;">None in <b>${escapeHtml(session.round)}</b> yet, but other rounds already have some — click "Add more now" below, it'll offer to fill these using any round this one time.</div>` : `<div class="hint" style="margin-top:2px;">No eligible question exists yet for any of these — lock a question matching that exact chapter, difficulty, and PMC level (${escapeHtml(session.pmcType)}) to fill it.</div>`}` : `<div class="hint" style="color:var(--accent); margin-top:4px;">Complete</div>`}
           ${c ? `<div style="margin-top:8px; display:flex; gap:6px;">
             <button type="button" class="btn small" data-sr-edit="${c.id}">Edit</button>
             <button type="button" class="btn small" data-sr-print="${c.id}">Print / Export PDF</button>
@@ -4375,10 +4427,11 @@ function openSessionResultsView(session){
   }));
   root.querySelectorAll("[data-sr-print]").forEach(b=>b.addEventListener("click", ()=>renderPrintView(b.dataset.srPrint)));
   document.getElementById("sr-fill")?.addEventListener("click", async ()=>{
+    const draft = await sessionFillDraft(session);
     const btn = document.getElementById("sr-fill");
     btn.disabled = true; btn.textContent = "Building…";
     try{
-      const build = computeSessionBuild(session);
+      const build = computeSessionBuild(draft);
       const saved = await commitSessionBuild(session, build);
       logActivity("session_built", `Filled more slots for "${session.name}" — ${build.newlyPlaced.length} question(s) added, ${build.shortfalls.length} slot(s) still short`, saved.id);
       toast(build.shortfalls.length===0 ? "Session complete!" : `Added ${build.newlyPlaced.length} question(s) — ${build.shortfalls.length} slot(s) still need more locked questions`);
@@ -4506,9 +4559,10 @@ function renderContests(){
   main.querySelectorAll("[data-fill-session]").forEach(b=>b.addEventListener("click", async ()=>{
     const s = contestSessions.find(x=>x.id===b.dataset.fillSession);
     if(!s) return;
+    const draft = await sessionFillDraft(s);
     b.disabled = true; b.textContent = "Building…";
     try{
-      const build = computeSessionBuild(s);
+      const build = computeSessionBuild(draft);
       const saved = await commitSessionBuild(s, build);
       logActivity("session_built", `Filled more slots for "${s.name}" — ${build.newlyPlaced.length} question(s) added, ${build.shortfalls.length} slot(s) still short`, saved.id);
       toast(build.shortfalls.length===0 ? "Session complete!" : `Added ${build.newlyPlaced.length} question(s) — ${build.shortfalls.length} slot(s) still need more locked questions`);
