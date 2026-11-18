@@ -948,7 +948,27 @@ let contestSessions = [];
 let assignments = [];
 let allTeachers = [];
 let activityLogEntries = [];
+// Real bug fixed Nov 2026 ("refresh or coming back always takes to
+// question bank tab"): currentTab was a plain in-memory variable with a
+// hardcoded "bank" default and nothing ever persisted it, so every full
+// page reload (or just reopening the tab later) lost whatever tab you
+// were actually on. VALID_TABS is the canonical list (every `data-tab`
+// value the nav actually uses) -- restoring from localStorage is
+// validated against it so a stale/old tab name left over from a future
+// app update can never leave `currentTab` pointing at something
+// renderTab()'s if/else chain doesn't handle (which would otherwise
+// silently render nothing instead of falling back to Bank). Restoring a
+// tab a signed-in user isn't actually allowed to see (e.g. this browser's
+// last session was an admin, this one is an uploader) is still safe --
+// enforceTabForRole(), called at the top of EVERY renderTab(), already
+// corrects `currentTab` back to whatever that role is restricted to
+// before anything renders, regardless of how it got set.
+const VALID_TABS = ["bank","activity","contests","quilgo","workload","curriculum","sop","postproc","reviewstudents","admin"];
 let currentTab = "bank";
+try{
+  const savedTab = localStorage.getItem("pmcqb-last-tab");
+  if(savedTab && VALID_TABS.includes(savedTab)) currentTab = savedTab;
+}catch(e){}
 let openQuestionId = null;
 let unsubQuestions = null, unsubComments = null, unsubRatings = null, unsubContests = null, unsubContestSessions = null, unsubAssignments = null, unsubCurriculumExtra = null, unsubActivityLog = null, unsubSettings = null, unsubSop = null;
 let dataReady = { questions:false, contests:false, assignments:false };
@@ -1265,6 +1285,14 @@ async function checkTeacherStatus(){
       }
       if(isUploaderUser) currentTab = "quilgo";
       if(isStudentReviewerOnlyUser) currentTab = "reviewstudents";
+      // The nav's "active" highlight is hardcoded onto the Bank button in
+      // the static HTML skeleton -- harmless when currentTab really does
+      // start as "bank", but now that it can be restored to something
+      // else from localStorage (see the "always takes to Question Bank
+      // tab" fix above), sync it explicitly so the sidebar/tabbar
+      // actually matches whatever's rendered, same toggle switchTab()
+      // itself already does on every later click.
+      document.querySelectorAll("[data-tab]").forEach(x=>x.classList.toggle("active", x.dataset.tab===currentTab));
       document.getElementById("modal-root").innerHTML = "";
       renderSignedInChrome();
       startDataSubscriptions();
@@ -1315,6 +1343,7 @@ document.getElementById("mobile-signout-btn").addEventListener("click", ()=>sign
 function switchTab(tab){
   if(document.getElementById("modal-root").hasChildNodes()) closeModal();
   currentTab = tab;
+  try{ localStorage.setItem("pmcqb-last-tab", tab); }catch(e){}
   document.querySelectorAll("[data-tab]").forEach(x=>x.classList.toggle("active", x.dataset.tab===tab));
   if(tab==="activity"){ try{ localStorage.setItem("pmcqb-last-seen-activity", new Date().toISOString()); }catch(e){} updateActivityBadge(); }
   renderTab();
@@ -4250,7 +4279,7 @@ function openSessionForm(){
                 return `<tr style="border-top:1px solid var(--border); ${included?"":"opacity:0.5;"}">
                   <td style="padding:4px;"><input type="checkbox" data-sf-chinclude="${escapeHtml(ch.code)}" ${included?"checked":""} /></td>
                   <td style="padding:4px;">${escapeHtml(chapterLabel(ch.code))}</td>
-                  <td style="padding:4px; text-align:right;">${included ? `<input type="number" min="0" value="${totalsMap[ch.code]}" data-sf-chtotal="${escapeHtml(ch.code)}" style="width:60px; padding:3px 5px; font-size:12px; text-align:right;" />` : `<span class="hint">excluded</span>`}</td>
+                  <td style="padding:4px; text-align:right;">${included ? `<input type="text" inputmode="numeric" pattern="[0-9]*" value="${totalsMap[ch.code]}" data-sf-chtotal="${escapeHtml(ch.code)}" style="width:60px; padding:3px 5px; font-size:12px; text-align:right;" />` : `<span class="hint">excluded</span>`}</td>
                   ${["medium","hard","very_hard"].map(d=>included && r ? `<td class="mono" style="padding:4px; text-align:right; ${r.have[d]<r.need[d]?"color:var(--red); font-weight:700;":""}">${r.have[d]} / ${r.need[d]}</td>` : `<td style="padding:4px;"></td>`).join("")}
                 </tr>`;
               }).join("")}
@@ -4267,10 +4296,20 @@ function openSessionForm(){
     `;
     if(focusedChCode!=null){
       const el = panel.querySelector(`[data-sf-chtotal="${CSS.escape(focusedChCode)}"]`);
-      // type="number" inputs throw InvalidStateError on setSelectionRange
-      // (Chrome doesn't support text selection on them at all) -- focus()
-      // alone is enough to keep typing uninterrupted; wrap the rest so a
-      // thrown error here can never skip the listener-wiring below it.
+      // Real bug fixed Nov 2026 ("type 12, it writes 21") -- this field
+      // used to be type="number", which doesn't support setSelectionRange
+      // at all (Chrome throws InvalidStateError), so focusedSelStart/End
+      // above were always null and the restore below never actually ran
+      // -- only .focus() happened, and a bare focus() on a freshly
+      // rebuilt node can land the caret at the START of the value instead
+      // of where it was, so the NEXT digit typed landed before the
+      // previous one instead of after it ("1" then "2" became "21", not
+      // "12"). Now type="text" (inputmode="numeric" keeps the numeric
+      // keypad on mobile, parseInt(...)||0 already handles anything else
+      // typed) -- text inputs fully support selection, so this restores
+      // the real cursor position correctly. try/catch kept as a harmless
+      // second layer so a future type change back to "number" degrades
+      // to "just don't lose focus" instead of breaking the whole render.
       if(el){ el.focus(); try{ if(focusedSelStart!=null) el.setSelectionRange(focusedSelStart, focusedSelEnd); }catch(_e){} }
     }
     document.getElementById("sf-shorton-details")?.addEventListener("toggle", e=>{ state.shortOnOpen = e.target.open; });
